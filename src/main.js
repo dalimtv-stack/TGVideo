@@ -7,6 +7,10 @@ import { buildHomeRows, posterColor } from './ui/home.js';
 import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
 import { loadProgress, titleState } from './player/progress.js';
 import { playFile } from './player/player.js';
+import { createKV } from './core/kv.js';
+
+const kv = createKV();
+const LIB_KEY = 'library_v1';
 
 const app = document.getElementById('app');
 
@@ -75,17 +79,46 @@ function cardHtml(t, progress) {
     </div>`;
 }
 
+// Lee los canales y solo vuelve a escanear los que han cambiado (o todos si force)
+async function refreshLibrary(tg, { force = false, onProgress } = {}) {
+  const client = tg.getClient();
+  const channels = await loadLibrary(client);
+  const saved = force ? {} : ((await kv.get(LIB_KEY).catch(() => null))?.cache || {});
+  const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
+  const sig = channels.map(c => `${c.id}:${c.top}:${c.title}`).sort().join('|');
+  await kv.set(LIB_KEY, { cache, channels, sig, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
+  return { titles, sig };
+}
+
+let CHECKED = false;
 async function showHome(tg, sync, profile, { reload = false } = {}) {
   setBackHandler(() => showProfileSelector(tg, sync));
-  if (!TITLES_CACHE || reload) {
-    showLoading('Cargando biblioteca…');
-    try {
-      const client = tg.getClient();
-      const channels = await loadLibrary(client);
-      TITLES_CACHE = await buildTitles(client, channels, tg.peerOf, (d, n) => {
-        const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`;
-      });
-    } catch (err) { console.error('Error cargando biblioteca', err); TITLES_CACHE = []; }
+  const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
+  if (reload) {
+    showLoading('Actualizando biblioteca…');
+    try { TITLES_CACHE = (await refreshLibrary(tg, { force: true, onProgress })).titles; CHECKED = true; }
+    catch (err) { console.error('Error cargando biblioteca', err); TITLES_CACHE = TITLES_CACHE || []; }
+  } else if (!TITLES_CACHE) {
+    const saved = await kv.get(LIB_KEY).catch(() => null);
+    if (saved?.cache && saved.channels) {
+      // Biblioteca local: se muestra al instante sin leer Telegram
+      const { titles } = await buildTitles(null, saved.channels, tg.peerOf, null, saved.cache);
+      TITLES_CACHE = titles;
+    } else {
+      showLoading('Cargando biblioteca…');
+      try { TITLES_CACHE = (await refreshLibrary(tg, { onProgress })).titles; CHECKED = true; }
+      catch (err) { console.error('Error cargando biblioteca', err); TITLES_CACHE = []; }
+    }
+  }
+  // Una vez por sesión: comprobar en segundo plano si algún canal ha cambiado
+  if (!CHECKED) {
+    CHECKED = true;
+    const before = (await kv.get(LIB_KEY).catch(() => null))?.sig;
+    refreshLibrary(tg).then(({ titles, sig }) => {
+      if (sig === before) return;
+      TITLES_CACHE = titles;
+      if (document.querySelector('.home-screen')) showHome(tg, sync, profile);
+    }).catch(e => console.warn('[library] comprobación fallida', e));
   }
   const titles = TITLES_CACHE;
   const progress = loadProgress(profile.id);
