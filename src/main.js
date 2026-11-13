@@ -28,13 +28,12 @@ function showError(msg) {
   document.getElementById('btn-retry')?.addEventListener('click', start);
 }
 
-// ---------- UI de login Telegram ----------
 function promptUI(title, placeholder = '', type = 'text') {
   return new Promise((resolve) => {
     showScreen(`
       <div class="screen center">
         <h2>${title}</h2>
-        <input id="prompt-input" type="${type}" placeholder="${placeholder}" 
+        <input id="prompt-input" type="${type}" placeholder="${placeholder}"
                style="margin:1.5rem 0;padding:0.8rem 1rem;width:min(320px,90%);font-size:1.1rem;border-radius:8px;border:1px solid #444;background:#1a1a1a;color:#fff;" />
         <button id="prompt-ok" class="btn">Continuar</button>
       </div>
@@ -45,6 +44,93 @@ function promptUI(title, placeholder = '', type = 'text') {
     const submit = () => resolve(input.value.trim());
     btn.addEventListener('click', submit);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  });
+}
+
+// ---------- Selector de perfiles (estilo Netflix) ----------
+async function showProfileSelector(tg, sync) {
+  showLoading('Cargando perfiles…');
+
+  let profiles = [];
+  try {
+    profiles = await sync.listProfiles();
+  } catch (err) {
+    console.warn('No se pudieron cargar perfiles', err);
+  }
+
+  const cards = profiles.map(p => `
+    <div class="profile-card" data-id="${p.id}">
+      <div class="avatar">${(p.name || '?')[0].toUpperCase()}</div>
+      <div class="profile-name">${p.name}</div>
+    </div>
+  `).join('');
+
+  // Tarjeta para añadir perfil
+  const addCard = `
+    <div class="profile-card add-profile" id="btn-add-profile">
+      <div class="avatar add">+</div>
+      <div class="profile-name">Añadir perfil</div>
+    </div>
+  `;
+
+  showScreen(`
+    <div class="screen profiles-screen">
+      <h1 class="profiles-title">¿Quién está viendo?</h1>
+      <div class="profiles-grid">
+        ${cards}
+        ${addCard}
+      </div>
+      <button id="btn-logout" class="logout-btn">Cerrar sesión</button>
+    </div>
+  `);
+
+  // Click en perfil existente
+  document.querySelectorAll('.profile-card[data-id]').forEach(card => {
+    card.addEventListener('click', () => {
+      const id = card.dataset.id;
+      const profile = profiles.find(p => p.id === id);
+      // TODO: entrar en la app con este perfil
+      alert(`Entrando con perfil: ${profile?.name || id}`);
+    });
+  });
+
+  // Añadir perfil
+  document.getElementById('btn-add-profile')?.addEventListener('click', async () => {
+    const name = await promptUI('Nombre del perfil', 'Ej: Papá, Niños…');
+    if (!name) return showProfileSelector(tg, sync);
+
+    const profileId = name
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'perfil';
+
+    const newProfile = {
+      v: 1,
+      profile: {
+        id: profileId,
+        name: name.trim(),
+        avatar: null,
+        age_limit: '+18',
+        pin: null,
+        is_kids: false,
+      },
+      progress: {},
+      recent: [],
+      prefs: {},
+    };
+
+    showLoading('Creando perfil…');
+    try {
+      await sync.pushProfile(newProfile);
+      await showProfileSelector(tg, sync);
+    } catch (err) {
+      showError(err?.message || String(err));
+    }
+  });
+
+  // Cerrar sesión
+  document.getElementById('btn-logout')?.addEventListener('click', async () => {
+    await tg.logout();
+    start();
   });
 }
 
@@ -61,9 +147,7 @@ async function start() {
 
   try {
     await tg.ready();
-    const client = tg.getClient();
 
-    // Crear el módulo de sincronización
     const sync = createTelegramSync({
       getClient: async () => {
         await tg.ready();
@@ -72,64 +156,11 @@ async function start() {
       peerOf: tg.peerOf,
     });
 
-    // Guardamos en window para depuración
     window.tg = tg;
     window.sync = sync;
 
-    showScreen(`
-      <div class="screen center">
-        <h1>TGVideo</h1>
-        <p style="margin:1rem 0;opacity:0.8;">Sesión de Telegram iniciada correctamente</p>
-        <button id="btn-profiles" class="btn">Ver perfiles</button>
-        <button id="btn-logout" class="btn btn-secondary" style="margin-top:0.8rem;">Cerrar sesión</button>
-      </div>
-    `);
-
-    document.getElementById('btn-profiles')?.addEventListener('click', async () => {
-      showLoading('Cargando perfiles…');
-      try {
-        const profiles = await sync.listProfiles();
-        if (!profiles.length) {
-          showScreen(`
-            <div class="screen center">
-              <h2>No hay perfiles</h2>
-              <p style="margin:1rem 0;opacity:0.7;">Aún no se ha creado ningún perfil de sincronización.</p>
-              <button id="btn-back" class="btn">Volver</button>
-            </div>
-          `);
-          document.getElementById('btn-back')?.addEventListener('click', start);
-          return;
-        }
-
-        const list = profiles.map(p => `
-          <div class="profile-card" data-id="${p.id}">
-            <div class="avatar">${(p.name || '?')[0].toUpperCase()}</div>
-            <div>
-              <strong>${p.name}</strong>
-              <div style="font-size:0.85rem;opacity:0.6;">${p.age_limit || ''}</div>
-            </div>
-          </div>
-        `).join('');
-
-        showScreen(`
-          <div class="screen">
-            <h2 style="text-align:center;margin-bottom:1.5rem;">¿Quién está viendo?</h2>
-            <div class="profiles-grid">${list}</div>
-            <div style="text-align:center;margin-top:2rem;">
-              <button id="btn-back" class="btn btn-secondary">Volver</button>
-            </div>
-          </div>
-        `);
-        document.getElementById('btn-back')?.addEventListener('click', start);
-      } catch (err) {
-        showError(err?.message || String(err));
-      }
-    });
-
-    document.getElementById('btn-logout')?.addEventListener('click', async () => {
-      await tg.logout();
-      start();
-    });
+    // Ir directamente al selector de perfiles
+    await showProfileSelector(tg, sync);
 
   } catch (err) {
     console.error(err);
