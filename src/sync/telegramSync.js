@@ -6,6 +6,8 @@
  * Máximo 5 versiones por perfil.
  */
 
+import { Api } from 'telegram';
+
 const SYNC_CHANNEL_TITLE = 'Perfiles::TGVideo::tgstorage';
 const MAX_VERSIONS = 5;
 const FILE_RE = /^perfil_([a-z0-9_]+)_(\d{14})\.json$/i;
@@ -40,15 +42,13 @@ function parseFilename(name) {
 
 /**
  * @param {object} opts
- * @param {() => Promise<any>} opts.getClient  - función que devuelve el cliente de Telegram ya conectado
+ * @param {() => Promise<any>} opts.getClient
  * @param {(ch) => any} opts.peerOf
  */
 export function createTelegramSync({ getClient, peerOf }) {
-  let syncChannel = null; // { id, hash }
+  let syncChannel = null;
   let pushTimer = null;
   let pushing = false;
-
-  // ---------- Helpers de canal ----------
 
   async function findOrCreateSyncChannel() {
     const client = await getClient();
@@ -66,9 +66,9 @@ export function createTelegramSync({ getClient, peerOf }) {
       }
     }
 
-    // Crear canal privado si no existe
+    // Crear canal privado
     const result = await client.invoke(
-      new (await import('telegram')).Api.channels.CreateChannel({
+      new Api.channels.CreateChannel({
         title: SYNC_CHANNEL_TITLE,
         about: 'Sincronización de perfiles TGVideo (no borrar)',
         megagroup: false,
@@ -92,7 +92,7 @@ export function createTelegramSync({ getClient, peerOf }) {
     const files = [];
 
     for await (const msg of client.iterMessages(peer, {
-      filter: new (await import('telegram')).Api.InputMessagesFilterDocument(),
+      filter: new Api.InputMessagesFilterDocument(),
       limit: 100,
     })) {
       const doc = msg.document;
@@ -108,21 +108,15 @@ export function createTelegramSync({ getClient, peerOf }) {
         filename,
         profileId: parsed.profileId,
         timestamp: parsed.timestamp,
-        date: msg.date, // unix seconds
+        date: msg.date,
         size: Number(doc.size?.toString?.() || doc.size || 0),
       });
     }
 
-    // Ordenar por timestamp descendente
     files.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
     return files;
   }
 
-  // ---------- API pública ----------
-
-  /**
-   * Devuelve la lista de perfiles disponibles (el más reciente de cada profileId).
-   */
   async function listProfiles() {
     const files = await listSyncFiles();
     const byId = new Map();
@@ -133,7 +127,6 @@ export function createTelegramSync({ getClient, peerOf }) {
       }
     }
 
-    // Descargar y parsear solo los más recientes para obtener el nombre real
     const profiles = [];
     const client = await getClient();
     const ch = await findOrCreateSyncChannel();
@@ -161,7 +154,6 @@ export function createTelegramSync({ getClient, peerOf }) {
         });
       } catch (err) {
         console.warn('[sync] No se pudo leer perfil', f.filename, err);
-        // Fallback con los datos del nombre
         profiles.push({
           id: f.profileId,
           name: f.profileId,
@@ -178,9 +170,6 @@ export function createTelegramSync({ getClient, peerOf }) {
     return profiles.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /**
-   * Descarga el estado más reciente de un perfil.
-   */
   async function pullProfile(profileId) {
     const files = await listSyncFiles();
     const latest = files.find((f) => f.profileId === profileId);
@@ -198,9 +187,6 @@ export function createTelegramSync({ getClient, peerOf }) {
     return JSON.parse(text);
   }
 
-  /**
-   * Sube un nuevo estado de perfil y limpia versiones antiguas.
-   */
   async function pushProfile(profileData) {
     if (pushing) return;
     pushing = true;
@@ -212,21 +198,24 @@ export function createTelegramSync({ getClient, peerOf }) {
 
       const profileId = normalizeName(profileData.profile?.id || profileData.profile?.name || 'perfil');
       const filename = `perfil_${profileId}_${nowTimestamp()}.json`;
-      const json = JSON.stringify(profileData, null, 0);
-      const file = new File([json], filename, { type: 'application/json' });
+      const json = JSON.stringify(profileData);
+      const bytes = new TextEncoder().encode(json);
 
-      // Subir
+      // Forma correcta de subir un archivo pequeño con GramJS en navegador
       await client.sendFile(peer, {
-        file,
+        file: bytes,
         caption: `Sync ${profileData.profile?.name || profileId}`,
         forceDocument: true,
+        attributes: [
+          new Api.DocumentAttributeFilename({ fileName: filename }),
+        ],
       });
 
-      // Limpiar versiones antiguas de este perfil
+      // Limpiar versiones antiguas
       const files = await listSyncFiles();
       const mine = files.filter((f) => f.profileId === profileId);
       if (mine.length > MAX_VERSIONS) {
-        const toDelete = mine.slice(MAX_VERSIONS); // los más antiguos
+        const toDelete = mine.slice(MAX_VERSIONS);
         for (const f of toDelete) {
           try {
             await client.deleteMessages(peer, [f.messageId], { revoke: true });
@@ -240,9 +229,6 @@ export function createTelegramSync({ getClient, peerOf }) {
     }
   }
 
-  /**
-   * Fusiona progreso: se queda el mayor porcentaje.
-   */
   function mergeProgress(localProgress = {}, remoteProgress = {}) {
     const out = { ...localProgress };
 
@@ -270,9 +256,6 @@ export function createTelegramSync({ getClient, peerOf }) {
     return out;
   }
 
-  /**
-   * schedulePush con debounce para evitar flood.
-   */
   function schedulePush(profileData, delayMs = 4000) {
     if (pushTimer) clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
