@@ -13,8 +13,30 @@ export async function playFile({ client, peerOf, file, title, profile, resumeAt 
     </div>`;
   let cancelled = false, url = null, stream = null;
   const video = mount.querySelector('#pl-video');
+  const playerEl = mount.querySelector('.player');
+  // Pantalla completa: se pide ya (aún dentro del toque del usuario) y otra vez al empezar a reproducir
+  const goFullscreen = () => {
+    if (document.fullscreenElement || document.webkitFullscreenElement) return;
+    const el = playerEl;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) {
+      Promise.resolve(req.call(el, { navigationUI: 'hide' }))
+        .then(() => screen.orientation?.lock?.('landscape').catch(() => {}))
+        .catch(() => { if (video.webkitEnterFullscreen && video.readyState > 0) try { video.webkitEnterFullscreen(); } catch (_) {} });
+    } else if (video.webkitEnterFullscreen && video.readyState > 0) {
+      try { video.webkitEnterFullscreen(); } catch (_) {} // iPhone
+    }
+  };
+  const exitFullscreen = () => {
+    try { screen.orientation?.unlock?.(); } catch (_) {}
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else if (document.webkitFullscreenElement) document.webkitExitFullscreen?.();
+  };
+  goFullscreen();
+  video.addEventListener('play', goFullscreen);
   const close = () => {
     cancelled = true;
+    exitFullscreen();
     if (video.duration) saveProgress(profile.id, file.key, video.currentTime, video.duration);
     video.pause(); video.removeAttribute('src'); video.load();
     if (stream) stream.close(); else if (url) URL.revokeObjectURL(url); onClose();
