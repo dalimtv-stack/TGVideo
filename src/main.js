@@ -1,6 +1,7 @@
 import './style.css';
 import { createTelegramClient } from './core/telegram.js';
 import { createTelegramSync } from './sync/telegramSync.js';
+import { loadLibrary, groupLibrary } from './library/channels.js';
 
 const app = document.getElementById('app');
 
@@ -47,8 +48,58 @@ function promptUI(title, placeholder = '', type = 'text') {
   });
 }
 
-// ---------- Home básica (después de seleccionar perfil) ----------
-function showHome(tg, sync, profile) {
+// ---------- Home con biblioteca ----------
+async function showHome(tg, sync, profile) {
+  showLoading('Cargando biblioteca…');
+
+  let lib = [];
+  try {
+    const client = tg.getClient();
+    lib = await loadLibrary(client);
+  } catch (err) {
+    console.error('Error cargando biblioteca', err);
+  }
+
+  const grouped = groupLibrary(lib);
+
+  let sectionsHtml = '';
+
+  if (lib.length === 0) {
+    sectionsHtml = `
+      <div class="home-empty">
+        <h2>Hola, ${profile.name}</h2>
+        <p>No se han encontrado canales de vídeo.</p>
+        <p style="opacity:0.6;margin-top:0.5rem;font-size:0.95rem;">
+          Los canales deben terminar en <code>::Series::tgstorage</code> o <code>::Películas::tgstorage</code>
+        </p>
+      </div>
+    `;
+  } else {
+    for (const [category, groups] of grouped) {
+      sectionsHtml += `<section class="lib-section"><h2 class="lib-cat">${category}</h2>`;
+
+      for (const [groupName, channels] of groups) {
+        sectionsHtml += `
+          <div class="lib-group">
+            <h3 class="lib-group-title">${groupName}</h3>
+            <div class="lib-row">
+              ${channels.map(ch => `
+                <div class="lib-card" data-id="${ch.id}" data-hash="${ch.hash}" data-macro="${ch.macro}">
+                  <div class="lib-card-poster">
+                    <span>${ch.macro ? '📁' : '🎬'}</span>
+                  </div>
+                  <div class="lib-card-name">${ch.name}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      sectionsHtml += `</section>`;
+    }
+  }
+
   showScreen(`
     <div class="screen home-screen">
       <header class="home-header">
@@ -60,19 +111,25 @@ function showHome(tg, sync, profile) {
       </header>
 
       <main class="home-main">
-        <div class="home-empty">
-          <h2>Hola, ${profile.name}</h2>
-          <p>Todavía no hay contenido cargado.</p>
-          <p style="opacity:0.6;margin-top:0.5rem;font-size:0.95rem;">
-            Aquí aparecerán las series y películas de tus canales privados.
-          </p>
-        </div>
+        ${sectionsHtml}
       </main>
     </div>
   `);
 
   document.getElementById('btn-change-profile')?.addEventListener('click', () => {
     showProfileSelector(tg, sync);
+  });
+
+  // Click en canal (de momento solo log)
+  document.querySelectorAll('.lib-card').forEach(card => {
+    card.addEventListener('click', () => {
+      console.log('Canal seleccionado', {
+        id: card.dataset.id,
+        hash: card.dataset.hash,
+        macro: card.dataset.macro,
+      });
+      // TODO: abrir contenido del canal
+    });
   });
 }
 
@@ -112,18 +169,14 @@ async function showProfileSelector(tg, sync) {
     </div>
   `);
 
-  // Entrar en un perfil
   document.querySelectorAll('.profile-card[data-id]').forEach(card => {
     card.addEventListener('click', () => {
       const id = card.dataset.id;
       const profile = profiles.find(p => p.id === id);
-      if (profile) {
-        showHome(tg, sync, profile);
-      }
+      if (profile) showHome(tg, sync, profile);
     });
   });
 
-  // Añadir perfil
   document.getElementById('btn-add-profile')?.addEventListener('click', async () => {
     const name = await promptUI('Nombre del perfil', 'Ej: Papá, Niños…');
     if (!name) return showProfileSelector(tg, sync);
@@ -156,7 +209,6 @@ async function showProfileSelector(tg, sync) {
     }
   });
 
-  // Cerrar sesión
   document.getElementById('btn-logout')?.addEventListener('click', async () => {
     await tg.logout();
     start();
