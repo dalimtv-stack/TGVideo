@@ -549,6 +549,15 @@ html, body {
   opacity: 0.8;
 }
 
+/* ===== Selector de Temporadas ===== */
+.seasons-bar { margin: 1.2rem 0 1rem; }
+.seasons-label { font-size: .8rem; text-transform: uppercase; letter-spacing: .12em; opacity: .6; margin-bottom: .6rem; font-weight: 600; }
+.seasons-track { display: flex; gap: .5rem; overflow-x: auto; padding-bottom: .5rem; scrollbar-width: none; }
+.seasons-track::-webkit-scrollbar { display: none; }
+.season-btn { padding: .45rem 1.1rem; border-radius: 20px; background: rgba(255,255,255,.08); color: #ddd; border: 1px solid rgba(255,255,255,.14); font-size: .92rem; font-weight: 600; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
+.season-btn:hover, .season-btn:focus { background: rgba(255,255,255,.18); color: #fff; outline: none; border-color: #fff; }
+.season-btn.active { background: #e50914; color: #fff; border-color: #e50914; }
+
 /* ===== Reproductor ===== */
 .player {
   position: fixed;

@@ -10,12 +10,13 @@ import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
 
 const kv = createKV();
-const LIB_KEY = 'library_v1';
+const LIB_KEY = 'library_v2';
 
 const app = document.getElementById('app');
 
 function showScreen(html) {
   app.innerHTML = html;
+  window.scrollTo(0, 0);
 }
 
 function showLoading(msg = 'Cargando…') {
@@ -143,7 +144,7 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
           </div>
         </div>
       </header>
-      <maint class="home-main">${body}</main>
+      <main class="home-main">${body}</main>
     </div>`);
 
   document.getElementById('btn-change-profile').onclick = () => showProfileSelector(tg, sync);
@@ -162,18 +163,19 @@ function showDetail(tg, sync, profile, t) {
   const nextLabel = !st.next ? '' : st.continueWatching && progress[st.next.key] && !progress[st.next.key].is_completed
     ? `▶ Continuar ${t.tipo === 'serie' ? esc(st.next.label) : ''}` : `▶ Reproducir ${t.tipo === 'serie' ? esc(st.next.label) : ''}`;
 
-  const list = t.archivos.map((f) => {
-    const p = progress[f.key];
-    const pct = p?.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
-    const ep = f.season || f.episode ? `T${f.season}·E${String(f.episode).padStart(2, '0')}` : '';
-    return `<div class="ep" tabindex="0" data-focusable data-key="${esc(f.key)}">
-      <div class="ep-num">${ep || '•'}</div>
-      <div class="ep-info"><div class="ep-name">${esc(f.label)}</div>
-        <div class="ep-meta">${[fmtDur(f.duration), fmtSize(f.size), new Date(f.date * 1000).toLocaleDateString()].filter(Boolean).join(' · ')}</div>
-        ${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
-      <div class="ep-state">${p?.is_completed ? '✓ Visto' : pct ? Math.round(pct) + '%' : ''}</div>
-    </div>`;
-  }).join('');
+  const seasonsMap = new Map();
+  if (t.tipo === 'serie') for (const f of t.archivos) {
+    const s = f.season || 1;
+    if (!seasonsMap.has(s)) seasonsMap.set(s, []);
+    seasonsMap.get(s).push(f);
+  }
+  const seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
+  let currentSeason = st.next?.season && seasonsMap.has(st.next.season) ? st.next.season : (seasons[0] || 1);
+  const hasSeasons = t.tipo === 'serie' && seasons.length > 1;
+  const seasonsBarHtml = hasSeasons ? `
+    <div class="seasons-bar"><div class="seasons-label">Temporadas</div>
+      <div class="seasons-track">${seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('')}</div>
+    </div>` : '';
 
   showScreen(`
     <div class="screen detail" style="--pc:${posterColor(t.grupo + t.nombre)}">
@@ -189,8 +191,9 @@ function showDetail(tg, sync, profile, t) {
           ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
         </div>
       </div>
-      <h2 class="row-title">${t.tipo === 'serie' ? 'Episodios' : 'Archivos'}</h2>
-      <div class="ep-list">${list}</div>
+      ${seasonsBarHtml}
+      <h2 class="row-title" id="d-list-title">${t.tipo === 'serie' ? 'Episodios' : 'Archivos'}</h2>
+      <div class="ep-list" id="ep-list"></div>
     </div>`);
 
   const play = (f) => {
@@ -200,12 +203,39 @@ function showDetail(tg, sync, profile, t) {
       resumeAt: p && !p.is_completed ? p.current_time : 0, mount: app,
       onClose: () => showDetail(tg, sync, profile, t) });
   };
+
+  const renderEpisodes = (seasonNum) => {
+    const files = hasSeasons ? (seasonsMap.get(seasonNum) || []) : t.archivos;
+    const container = document.getElementById('ep-list');
+    container.innerHTML = files.map((f) => {
+      const p = progress[f.key];
+      const pct = p?.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
+      const ep = f.season || f.episode ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
+      return `<div class="ep" tabindex="0" data-focusable data-key="${esc(f.key)}">
+        <div class="ep-num">${ep || '•'}</div>
+        <div class="ep-info"><div class="ep-name">${esc(f.label)}</div>
+          <div class="ep-meta">${[fmtDur(f.duration), fmtSize(f.size), new Date(f.date * 1000).toLocaleDateString()].filter(Boolean).join(' · ')}</div>
+          ${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
+        <div class="ep-state">${p?.is_completed ? '✓ Visto' : pct ? Math.round(pct) + '%' : ''}</div>
+      </div>`;
+    }).join('');
+    container.querySelectorAll('.ep').forEach(el => {
+      el.onclick = () => { const f = t.archivos.find(x => x.key === el.dataset.key); if (f) play(f); };
+    });
+    if (hasSeasons) document.getElementById('d-list-title').textContent = `Temporada ${seasonNum} (${files.length} ep.)`;
+  };
+  renderEpisodes(currentSeason);
+
+  document.querySelectorAll('.season-btn').forEach(btn => {
+    btn.onclick = () => {
+      currentSeason = Number(btn.dataset.season);
+      document.querySelectorAll('.season-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderEpisodes(currentSeason);
+    };
+  });
   document.getElementById('d-back').onclick = back;
   document.getElementById('d-play')?.addEventListener('click', () => play(st.next));
-  document.querySelectorAll('.ep').forEach(el => {
-    el.onclick = () => { const f = t.archivos.find(x => x.key === el.dataset.key); if (f) play(f); };
-  });
-  focusFirst('#d-play, .ep');
+  focusFirst('#d-play, .season-btn.active, .ep');
 }
 
 // ---------- Selector de perfiles ----------
