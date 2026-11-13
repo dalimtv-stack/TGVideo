@@ -8,7 +8,7 @@ function move(dir) {
   const items = [...document.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent);
   if (!items.length) return;
   const cur = document.activeElement?.hasAttribute?.('data-focusable') ? document.activeElement : null;
-  if (!cur) { items[0].focus(); return; }
+  if (!cur) { items[0].focus({ preventScroll: true }); return; }
   const c = center(cur);
   let best = null, bestScore = Infinity;
   for (const el of items) {
@@ -37,4 +37,4 @@ export function initDpad() {
     }
   });
 }
-export function focusFirst(sel = '[data-focusable]') { setTimeout(() => document.querySelector(sel)?.focus(), 30); }
+export function focusFirst(sel = '[data-focusable]') { setTimeout(() => document.querySelector(sel)?.focus({ preventScroll: true }), 30); }
