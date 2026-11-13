@@ -136,13 +136,14 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
     <div class="screen home-screen">
       <header class="home-header">
         <div class="home-logo">TGVideo</div>
-        <div style="display:flex;gap:.5rem;align-items:center">
-          <button class="btn-ghost" data-focusable id="btn-reload">↻ Actualizar</button>
-          <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile">
-            <div class="avatar small">${esc((profile.name || '?')[0].toUpperCase())}</div><span>${esc(profile.name)}</span></div>
+        <div class="home-actions">
+          <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
+          <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile" title="${esc(profile.name)}" aria-label="Perfil: ${esc(profile.name)}">
+            <div class="avatar small">${esc((profile.name || '?')[0].toUpperCase())}</div>
+          </div>
         </div>
       </header>
-      <main class="home-main">${body}</main>
+      <maint class="home-main">${body}</main>
     </div>`);
 
   document.getElementById('btn-change-profile').onclick = () => showProfileSelector(tg, sync);
