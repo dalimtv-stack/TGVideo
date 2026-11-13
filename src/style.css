@@ -109,6 +109,13 @@ html, body {
   transition: outline 0.15s;
 }
 
+.avatar.small {
+  width: 36px;
+  height: 36px;
+  font-size: 1.1rem;
+  border-radius: 4px;
+}
+
 .avatar.add {
   background: #1a1a1a;
   font-size: 4rem;
@@ -132,7 +139,6 @@ html, body {
   color: #fff;
 }
 
-/* Botón cerrar sesión abajo a la derecha */
 .logout-btn {
   position: fixed;
   bottom: 1.5rem;
@@ -149,4 +155,61 @@ html, body {
 .logout-btn:hover {
   border-color: #888;
   color: #ccc;
+}
+
+/* ===== Home ===== */
+.home-screen {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  background: rgba(0,0,0,0.7);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.home-logo {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #e50914;
+  letter-spacing: -0.5px;
+}
+
+.home-profile {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+}
+
+.home-profile:hover {
+  background: #222;
+}
+
+.home-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-empty {
+  text-align: center;
+  opacity: 0.9;
+}
+
+.home-empty h2 {
+  font-size: 1.8rem;
+  font-weight: 400;
+  margin-bottom: 0.8rem;
 }
