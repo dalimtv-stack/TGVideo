@@ -31,9 +31,11 @@ export function parseCaption(text = '') {
 
 /** S01E02, 1x02, "Episodio 3", "Cap 3", o número suelto */
 export function parseEpisode(name = '') {
-  let m = name.match(/S(\d{1,2})\s*E(\d{1,3})/i);
+  let m = name.match(/[ST](\d{1,2})[\s._-]*E(\d{1,3})/i);
   if (m) return { season: +m[1], episode: +m[2] };
-  m = name.match(/(\d{1,2})x(\d{1,3})/i);
+  m = name.match(/(\d{1,2})\s*x\s*(\d{1,3})/i);
+  if (m) return { season: +m[1], episode: +m[2] };
+  m = name.match(/T(?:emp(?:orada)?)?[\s._-]*(\d{1,2})[\s._-]+(?:ep|cap(?:[ií]tulo)?)?[\s._-]*(\d{1,3})/i);
   if (m) return { season: +m[1], episode: +m[2] };
   m = name.match(/(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*(\d{1,3})/i);
   if (m) return { season: 1, episode: +m[1] };
