@@ -65,7 +65,7 @@ export function parseChannelTitle(title) {
 export async function loadLibrary(client) {
   const found = new Map();
 
-  const add = (entity) => {
+  const add = (entity, top = 0) => {
     if (!entity || entity.className !== 'Channel') return;
     const info = parseChannelTitle(entity.title || '');
     if (!info) return;
@@ -78,6 +78,8 @@ export async function loadLibrary(client) {
       category: info.category,
       macro: !!info.macro,
       title: entity.title,
+      // id del último mensaje: si cambia, el canal se ha modificado
+      top: top || found.get(String(entity.id))?.top || 0,
     });
   };
 
@@ -93,7 +95,7 @@ export async function loadLibrary(client) {
 
   // Recorrer diálogos
   for await (const dialog of client.iterDialogs({})) {
-    add(dialog.entity);
+    add(dialog.entity, dialog.message?.id || 0);
   }
 
   const list = [...found.values()];

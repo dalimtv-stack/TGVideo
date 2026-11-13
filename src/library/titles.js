@@ -52,13 +52,24 @@ function makeTitle({ id, ch, name, origen, seccion, files }) {
   };
 }
 
-export async function buildTitles(client, channels, peerOf, onProgress) {
+/**
+ * cache: { [channelId]: { top, title, files } } — los canales sin cambios no se vuelven a leer.
+ * Devuelve { titles, cache } con la caché actualizada.
+ */
+export async function buildTitles(client, channels, peerOf, onProgress, cache = {}) {
   const titles = [];
+  const newCache = {};
   let done = 0;
   await Promise.all(channels.map(async (ch) => {
+    const prev = cache[ch.id];
     let files = [];
-    try { files = await scanFiles(client, peerOf(ch), ch); }
-    catch (e) { console.warn('[titles] no se pudo leer', ch.title, e); }
+    if (prev && (!client || (prev.top === ch.top && prev.title === ch.title && ch.top))) {
+      files = prev.files.map(f => ({ ...f }));
+    } else {
+      try { files = await scanFiles(client, peerOf(ch), ch); }
+      catch (e) { console.warn('[titles] no se pudo leer', ch.title, e); }
+    }
+    newCache[ch.id] = { top: ch.top, title: ch.title, files: files.map(f => ({ ...f })) };
 
     if (ch.macro) {
       for (const [sec, fs] of splitBySection(files)) {
@@ -70,5 +81,5 @@ export async function buildTitles(client, channels, peerOf, onProgress) {
     }
     onProgress?.(++done, channels.length);
   }));
-  return titles;
+  return { titles, cache: newCache };
 }
