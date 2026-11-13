@@ -47,7 +47,36 @@ function promptUI(title, placeholder = '', type = 'text') {
   });
 }
 
-// ---------- Selector de perfiles (estilo Netflix) ----------
+// ---------- Home básica (después de seleccionar perfil) ----------
+function showHome(tg, sync, profile) {
+  showScreen(`
+    <div class="screen home-screen">
+      <header class="home-header">
+        <div class="home-logo">TGVideo</div>
+        <div class="home-profile" id="btn-change-profile">
+          <div class="avatar small">${(profile.name || '?')[0].toUpperCase()}</div>
+          <span>${profile.name}</span>
+        </div>
+      </header>
+
+      <main class="home-main">
+        <div class="home-empty">
+          <h2>Hola, ${profile.name}</h2>
+          <p>Todavía no hay contenido cargado.</p>
+          <p style="opacity:0.6;margin-top:0.5rem;font-size:0.95rem;">
+            Aquí aparecerán las series y películas de tus canales privados.
+          </p>
+        </div>
+      </main>
+    </div>
+  `);
+
+  document.getElementById('btn-change-profile')?.addEventListener('click', () => {
+    showProfileSelector(tg, sync);
+  });
+}
+
+// ---------- Selector de perfiles ----------
 async function showProfileSelector(tg, sync) {
   showLoading('Cargando perfiles…');
 
@@ -65,7 +94,6 @@ async function showProfileSelector(tg, sync) {
     </div>
   `).join('');
 
-  // Tarjeta para añadir perfil
   const addCard = `
     <div class="profile-card add-profile" id="btn-add-profile">
       <div class="avatar add">+</div>
@@ -75,7 +103,7 @@ async function showProfileSelector(tg, sync) {
 
   showScreen(`
     <div class="screen profiles-screen">
-      <h1 class="profiles-title">¿Quién está viendo?</h1>
+      <h1 class="profiles-title">¿Quién está ahí?</h1>
       <div class="profiles-grid">
         ${cards}
         ${addCard}
@@ -84,13 +112,14 @@ async function showProfileSelector(tg, sync) {
     </div>
   `);
 
-  // Click en perfil existente
+  // Entrar en un perfil
   document.querySelectorAll('.profile-card[data-id]').forEach(card => {
     card.addEventListener('click', () => {
       const id = card.dataset.id;
       const profile = profiles.find(p => p.id === id);
-      // TODO: entrar en la app con este perfil
-      alert(`Entrando con perfil: ${profile?.name || id}`);
+      if (profile) {
+        showHome(tg, sync, profile);
+      }
     });
   });
 
@@ -159,7 +188,6 @@ async function start() {
     window.tg = tg;
     window.sync = sync;
 
-    // Ir directamente al selector de perfiles
     await showProfileSelector(tg, sync);
 
   } catch (err) {
