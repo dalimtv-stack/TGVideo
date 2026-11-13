@@ -7,7 +7,7 @@ import { splitBySection } from './macro.js';
 
 async function scanFiles(client, peer, ch) {
   const files = [];
-  for await (const msg of client.iterMessages(peer, { limit: 500 })) {
+  for await (const msg of client.iterMessages(peer)) {
     if (!isVideoMessage(msg)) continue;
     const cap = parseCaption(msg.message || '');
     const fileName = getFileName(msg) || cap.fileName || `video_${msg.id}`;
