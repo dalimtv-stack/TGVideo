@@ -219,33 +219,28 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   });
 
   try {
-    const channel = file?.channel || title?.channel;
-    if (!channel || !channel.id || !channel.hash) {
-      throw new Error('Canal no encontrado para este archivo.');
-    }
-    const peer = peerOf(channel);
+    const targetChannel = file?.channel || title?.channel;
+    if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
+    const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
-    const mime = (doc?.mimeType || file.mimeType) === 'video/x-matroska'
-      ? 'video/webm'
-      : (doc?.mimeType || file.mimeType || 'video/mp4');
-
-    if (size > 0 && (await streamingAvailable())) {
-      if (cancelled) return;
+    const mime = doc?.mimeType || file.mimeType || file.mime || 'video/mp4';
+    if (size > 0 && await streamingAvailable()) {
       status.textContent = 'Abriendo túnel de streaming…';
       stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
+      if (cancelled) { stream.close(); return; }
       url = stream.url;
     } else {
       status.textContent = 'Descargando desde Telegram…';
       const buffer = await client.downloadMedia(msg.media, {
         progressCallback: (done, total) => {
           if (cancelled) return;
-          const t = Number(total) || size || 1;
-          status.textContent = `Descargando: ${Math.round((Number(done) / t) * 100)}%`;
+          const fullSize = Number(total) || size || 1;
+          status.textContent = `Descargando: ${Math.round((Number(done) / fullSize) * 100)}%`;
         },
       });
       if (cancelled) return;
@@ -375,33 +370,28 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   });
 
   try {
-    const channel = file?.channel || title?.channel;
-    if (!channel || !channel.id || !channel.hash) {
-      throw new Error('Canal no encontrado para este archivo.');
-    }
-    const peer = peerOf(channel);
+    const targetChannel = file?.channel || title?.channel;
+    if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
+    const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
-    const mime = (doc?.mimeType || file.mimeType) === 'video/x-matroska'
-      ? 'video/webm'
-      : (doc?.mimeType || file.mimeType || 'video/mp4');
-
-    if (size > 0 && (await streamingAvailable())) {
-      if (cancelled) return;
+    const mime = doc?.mimeType || file.mimeType || file.mime || 'video/mp4';
+    if (size > 0 && await streamingAvailable()) {
       status.textContent = 'Abriendo túnel de streaming…';
       stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
+      if (cancelled) { stream.close(); return; }
       url = stream.url;
     } else {
       status.textContent = 'Descargando desde Telegram…';
       const buffer = await client.downloadMedia(msg.media, {
         progressCallback: (done, total) => {
           if (cancelled) return;
-          const t = Number(total) || size || 1;
-          status.textContent = `Descargando: ${Math.round((Number(done) / t) * 100)}%`;
+          const fullSize = Number(total) || size || 1;
+          status.textContent = `Descargando: ${Math.round((Number(done) / fullSize) * 100)}%`;
         },
       });
       if (cancelled) return;
