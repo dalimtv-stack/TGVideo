@@ -3,92 +3,122 @@ import { createKV } from '../core/kv.js';
 import { getCacheMaxMb } from '../settings/global.js';
 
 const posterKV = createKV('tgvideo_posters', 'posters');
-const blobUrls = new Map();
+const memoryCache = new Map();
+const inFlight = new Set();
+let quotaTimer = null;
 
-/**
- * Obtiene la URL local de la carátula si ya está en caché, o descarga y almacena.
- */
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function scheduleQuotaCheck() {
+  clearTimeout(quotaTimer);
+  quotaTimer = setTimeout(() => {
+    const maxBytes = (getCacheMaxMb() || 100) * 1024 * 1024;
+    enforceQuota(0, maxBytes).catch(() => {});
+  }, 4000);
+}
+
 export async function getCachedPosterUrl(url) {
   if (!url || typeof url !== 'string' || !url.startsWith('http')) return url;
-  if (blobUrls.has(url)) return blobUrls.get(url);
+  if (memoryCache.has(url)) return memoryCache.get(url);
 
   try {
     const item = await posterKV.get(url);
-    if (item && item.blob) {
-      // Tocar timestamp de último uso (LRU)
-      posterKV.set(url, { ...item, lastUsed: Date.now() }).catch(() => {});
-      const objectUrl = URL.createObjectURL(item.blob);
-      blobUrls.set(url, objectUrl);
-      return objectUrl;
+    if (item) {
+      const src = item.dataUrl || (item.blob ? URL.createObjectURL(item.blob) : null);
+      if (src) {
+        posterKV.set(url, { ...item, lastUsed: Date.now() }).catch(() => {});
+        memoryCache.set(url, src);
+        return src;
+      }
     }
   } catch (err) {
     console.warn('[posterCache] Error leyendo caché', err);
   }
 
-  // Si no está en caché, descargar en segundo plano
   cachePosterInBackground(url).catch(() => {});
   return url;
 }
 
-/**
- * Carga una carátula en un elemento <img> usando la caché o descargándola.
- */
 export function loadPoster(img, url) {
-  if (!img || !url) return;
-  if (blobUrls.has(url)) {
-    img.src = blobUrls.get(url);
+  if (!img || !url || typeof url !== 'string' || !url.startsWith('http')) return;
+
+  const targetUrl = url;
+
+  const setupErrorHandler = () => {
+    img.onerror = () => {
+      if (img.src !== targetUrl) {
+        img.src = targetUrl;
+      } else {
+        img.remove();
+      }
+    };
+  };
+
+  setupErrorHandler();
+
+  if (memoryCache.has(targetUrl)) {
+    const cached = memoryCache.get(targetUrl);
+    if (img.src !== cached) img.src = cached;
     return;
   }
 
-  // Priorizar IndexedDB antes de emitir solicitudes a la red
-  posterKV.get(url).then((item) => {
-    if (item?.blob) {
-      const objectUrl = URL.createObjectURL(item.blob);
-      blobUrls.set(url, objectUrl);
-      if (img.isConnected) {
-        img.src = objectUrl;
-        img.addEventListener('error', () => {
-          if (img.src !== url) img.src = url;
-        }, { once: true });
+  if (!img.src || img.src === window.location.href) {
+    img.src = targetUrl;
+  }
+
+  posterKV.get(targetUrl).then(async (item) => {
+    if (!item) {
+      cachePosterInBackground(targetUrl).catch(() => {});
+      return;
+    }
+
+    let localUrl = item.dataUrl || (item.blob ? URL.createObjectURL(item.blob) : null);
+    if (localUrl) {
+      memoryCache.set(targetUrl, localUrl);
+      if (img.isConnected && img.src !== localUrl) {
+        setupErrorHandler();
+        img.src = localUrl;
       }
-      posterKV.set(url, { ...item, lastUsed: Date.now() }).catch(() => {});
+      posterKV.set(targetUrl, { ...item, lastUsed: Date.now() }).catch(() => {});
     } else {
-      if (img.isConnected) {
-        img.src = url;
-      }
-      cachePosterInBackground(url).catch(() => {});
+      cachePosterInBackground(targetUrl).catch(() => {});
     }
   }).catch(() => {
-    if (img.isConnected) img.src = url;
+    if (img.isConnected && (!img.src || img.src === window.location.href)) {
+      img.src = targetUrl;
+    }
   });
 }
 
 async function cachePosterInBackground(url) {
-  if (!url || !url.startsWith('http')) return null;
+  if (!url || typeof url !== 'string' || !url.startsWith('http')) return null;
+  if (memoryCache.has(url) || inFlight.has(url)) return memoryCache.get(url) || null;
+
+  inFlight.add(url);
   try {
     const res = await fetch(url, { mode: 'cors' });
     if (!res.ok) return null;
     const blob = await res.blob();
     const size = blob.size || 0;
-    const maxBytes = (getCacheMaxMb() || 100) * 1024 * 1024;
 
-    // Asegurar cuota aplicando política LRU
-    await enforceQuota(size, maxBytes);
+    const dataUrl = await blobToDataUrl(blob);
+    memoryCache.set(url, dataUrl);
 
-    const record = {
-      url,
-      blob,
-      size,
-      lastUsed: Date.now(),
-      createdAt: Date.now(),
-    };
+    const record = { url, dataUrl, size, lastUsed: Date.now(), createdAt: Date.now() };
     await posterKV.set(url, record);
-    const objectUrl = URL.createObjectURL(blob);
-    blobUrls.set(url, objectUrl);
-    return objectUrl;
+    scheduleQuotaCheck();
+    return dataUrl;
   } catch (err) {
-    console.warn('[posterCache] No se pudo guardar carátula en caché', err);
     return null;
+  } finally {
+    inFlight.delete(url);
   }
 }
 
@@ -98,16 +128,12 @@ async function enforceQuota(newBytes, maxBytes) {
     let totalBytes = entries.reduce((acc, [, item]) => acc + (item?.size || 0), 0);
     if (totalBytes + newBytes <= maxBytes) return;
 
-    // Ordenar de más antigua a más reciente según lastUsed (LRU)
     entries.sort(([, a], [, b]) => (a?.lastUsed || a?.createdAt || 0) - (b?.lastUsed || b?.createdAt || 0));
 
     for (const [key, item] of entries) {
       if (totalBytes + newBytes <= maxBytes) break;
       await posterKV.del(key);
-      if (blobUrls.has(key)) {
-        try { URL.revokeObjectURL(blobUrls.get(key)); } catch (_) {}
-        blobUrls.delete(key);
-      }
+      memoryCache.delete(key);
       totalBytes -= (item?.size || 0);
     }
   } catch (err) {
@@ -115,9 +141,6 @@ async function enforceQuota(newBytes, maxBytes) {
   }
 }
 
-/**
- * Devuelve las estadísticas actuales de la caché.
- */
 export async function getPosterCacheStats() {
   try {
     const entries = await posterKV.entries();
@@ -127,60 +150,42 @@ export async function getPosterCacheStats() {
     const maxMb = getCacheMaxMb() || 100;
     return { count, bytes, mb, maxMb };
   } catch (err) {
-    console.warn('[posterCache] Error al obtener estadísticas', err);
     return { count: 0, bytes: 0, mb: '0.0', maxMb: getCacheMaxMb() || 100 };
   }
 }
 
-/**
- * Optimiza la caché: elimina carátulas que no correspondan a ningún elemento activo.
- */
 export async function optimizePosterCache(activeUrls = []) {
   try {
     const entries = await posterKV.entries();
     const activeSet = new Set(activeUrls.filter(Boolean));
-    let deleted = 0;
-    let freedBytes = 0;
+    let deleted = 0, freedBytes = 0;
 
     if (activeSet.size > 0) {
       for (const [key, item] of entries) {
         if (!activeSet.has(key)) {
           await posterKV.del(key);
-          if (blobUrls.has(key)) {
-            try { URL.revokeObjectURL(blobUrls.get(key)); } catch (_) {}
-            blobUrls.delete(key);
-          }
+          memoryCache.delete(key);
           deleted++;
           freedBytes += (item?.size || 0);
         }
       }
     }
 
-    // Por si aún excede el límite máximo configurado
     const maxBytes = (getCacheMaxMb() || 100) * 1024 * 1024;
     await enforceQuota(0, maxBytes);
-
     const freedMb = (freedBytes / (1024 * 1024)).toFixed(1);
     return { deleted, freedBytes, freedMb };
   } catch (err) {
-    console.warn('[posterCache] Error al optimizar', err);
     return { deleted: 0, freedBytes: 0, freedMb: '0.0' };
   }
 }
 
-/**
- * Borra toda la caché de portadas.
- */
 export async function clearPosterCache() {
   try {
-    for (const url of blobUrls.values()) {
-      try { URL.revokeObjectURL(url); } catch (_) {}
-    }
-    blobUrls.clear();
+    memoryCache.clear();
     await posterKV.clear();
     return true;
   } catch (err) {
-    console.warn('[posterCache] Error al vaciar caché', err);
     return false;
   }
 }
