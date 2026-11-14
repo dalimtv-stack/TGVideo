@@ -35,32 +35,32 @@ export async function getCachedPosterUrl(url) {
  */
 export function loadPoster(img, url) {
   if (!img || !url) return;
+
+  // 1. Si ya tenemos un ObjectURL creado y disponible en memoria, usarlo directamente
   if (blobUrls.has(url)) {
     img.src = blobUrls.get(url);
     return;
   }
 
-  // Priorizar IndexedDB antes de emitir solicitudes a la red
-  posterKV.get(url).then((item) => {
-    if (item?.blob) {
-      const objectUrl = URL.createObjectURL(item.blob);
-      blobUrls.set(url, objectUrl);
-      if (img.isConnected) {
-        img.src = objectUrl;
-        img.addEventListener('error', () => {
-          if (img.src !== url) img.src = url;
-        }, { once: true });
-      }
-      posterKV.set(url, { ...item, lastUsed: Date.now() }).catch(() => {});
-    } else {
-      if (img.isConnected) {
-        img.src = url;
-      }
-      cachePosterInBackground(url).catch(() => {});
+  // 2. Establecer URL directa de inmediato para que la carátula se pinte sin ningún retraso
+  if (!img.src || img.src !== url) {
+    img.src = url;
+  }
+
+  const handleBlobError = () => {
+    img.removeEventListener('error', handleBlobError);
+    if (img.src !== url) {
+      img.src = url;
     }
-  }).catch(() => {
-    if (img.isConnected) img.src = url;
-  });
+  };
+  img.addEventListener('error', handleBlobError, { once: true });
+
+  // 3. En segundo plano consultar IndexedDB para cambiar al Blob local tan pronto esté listo
+  getCachedPosterUrl(url).then(cachedUrl => {
+    if (cachedUrl && cachedUrl !== url && img.isConnected) {
+      img.src = cachedUrl;
+    }
+  }).catch(() => {});
 }
 
 async function cachePosterInBackground(url) {
