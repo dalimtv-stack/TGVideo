@@ -4,13 +4,43 @@ const kv = createKV();
 const API = 'https://api.themoviedb.org/3';
 const IMAGE = 'https://image.tmdb.org/t/p/';
 
-export function cleanSearchName(name = '') {
-  return String(name).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '')
+const VALID_YEAR_RE = /(?:19\d{2}|20[0-2]\d|2030)/;
+
+export function extractTitleAndYear(name = '') {
+  let str = String(name || '').trim();
+  str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '')
+    .replace(/\b(2160p|1080p|720p|480p|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc)\b.*/i, '')
     .replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, '')
     .replace(/\d{1,2}x\d{1,3}.*/i, '')
-    .replace(/(2160p|1080p|720p|480p|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc).*/i, '')
     .replace(/[._]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  let year = null;
+  const parenMatch = str.match(/[\(\[]\s*((?:19\d{2}|20[0-2]\d|2030))\s*[\)\]]/);
+  if (parenMatch) {
+    const stripped = str.replace(/[\(\[]\s*(?:19\d{2}|20[0-2]\d|2030)\s*[\)\]]/g, '').trim();
+    if (stripped) {
+      year = parenMatch[1];
+      str = stripped;
+    }
+  } else {
+    const endYearMatch = str.match(/(?:^|[\s_-])\b((?:19\d{2}|20[0-2]\d|2030))\s*$/);
+    if (endYearMatch) {
+      const stripped = str.slice(0, endYearMatch.index).trim();
+      if (stripped) {
+        year = endYearMatch[1];
+        str = stripped;
+      }
+    }
+  }
+
+  str = str.replace(/[-–—\s]+$/, '').trim();
+  return { title: str || String(name || '').trim(), year };
 }
+
+export function cleanSearchName(name = '') {
+  return extractTitleAndYear(name).title;
+}
+
 export function parseTmdbId(value) {
   const m = String(value || '').match(/(?:themoviedb\.org\/(?:tv|movie|collection)\/|^(?:(?:tv|movie|collection)[:/])?)(\d+)/i);
   return m ? Number(m[1]) : null;
@@ -31,7 +61,7 @@ async function request(path, params = {}, signal) {
 }
 export async function validateTmdbKey() { return request('/configuration'); }
 
-const normalize = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export async function setManualMetadata(title, metadata) {
   if (!title || !metadata) return null;
@@ -67,13 +97,20 @@ export async function searchTmdbManual({ query, type = 'movie', year = '', direc
     }];
   }
 
-  const q = String(query || '').trim();
+  const parsed = extractTitleAndYear(query);
+  const q = String(parsed.title || query || '').trim();
+  const searchYear = String(year || parsed.year || '').trim();
+
   if (!q) return [];
   const params = { query: q };
-  if (year && endpoint !== 'collection') {
-    params[endpoint === 'tv' ? 'first_air_date_year' : 'year'] = String(year).trim();
+  if (searchYear && endpoint !== 'collection') {
+    params[endpoint === 'tv' ? 'first_air_date_year' : 'year'] = searchYear;
   }
-  const search = await request(`/search/${endpoint}`, params, signal);
+  let search = await request(`/search/${endpoint}`, params, signal);
+  if ((!search.results || search.results.length === 0) && searchYear && endpoint !== 'collection') {
+    search = await request(`/search/${endpoint}`, { query: q }, signal).catch(() => search);
+  }
+
   return (search.results || []).slice(0, 10).map(r => ({
     id: r.id,
     type: endpoint,
@@ -121,20 +158,24 @@ export async function enrichTitle(title, { signal } = {}) {
   if (title.isSaga) return enrichSaga(title, { signal });
   const type = title.tipo === 'serie' ? 'tv' : 'movie';
   const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
-  const query = cleanSearchName(title.nombre);
-  const year = title.yearHint || query.match(/\b((?:19|20)\d{2})\b/)?.[1];
+  const parsed = extractTitleAndYear(title.nombre);
+  const query = parsed.title;
+  const year = title.yearHint || parsed.year;
   const cacheKey = `tmdb_v2:${type}:${directId || `${query.toLowerCase()}:${year || ''}`}`;
   const cached = await kv.get(cacheKey).catch(() => null);
   if (cached) { title.metadata = cached; return cached; }
   if (!getTmdbKey()) return null;
   let id = directId;
   if (!id) {
-    const searchTitle = query.replace(/\(?\b(?:19|20)\d{2}\b\)?/, '').trim();
-    const search = await request(`/search/${type}`, {
-      query: searchTitle,
-      ...(year ? { [type === 'tv' ? 'first_air_date_year' : 'year']: year } : {}),
-    }, signal);
-    const match = search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(searchTitle))) || search.results?.[0];
+    const params = { query };
+    if (year) {
+      params[type === 'tv' ? 'first_air_date_year' : 'year'] = year;
+    }
+    let search = await request(`/search/${type}`, params, signal);
+    if ((!search.results || search.results.length === 0) && year) {
+      search = await request(`/search/${type}`, { query }, signal).catch(() => search);
+    }
+    const match = search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(query))) || search.results?.[0];
     id = match?.id;
   }
   if (!id) return null;
@@ -157,9 +198,10 @@ export async function enrichTitles(titles, { signal, onUpdate } = {}) {
         if (title.isSaga) {
           for (const file of title.archivos) {
             if (signal?.aborted) break;
+            const parsedFilm = extractTitleAndYear(file.fileName || file.label);
             const film = {
-              tipo: 'pelicula', nombre: file.label, tmdbId: file.tmdbId,
-              yearHint: file.fileName.match(/\b((?:19|20)\d{2})\b/)?.[1], archivos: [file],
+              tipo: 'pelicula', nombre: parsedFilm.title, tmdbId: file.tmdbId,
+              yearHint: file.fileName?.match(/\b((?:19\d{2}|20[0-2]\d|2030))\b/)?.[1] || parsedFilm.year, archivos: [file],
             };
             try {
               const metadata = await enrichTitle(film, { signal });
