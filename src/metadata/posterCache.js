@@ -35,16 +35,24 @@ export async function getCachedPosterUrl(url) {
  */
 export function loadPoster(img, url) {
   if (!img || !url) return;
-  if (blobUrls.has(url)) {
-    img.src = blobUrls.get(url);
-    return;
-  }
-  img.src = url; // Inicia carga directa de inmediato para evitar parpadeos
-  getCachedPosterUrl(url).then(cachedUrl => {
-    if (cachedUrl && cachedUrl !== url && img.isConnected) {
-      img.src = cachedUrl;
+  const initialUrl = blobUrls.get(url) || url;
+  img.src = initialUrl;
+
+  const handleBlobError = () => {
+    img.removeEventListener("error", handleBlobError);
+    if (img.src !== url) {
+      img.src = url;
     }
-  }).catch(() => {});
+  };
+  img.addEventListener("error", handleBlobError, { once: true });
+
+  if (!blobUrls.has(url)) {
+    getCachedPosterUrl(url).then(cachedUrl => {
+      if (cachedUrl && cachedUrl !== url && img.isConnected) {
+        img.src = cachedUrl;
+      }
+    }).catch(() => {});
+  }
 }
 
 async function cachePosterInBackground(url) {
