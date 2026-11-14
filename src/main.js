@@ -9,6 +9,8 @@ import { loadProgress, titleState } from './player/progress.js';
 import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
 import { enrichTitles } from './metadata/tmdb.js';
+import { loadPoster } from './metadata/posterCache.js';
+import { showMetadataModal } from './ui/metadataModal.js';
 import { loadGlobalConfig } from './settings/global.js';
 import { showProfileMenu, profileAvatar } from './ui/settings.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
@@ -153,7 +155,7 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
       <main class="home-main">${body}</main>
     </div>`);
 
-  document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync,
+  document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
     onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
     onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
   document.getElementById('btn-reload').onclick = () => showHome(tg, sync, profile, { reload: true });
@@ -169,8 +171,9 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
       const poster = card.querySelector('.lib-card-poster');
       if (!poster || poster.querySelector('img')) return;
       const image = document.createElement('img');
-      image.className = 'poster-image'; image.src = title.metadata.poster;
+      image.className = 'poster-image';
       image.alt = title.nombre; image.loading = 'lazy';
+      loadPoster(image, title.metadata.poster);
       image.onerror = () => image.remove();
       poster.prepend(image);
     });
@@ -187,7 +190,8 @@ function applySagaFilmMetadata(t) {
     const image = row.querySelector('.saga-film-poster');
     if (image && file.metadata.poster && image.tagName !== 'IMG') {
       const img = document.createElement('img');
-      img.className = 'saga-film-poster'; img.src = file.metadata.poster; img.alt = ''; img.loading = 'lazy';
+      img.className = 'saga-film-poster'; img.alt = ''; img.loading = 'lazy';
+      loadPoster(img, file.metadata.poster);
       image.replaceWith(img);
     }
     const name = row.querySelector('.ep-name');
@@ -210,13 +214,35 @@ function applyDetailMetadata(t) {
     detail.classList.add('has-backdrop');
   }
   const poster = detail.querySelector('.lib-card-poster.big');
-  if (metadata.poster && poster && !poster.querySelector('img')) {
-    const image = document.createElement('img');
-    image.className = 'poster-image'; image.src = metadata.poster; image.alt = t.nombre;
-    image.onerror = () => image.remove(); poster.prepend(image);
+  if (metadata.poster && poster) {
+    let image = poster.querySelector('img.poster-image');
+    if (!image) {
+      image = document.createElement('img');
+      image.className = 'poster-image'; image.alt = t.nombre;
+      image.onerror = () => image.remove(); poster.prepend(image);
+    }
+    loadPoster(image, metadata.poster);
   }
   const synopsis = detail.querySelector('.detail-syn');
-  if (synopsis && metadata.overview) { synopsis.textContent = metadata.overview; synopsis.hidden = false; }
+  const toggle = detail.querySelector('.btn-syn-toggle');
+  if (synopsis && metadata.overview) {
+    synopsis.textContent = metadata.overview;
+    synopsis.hidden = false;
+    if (toggle) {
+      if (metadata.overview.length > 120) {
+        toggle.hidden = false;
+        toggle.textContent = 'más';
+        synopsis.classList.remove('expanded');
+        toggle.onclick = (e) => {
+          e.preventDefault();
+          const exp = synopsis.classList.toggle('expanded');
+          toggle.textContent = exp ? 'menos' : 'más';
+        };
+      } else {
+        toggle.hidden = true;
+      }
+    }
+  }
   const info = detail.querySelector('.detail-metadata');
   if (info) info.textContent = [metadata.date?.slice(0, 4), metadata.rating ? `★ ${metadata.rating.toFixed(1)}` : '', `TMDB ${metadata.id}`].filter(Boolean).join(' · ');
 }
@@ -245,7 +271,10 @@ function showDetail(tg, sync, profile, t) {
 
   showScreen(`
     <div class="screen detail" data-title="${esc(t.id)}" style="--pc:${posterColor(t.grupo + t.nombre)}">
-      <button class="btn-ghost" data-focusable id="d-back">← Volver</button>
+      <div class="detail-nav-bar">
+        <button class="btn-ghost" data-focusable id="d-back">← Volver</button>
+        <button class="btn-icon-circle" data-focusable id="d-fix-meta" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>
+      </div>
       <div class="detail-head">
         <div class="lib-card-poster big" style="--pc:${posterColor(t.grupo + t.nombre)}">
           <span class="poster-group">${esc(t.grupo)}</span><span class="poster-name">${esc(t.nombre)}</span></div>
@@ -254,7 +283,10 @@ function showDetail(tg, sync, profile, t) {
           <h1>${esc(t.nombre)}</h1>
           <p class="detail-sub">${t.archivos.length} ${t.isSaga ? 'películas de la saga' : t.tipo === 'serie' ? 'episodios' : 'archivo(s)'} · ${t.origen.tipo === 'macro' ? 'Sección de canal macro' : t.isSaga ? 'Saga' : t.origen.tipo === 'año_container' ? 'Película del catálogo por año' : 'Canal dedicado'}</p>
           <p class="detail-metadata"></p>
-          <p class="detail-syn" ${t.archivos[0]?.synopsis ? '' : 'hidden'}>${esc(t.archivos[0]?.synopsis || '')}</p>
+          <div class="detail-syn-container">
+            <p class="detail-syn" ${t.archivos[0]?.synopsis ? '' : 'hidden'}>${esc(t.archivos[0]?.synopsis || '')}</p>
+            <button class="btn-syn-toggle" type="button" hidden data-focusable>más</button>
+          </div>
           ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
         </div>
       </div>
@@ -264,6 +296,12 @@ function showDetail(tg, sync, profile, t) {
     </div>`);
 
   applyDetailMetadata(t);
+  document.getElementById('d-fix-meta').onclick = () => {
+    showMetadataModal(t, () => {
+      applyDetailMetadata(t);
+      showDetail(tg, sync, profile, t);
+    });
+  };
 
   const play = (f) => {
     const p = loadProgress(profile.id)[f.key];
@@ -291,7 +329,7 @@ function showDetail(tg, sync, profile, t) {
       return `<div class="ep ${t.isSaga ? 'saga-film' : ''}" tabindex="0" data-focusable data-key="${esc(f.key)}">
         ${t.isSaga ? poster : `<div class="ep-num">${ep || '•'}</div>`}
         <div class="ep-info"><div class="ep-name">${esc(t.isSaga ? filmTitle : f.label)}</div>
-          <div class="ep-meta">${[filmYear, fmtDur(f.duration), fmtSize(f.size), new Date(f.date * 1000).toLocaleDateString()].filter(Boolean).join(' · ')}</div>
+          <div class="ep-meta">${[filmYear, fmtDur(f.duration), fmtSize(f.size)].filter(Boolean).join(' · ')}</div>
           ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
         <div class="ep-state">${p?.is_completed ? '✓ Visto' : pct ? Math.round(pct) + '%' : ''}</div>
       </div>`;
