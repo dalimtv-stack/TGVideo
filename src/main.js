@@ -10,6 +10,7 @@ import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
 import { enrichTitles, enrichTitle } from './metadata/tmdb.js';
 import { loadPoster } from './metadata/posterCache.js';
+import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
 import { loadGlobalConfig } from './settings/global.js';
 import { showProfileMenu, profileAvatar } from './ui/settings.js';
@@ -80,7 +81,7 @@ function cardHtml(t, progress) {
   return `
     <div class="lib-card" tabindex="0" data-focusable data-title="${esc(t.id)}">
       <div class="lib-card-poster" style="--pc:${posterColor(t.grupo + t.nombre)}">
-        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" alt="${esc(displayName)}" loading="lazy">` : ''}
+        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" data-poster-url="${esc(t.metadata.poster)}" alt="${esc(displayName)}" loading="lazy">` : ''}
         <span class="poster-group">${esc(t.grupo)}</span>
         <span class="poster-name">${esc(displayName)}</span>
         <span class="poster-meta">${metaBadge}</span>
@@ -182,6 +183,11 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
   document.getElementById('btn-reload').onclick = () => showHome(tg, sync, profile, { reload: true });
   document.querySelectorAll('.lib-card').forEach(card => {
     card.onclick = () => { const t = titles.find(x => x.id === card.dataset.title); if (t) showDetail(tg, sync, profile, t); };
+  });
+  // Revisar IndexedDB al volver a Home para reutilizar la portada local.
+  document.querySelectorAll('.lib-card-poster img.poster-image').forEach(img => {
+    const url = img.getAttribute('data-poster-url') || img.src;
+    if (url) loadPoster(img, url);
   });
 
   focusFirst('.lib-card');
@@ -405,12 +411,17 @@ function showDetail(tg, sync, profile, t) {
       const ep = f.season || f.episode ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
       const filmYear = f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || '';
       const filmTitle = f.metadata?.name || f.sagaName || f.label;
+      const sentAt = Number(f.date);
+      const episodeDate = Number.isFinite(sentAt) && sentAt > 0
+        ? new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(sentAt * 1000))
+        : '';
+      const episodeTitle = prettyEpisodeName(f.fileName || f.label, t.metadata?.name || t.nombre);
       const poster = f.metadata?.poster ? `<img class="saga-film-poster" src="${esc(f.metadata.poster)}" alt="" loading="lazy">` : `<div class="saga-film-poster saga-film-placeholder">${esc(filmYear || '🎬')}</div>`;
       const synopsis = f.metadata?.overview ? `<div class="saga-film-synopsis">${esc(f.metadata.overview)}</div>` : '';
       return `<div class="ep ${t.isSaga ? 'saga-film' : ''}" tabindex="0" data-focusable data-key="${esc(f.key)}">
         ${t.isSaga ? poster : `<div class="ep-num">${ep || '•'}</div>`}
-        <div class="ep-info"><div class="ep-name">${esc(t.isSaga ? filmTitle : f.label)}</div>
-          <div class="ep-meta">${[filmYear, fmtDur(f.duration), fmtSize(f.size)].filter(Boolean).join(' · ')}</div>
+        <div class="ep-info"><div class="ep-name">${esc(t.isSaga ? filmTitle : t.tipo === 'serie' ? episodeTitle : filmTitle)}</div>
+          <div class="ep-meta">${(t.tipo === 'serie' ? [fmtDur(f.duration), fmtSize(f.size), episodeDate] : [filmYear, fmtDur(f.duration), fmtSize(f.size)]).filter(Boolean).join(' · ')}</div>
           ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
         <div class="ep-state">${p?.is_completed ? '✓ Visto' : pct ? Math.round(pct) + '%' : ''}</div>
       </div>`;
