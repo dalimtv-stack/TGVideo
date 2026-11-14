@@ -1,5 +1,6 @@
 // Navegación espacial D-Pad (Android TV / Fire TV / teclado)
 let onBack = null;
+let initialized = false;
 export function setBackHandler(fn) { onBack = fn; }
 
 function center(el) { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
@@ -24,8 +25,11 @@ function move(dir) {
 }
 
 export function initDpad() {
+  if (initialized) return;
+  initialized = true;
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT') return;
+    if (e.defaultPrevented) return;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
     const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
     if (map[e.key]) {
       if (document.activeElement?.tagName === 'VIDEO') return;
