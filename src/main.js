@@ -397,6 +397,7 @@ async function showProfileSelector(tg, sync) {
         age_limit: '+18',
         pin: null,
         is_kids: false,
+        player: 'artplayer',
       },
       progress: {},
       recent: [],
