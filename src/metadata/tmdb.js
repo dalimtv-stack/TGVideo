@@ -30,20 +30,52 @@ async function request(path, params = {}, signal) {
   return response.json();
 }
 export async function validateTmdbKey() { return request('/configuration'); }
+
+const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+async function enrichSaga(title, { signal } = {}) {
+  const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
+  const query = cleanSearchName(title.nombre);
+  const cacheKey = `tmdb_v2:collection:${directId || query.toLowerCase()}`;
+  const cached = await kv.get(cacheKey).catch(() => null);
+  if (cached) { title.metadata = cached; return cached; }
+  if (!getTmdbKey()) return null;
+  let data;
+  if (directId) data = await request(`/collection/${directId}`, {}, signal);
+  else {
+    const search = await request('/search/collection', { query }, signal);
+    const match = search.results?.find(r => normalize(r.name) === normalize(query)) || search.results?.[0];
+    if (!match?.id) return null;
+    data = await request(`/collection/${match.id}`, {}, signal);
+  }
+  const metadata = {
+    id: data.id, type: 'collection', name: data.name || title.nombre,
+    overview: data.overview || '', poster: imageUrl(data.poster_path),
+    backdrop: imageUrl(data.backdrop_path, 'w1280'),
+  };
+  await kv.set(cacheKey, metadata).catch(error => console.warn('[tmdb] Caché no disponible', error));
+  title.metadata = metadata;
+  return metadata;
+}
+
 export async function enrichTitle(title, { signal } = {}) {
+  if (title.isSaga) return enrichSaga(title, { signal });
   const type = title.tipo === 'serie' ? 'tv' : 'movie';
   const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
   const query = cleanSearchName(title.nombre);
-  const cacheKey = `tmdb_v1:${type}:${directId || query.toLowerCase()}`;
+  const year = title.yearHint || query.match(/\b((?:19|20)\d{2})\b/)?.[1];
+  const cacheKey = `tmdb_v2:${type}:${directId || `${query.toLowerCase()}:${year || ''}`}`;
   const cached = await kv.get(cacheKey).catch(() => null);
   if (cached) { title.metadata = cached; return cached; }
   if (!getTmdbKey()) return null;
   let id = directId;
   if (!id) {
-    const year = query.match(/\b((?:19|20)\d{2})\b/)?.[1];
-    const search = await request(`/search/${type}`, { query: query.replace(/\(?\b(?:19|20)\d{2}\b\)?/, '').trim(), ...(year ? { [type === 'tv' ? 'first_air_date_year' : 'year']: year } : {}) }, signal);
-    const normalize = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const match = search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(query))) || search.results?.[0];
+    const searchTitle = query.replace(/\(?\b(?:19|20)\d{2}\b\)?/, '').trim();
+    const search = await request(`/search/${type}`, {
+      query: searchTitle,
+      ...(year ? { [type === 'tv' ? 'first_air_date_year' : 'year']: year } : {}),
+    }, signal);
+    const match = search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(searchTitle))) || search.results?.[0];
     id = match?.id;
   }
   if (!id) return null;
@@ -54,13 +86,31 @@ export async function enrichTitle(title, { signal } = {}) {
   title.metadata = metadata;
   return metadata;
 }
+
 export async function enrichTitles(titles, { signal, onUpdate } = {}) {
   let index = 0;
   await Promise.all(Array.from({ length: Math.min(3, titles.length) }, async () => {
     while (index < titles.length && !signal?.aborted) {
       const title = titles[index++];
-      try { if (await enrichTitle(title, { signal })) onUpdate?.(title); }
-      catch (error) { if (error.name !== 'AbortError') console.warn('[tmdb]', error.message); }
+      try {
+        if (await enrichTitle(title, { signal })) onUpdate?.(title);
+        // Cada película dentro de una saga obtiene metadatos propios, además de la portada de colección.
+        if (title.isSaga) {
+          for (const file of title.archivos) {
+            if (signal?.aborted) break;
+            const film = {
+              tipo: 'pelicula', nombre: file.label, tmdbId: file.tmdbId,
+              yearHint: file.fileName.match(/\b((?:19|20)\d{2})\b/)?.[1], archivos: [file],
+            };
+            try {
+              const metadata = await enrichTitle(film, { signal });
+              if (metadata) { file.metadata = metadata; onUpdate?.(title); }
+            } catch (error) {
+              if (error.name !== 'AbortError') console.warn('[tmdb saga film]', error.message);
+            }
+          }
+        }
+      } catch (error) { if (error.name !== 'AbortError') console.warn('[tmdb]', error.message); }
     }
   }));
 }
