@@ -1,5 +1,5 @@
 import { modal } from './settings.js';
-import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata } from '../metadata/tmdb.js';
+import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata, enrichTitle } from '../metadata/tmdb.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -118,7 +118,8 @@ export function showMetadataModal(title, onUpdated) {
   resetBtn?.addEventListener('click', async () => {
     if (!confirm('¿Restablecer identificación a automática?')) return;
     await clearManualMetadata(title);
-    onUpdated?.(null);
+    await enrichTitle(title);
+    onUpdated?.(title.metadata);
     close();
   });
 
