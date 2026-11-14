@@ -20,6 +20,8 @@ function normalizeCategory(cat) {
 /**
  * Parsea el título de un canal Telegram según la convención tgstorage.
  * Ejemplos:
+ *   1988:Por año::Películas::tgstorage
+ *   Puñales por la espalda:Sagas::Películas::tgstorage
  *   Green Lantern:HBO::Series::tgstorage
  *   HBO::Series::tgstorage
  *   2000-2010::Películas::tgstorage
@@ -39,23 +41,44 @@ export function parseChannelTitle(title) {
 
   const head = parts.slice(0, -1).join(SEP);
 
-  // Macro: Grupo::Categoría::tgstorage  (sin ":")
+  // Macro o Contenedor directo sin TSEP: Grupo::Categoría::tgstorage
   if (!head.includes(TSEP)) {
+    const trimmedHead = head.trim();
+    const isYear = /^(por a[ñn]o|a[ñn]os|d[ée]cadas|por d[ée]cada)s?$/i.test(trimmedHead) ||
+                   /^\d{4}(s|[-–]\d{4})?$/.test(trimmedHead);
     return {
-      name: head.trim(),
-      group: head.trim(),
+      name: trimmedHead,
+      group: trimmedHead,
       category,
-      macro: true,
+      macro: !isYear,
+      isYearContainer: category === 'Películas' && isYear,
+      isSaga: false,
     };
   }
 
-  // Dedicado: Nombre:Grupo::Categoría::tgstorage
+  // Dedicado o clasificado: Nombre:Grupo::Categoría::tgstorage
   const [name, group = ''] = head.split(TSEP);
+  const trimmedName = (name || '').trim();
+  const trimmedGroup = (group || 'Sin grupo').trim();
+
+  // Contenedores por año (ej: 1988:Por año::Películas::tgstorage)
+  const isYearContainer = category === 'Películas' && (
+    /^(por a[ñn]o|a[ñn]os|d[ée]cadas|por d[ée]cada)s?$/i.test(trimmedGroup) ||
+    /^\d{4}(s|[-–]\d{4})?$/.test(trimmedName)
+  );
+
+  // Sagas / Colecciones (ej: Puñales por la espalda:Sagas::Películas::tgstorage)
+  const isSaga = category === 'Películas' && (
+    /^(sagas?|colecci[oó]n|colecciones|franquicias?)$/i.test(trimmedGroup)
+  );
+
   return {
-    name: (name || '').trim(),
-    group: (group || 'Sin grupo').trim(),
+    name: trimmedName,
+    group: trimmedGroup,
     category,
     macro: false,
+    isYearContainer,
+    isSaga,
   };
 }
 
@@ -77,6 +100,8 @@ export async function loadLibrary(client) {
       group: info.group,
       category: info.category,
       macro: !!info.macro,
+      isYearContainer: !!info.isYearContainer,
+      isSaga: !!info.isSaga,
       title: entity.title,
       // id del último mensaje: si cambia, el canal se ha modificado
       top: top || found.get(String(entity.id))?.top || 0,
