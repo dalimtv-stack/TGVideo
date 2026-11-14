@@ -12,6 +12,7 @@ import { Api } from 'telegram';
 
 const SYNC_CHANNEL_TITLE = 'Perfiles::TGVideo::tgstorage';
 const MAX_VERSIONS = 5;
+const CONFIG_RE = /^config_global_(\d{14})\.json$/i;
 const FILE_RE = /^perfil_([a-z0-9_]+)_(\d{14})\.json$/i;
 
 function normalizeName(name) {
@@ -38,7 +39,10 @@ function nowTimestamp() {
 
 function parseFilename(name) {
   const m = String(name || '').match(FILE_RE);
-  if (!m) return null;
+  if (!m) {
+    const config = String(name || '').match(CONFIG_RE);
+    return config ? { kind: 'global', timestamp: config[1] } : null;
+  }
   return { profileId: m[1], timestamp: m[2] };
 }
 
@@ -88,7 +92,6 @@ export function createTelegramSync({ getClient, peerOf }) {
 
     for await (const msg of client.iterMessages(peer, {
       filter: new Api.InputMessagesFilterDocument(),
-      limit: 100,
     })) {
       const doc = msg.document;
       if (!doc) continue;
@@ -101,6 +104,7 @@ export function createTelegramSync({ getClient, peerOf }) {
       files.push({
         messageId: msg.id,
         filename,
+        kind: parsed.kind || 'profile',
         profileId: parsed.profileId,
         timestamp: parsed.timestamp,
         date: msg.date,
@@ -112,11 +116,48 @@ export function createTelegramSync({ getClient, peerOf }) {
     return files;
   }
 
+  async function pullGlobalConfig() {
+    const files = await listSyncFiles();
+    const latest = files.find(f => f.kind === 'global');
+    if (!latest) return null;
+    const client = await getClient();
+    const peer = peerOf(await findOrCreateSyncChannel());
+    const [msg] = await client.getMessages(peer, { ids: [latest.messageId] });
+    if (!msg?.media) throw new Error('No se pudo leer la configuración global.');
+    const buffer = await client.downloadMedia(msg.media, {});
+    const data = JSON.parse(new TextDecoder().decode(buffer));
+    if (!data || data.v !== 1 || typeof data.tmdb !== 'object') throw new Error('Configuración global no válida.');
+    return data;
+  }
+
+  // Cola independiente: no descartar guardados si se están subiendo perfiles.
+  let globalQueue = Promise.resolve();
+  function pushGlobalConfig(data) {
+    const snapshot = structuredClone(data);
+    const task = globalQueue.catch(() => {}).then(async () => {
+      const client = await getClient();
+      const peer = peerOf(await findOrCreateSyncChannel());
+      const filename = `config_global_${nowTimestamp()}.json`;
+      const file = new File([JSON.stringify(snapshot)], filename, { type: 'application/json' });
+      const uploaded = await client.uploadFile({ file, workers: 1 });
+      await client.sendFile(peer, { file: uploaded, caption: 'Configuración global TGVideo', forceDocument: true,
+        attributes: [new Api.DocumentAttributeFilename({ fileName: filename })] });
+      const old = (await listSyncFiles()).filter(f => f.kind === 'global').slice(MAX_VERSIONS);
+      for (const f of old) {
+        try { await client.deleteMessages(peer, [f.messageId], { revoke: true }); }
+        catch (error) { console.warn('[config] No se pudo borrar versión antigua', error); }
+      }
+    });
+    globalQueue = task;
+    return task;
+  }
+
   async function listProfiles() {
     const files = await listSyncFiles();
     const byId = new Map();
 
     for (const f of files) {
+      if (f.kind !== 'profile') continue;
       if (!byId.has(f.profileId)) byId.set(f.profileId, f);
     }
 
@@ -271,6 +312,8 @@ export function createTelegramSync({ getClient, peerOf }) {
   }
 
   return {
+    pullGlobalConfig,
+    pushGlobalConfig,
     listProfiles,
     pullProfile,
     pushProfile,
