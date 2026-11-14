@@ -1,241 +1,40 @@
-import { getGlobalConfig, getTmdbKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
-import { loadProgress } from '../player/progress.js';
-import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../metadata/posterCache.js';
+import { createKV } from '../core/kv.js';
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export function profileAvatar(profile) { return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(profile.avatar) ? profile.avatar : esc((profile.name || '?')[0].toUpperCase()); }
+const kv = createKV();
+const KEY = 'config_global_v1';
+let config = { v: 1, tmdb: { apiKey: '' }, cache: { maxMb: 100 }, updated_at: 0 };
 
-export function modal(title, body) {
-  const previousFocus = document.activeElement;
-  const overlay = document.createElement('div');
-  overlay.className = 'settings-overlay';
-  overlay.innerHTML = `<section class="settings-dialog" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header><h2>${esc(title)}</h2><button class="btn-icon" data-focusable aria-label="Cerrar">×</button></header>${body}</section>`;
-  document.body.append(overlay);
-  const close = () => { overlay.remove(); previousFocus?.focus({ preventScroll: true }); };
-  overlay.querySelector('[aria-label="Cerrar"]').onclick = close;
-  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-  overlay.addEventListener('keydown', e => {
-    if (['Escape', 'Backspace', 'GoBack'].includes(e.key) && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) { e.preventDefault(); e.stopPropagation(); close(); }
-    if (e.key === 'Tab') {
-      const items = [...overlay.querySelectorAll('button, input, select')].filter(el => !el.disabled);
-      const first = items[0], last = items.at(-1);
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
-    }
-    // El D-Pad queda dentro del diálogo, no en la biblioteca del fondo.
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && !['INPUT', 'SELECT'].includes(e.target.tagName)) {
-      const items = [...overlay.querySelectorAll('[data-focusable]')];
-      const index = items.indexOf(document.activeElement);
-      const delta = ['ArrowLeft', 'ArrowUp'].includes(e.key) ? -1 : 1;
-      items[Math.max(0, Math.min(items.length - 1, index + delta))]?.focus({ preventScroll: true });
-      e.preventDefault(); e.stopPropagation();
-    }
-  });
-  overlay.querySelector('button')?.focus({ preventScroll: true });
-  return { overlay, close };
+export function getGlobalConfig() { return structuredClone(config); }
+export function getTmdbKey() {
+  return config.tmdb?.apiKey || import.meta.env?.VITE_TMDB_DEMO_API_KEY || '';
 }
-
-export function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalChanged, libraryTitles = [] }) {
-  const { overlay, close } = modal(profile.name, `<nav class="profile-menu"><button class="btn-ghost" data-focusable data-action="switch">Cambiar de perfil</button><button class="btn-ghost" data-focusable data-action="profile">Ajustes de perfil</button><button class="btn-ghost" data-focusable data-action="global">Ajustes globales</button></nav>`);
-  overlay.querySelector('[data-action="switch"]').onclick = () => { close(); onSwitch(); };
-  overlay.querySelector('[data-action="profile"]').onclick = () => { close(); profileSettings(profile, sync, onChanged); };
-  overlay.querySelector('[data-action="global"]').onclick = () => { close(); globalSettings(sync, onGlobalChanged, libraryTitles); };
+export function getCacheMaxMb() {
+  return Number(config.cache?.maxMb) || 100;
 }
-
-function profileSettings(profile, sync, onChanged) {
-  const avatars = ['👤', '🙂', '🎬', '🌟', '🐱'];
-  const localPlayer = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${profile.id}`) : null;
-  const currentPlayer = profile.player || localPlayer || 'artplayer';
-  const localSkip = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_skip_${profile.id}`) : null;
-  const currentSkip = Number(profile.skip_seconds || localSkip || 10);
-
-  const { overlay, close } = modal('Ajustes de perfil', `
-    <form class="profile-settings-form">
-      <div class="settings-fields">
-        <label>Nombre
-          <input name="name" value="${esc(profile.name)}" required maxlength="60">
-        </label>
-        <label>Avatar
-          <select name="avatar">
-            ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
-          </select>
-        </label>
-      </div>
-
-      <fieldset class="settings-section">
-        <legend class="settings-legend">Reproductor</legend>
-        <div class="settings-radios">
-          <label class="settings-radio-label" data-focusable>
-            <input type="radio" name="player" value="artplayer" ${currentPlayer !== 'native' ? 'checked' : ''}>
-            <div class="settings-radio-info">
-              <strong>ArtPlayer</strong>
-              <small>Diseño cinemático, gestos táctiles, proporción, subtítulos y velocidad.</small>
-            </div>
-          </label>
-          <label class="settings-radio-label" data-focusable>
-            <input type="radio" name="player" value="native" ${currentPlayer === 'native' ? 'checked' : ''}>
-            <div class="settings-radio-info">
-              <strong>Reproductor nativo</strong>
-              <small>El que estaba antes. Recomendado en iPhone para seleccionar audios, subtítulos y AirPlay.</small>
-            </div>
-          </label>
-        </div>
-
-        <div class="settings-field-row">
-          <label class="settings-label-inline">
-            <span>Salto por doble toque / doble clic:</span>
-            <select name="skipSeconds" class="settings-select" data-focusable>
-              <option value="5" ${currentSkip === 5 ? 'selected' : ''}>5 segundos</option>
-              <option value="10" ${currentSkip === 10 ? 'selected' : ''}>10 segundos (por defecto)</option>
-              <option value="15" ${currentSkip === 15 ? 'selected' : ''}>15 segundos</option>
-              <option value="30" ${currentSkip === 30 ? 'selected' : ''}>30 segundos</option>
-            </select>
-          </label>
-        </div>
-      </fieldset>
-
-      <p class="settings-status" role="status"></p>
-      <button class="btn" data-focusable type="submit">Guardar</button>
-    </form>
-  `);
-
-  overlay.querySelector('form').onsubmit = async e => {
-    e.preventDefault();
-    const form = e.currentTarget, button = form.querySelector('[type="submit"]');
-    const name = form.elements.name.value.trim();
-    if (!name) return;
-    const player = form.elements.player?.value || 'artplayer';
-    const skipSeconds = Number(form.elements.skipSeconds?.value) || 10;
-
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(`tgvideo_player_${profile.id}`, player);
-      localStorage.setItem(`tgvideo_skip_${profile.id}`, String(skipSeconds));
+export async function loadGlobalConfig(sync) {
+  config = (await kv.get(KEY).catch(() => null)) || config;
+  try {
+    const remote = await sync.pullGlobalConfig();
+    if (remote && (remote.updated_at || 0) >= (config.updated_at || 0)) {
+      config = remote;
+      await kv.set(KEY, config);
     }
-    profile.player = player;
-    profile.skip_seconds = skipSeconds;
-
-    button.disabled = true;
-    try {
-      const remote = await sync.pullProfile(profile.id);
-      if (!remote) throw new Error('No se pudo leer el perfil. Inténtalo de nuevo.');
-      const changed = { ...remote.profile, name, avatar: form.elements.avatar.value, player, skip_seconds: skipSeconds };
-      await sync.pushProfile({ ...remote, profile: changed, progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {}) });
-      Object.assign(profile, changed);
-      close(); onChanged();
-    } catch (error) { form.querySelector('[role="status"]').textContent = error.message; }
-    finally { button.disabled = false; }
-  };
+  } catch (error) { console.warn('[config] No se pudo descargar configuración', error); }
+  return getGlobalConfig();
 }
+export async function saveGlobalConfig(sync, options = {}) {
+  const apiKey = typeof options === 'string' ? options : options.apiKey;
+  const cacheMaxMb = options.cacheMaxMb !== undefined ? Number(options.cacheMaxMb) : (config.cache?.maxMb || 100);
 
-function globalSettings(sync, onChanged, libraryTitles = []) {
-  const ownKey = !!getGlobalConfig().tmdb?.apiKey;
-  const demoAvailable = !!import.meta.env?.VITE_TMDB_DEMO_API_KEY;
-  const status = ownKey ? 'Usando tu clave personalizada de TMDB.' : demoAvailable ? 'Usando clave demo integrada.' : 'No hay clave demo configurada. Introduce tu clave de TMDB.';
-  const currentMaxMb = getCacheMaxMb() || 100;
-
-  const { overlay, close } = modal('Ajustes globales', `
-    <form class="global-settings-form">
-      <fieldset class="settings-section">
-        <legend class="settings-legend">Metadatos (TMDB)</legend>
-        <p class="settings-hint">${status}</p>
-        <label>Clave de TMDB
-          <input name="apiKey" type="password" autocomplete="off" placeholder="${ownKey ? 'Nueva clave (dejar vacío para conservar)' : 'API Key o token de lectura'}">
-        </label>
-        ${ownKey ? `<button class="btn-ghost btn-sm" data-focusable type="button" id="reset-tmdb">${demoAvailable ? 'Usar clave demo' : 'Eliminar clave personalizada'}</button>` : ''}
-      </fieldset>
-
-      <fieldset class="settings-section">
-        <legend class="settings-legend">Caché de portadas</legend>
-        <p class="settings-hint">Almacena las carátulas en el dispositivo para no descargarlas continuamente.</p>
-        <label>Límite de espacio en megas (MB)
-          <input name="cacheMaxMb" type="number" min="10" max="2000" step="10" value="${currentMaxMb}">
-        </label>
-        <div class="cache-stats-box" id="cache-stats">
-          <span>Calculando espacio de caché…</span>
-        </div>
-        <div class="settings-actions-inline">
-          <button class="btn-ghost btn-sm" data-focusable type="button" id="btn-optimize-cache">Optimizar caché</button>
-          <button class="btn-ghost btn-sm" data-focusable type="button" id="btn-clear-cache">Vaciar caché</button>
-        </div>
-      </fieldset>
-
-      <p class="settings-status" role="status"></p>
-      <div class="settings-actions">
-        <button class="btn" data-focusable type="submit">Guardar ajustes</button>
-      </div>
-    </form>
-  `);
-
-  const statsBox = overlay.querySelector('#cache-stats');
-  const refreshStats = async () => {
-    if (!statsBox) return;
-    const stats = await getPosterCacheStats();
-    statsBox.innerHTML = `<strong>Uso actual:</strong> ${stats.mb} MB de ${stats.maxMb} MB · <span>${stats.count} portadas guardadas</span>`;
+  const next = {
+    ...config,
+    v: 1,
+    tmdb: { ...config.tmdb, apiKey: typeof apiKey === 'string' ? apiKey.trim() : (config.tmdb?.apiKey || '') },
+    cache: { ...config.cache, maxMb: Math.max(10, Math.min(5000, cacheMaxMb || 100)) },
+    updated_at: Date.now()
   };
-  refreshStats();
-
-  overlay.querySelector('#btn-optimize-cache')?.addEventListener('click', async () => {
-    const btn = overlay.querySelector('#btn-optimize-cache');
-    const msg = overlay.querySelector('[role="status"]');
-    btn.disabled = true;
-    msg.textContent = 'Optimizando caché y eliminando portadas huérfanas…';
-    try {
-      // Recolectar URLs válidas de carátulas activas en la biblioteca
-      const validUrls = [];
-      for (const t of libraryTitles) {
-        if (t.metadata?.poster) validUrls.push(t.metadata.poster);
-        if (t.metadata?.backdrop) validUrls.push(t.metadata.backdrop);
-        if (t.archivos) {
-          for (const f of t.archivos) {
-            if (f.metadata?.poster) validUrls.push(f.metadata.poster);
-          }
-        }
-      }
-      const res = await optimizePosterCache(validUrls);
-      await refreshStats();
-      msg.textContent = `✓ Caché optimizada: ${res.deleted} portadas obsoletas eliminadas (${res.freedMb} MB liberados).`;
-    } catch (e) {
-      msg.textContent = 'Error al optimizar la caché: ' + e.message;
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  overlay.querySelector('#btn-clear-cache')?.addEventListener('click', async () => {
-    if (!confirm('¿Seguro que deseas vaciar toda la caché de portadas?')) return;
-    const msg = overlay.querySelector('[role="status"]');
-    await clearPosterCache();
-    await refreshStats();
-    msg.textContent = '✓ Caché de portadas vaciada por completo.';
-  });
-
-  async function save({ apiKey, cacheMaxMb }) {
-    const buttons = overlay.querySelectorAll('button'); buttons.forEach(b => b.disabled = true);
-    const message = overlay.querySelector('[role="status"]');
-    message.textContent = 'Guardando configuración…';
-    try {
-      if (apiKey) {
-        const url = new URL('https://api.themoviedb.org/3/configuration');
-        const headers = {};
-        if (apiKey.includes('.')) headers.Authorization = `Bearer ${apiKey}`;
-        else url.searchParams.set('api_key', apiKey);
-        const response = await fetch(url, { headers });
-        if (!response.ok) throw new Error('No se pudo validar la clave de TMDB. Comprueba la clave y tu conexión.');
-      }
-      await saveGlobalConfig(sync, { apiKey, cacheMaxMb });
-      close(); onChanged();
-    } catch (error) { message.textContent = error.message; }
-    finally { buttons.forEach(b => b.disabled = false); }
-  }
-
-  overlay.querySelector('form').onsubmit = e => {
-    e.preventDefault();
-    const key = e.currentTarget.elements.apiKey.value.trim();
-    const cacheMaxMb = Number(e.currentTarget.elements.cacheMaxMb.value) || 100;
-    save({ apiKey: key || (ownKey ? undefined : ''), cacheMaxMb });
-  };
-  overlay.querySelector('#reset-tmdb')?.addEventListener('click', () => {
-    const cacheMaxMb = Number(overlay.querySelector('[name="cacheMaxMb"]').value) || 100;
-    save({ apiKey: '', cacheMaxMb });
-  });
+  await sync.pushGlobalConfig(next);
+  config = next;
+  await kv.set(KEY, config);
+  return getGlobalConfig();
 }
