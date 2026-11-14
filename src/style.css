@@ -1,3 +1,13 @@
+
+/* Prevenir zoom automático al enfocar inputs en móviles y fijar viewport */
+input, select, textarea {
+  font-size: 16px !important;
+  touch-action: manipulation;
+}
+html, body {
+  touch-action: pan-x pan-y;
+  overscroll-behavior: none;
+}
 * {
   box-sizing: border-box;
   margin: 0;
@@ -897,8 +907,36 @@ html, body {
 
 @media (max-width: 680px) {
   .detail-head {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
     gap: 1.2rem;
-    align-items: flex-start;
+    margin: 0.5rem 0 1.5rem;
+  }
+  .lib-card-poster.big {
+    width: 175px;
+    height: 254px;
+    margin: 0 auto;
+  }
+  .detail-head > div:last-child {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .detail h1 {
+    font-size: 1.85rem;
+  }
+  .detail-syn {
+    text-align: left;
+  }
+  .detail-syn-container {
+    width: 100%;
+  }
+  #d-play {
+    width: 100%;
+    max-width: 320px;
+    margin: 0.8rem auto 0;
   }
   .detail-syn:not(.expanded) {
     display: -webkit-box;
