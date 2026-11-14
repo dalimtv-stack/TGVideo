@@ -8,11 +8,11 @@ export function cleanSearchName(name = '') {
   return String(name).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '')
     .replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, '')
     .replace(/\d{1,2}x\d{1,3}.*/i, '')
-    .replace(/\b(2160p|1080p|720p|480p|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc)\b.*/i, '')
+    .replace(/(2160p|1080p|720p|480p|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc).*/i, '')
     .replace(/[._]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 export function parseTmdbId(value) {
-  const m = String(value || '').match(/(?:themoviedb\.org\/(?:tv|movie)\/|^(?:(?:tv|movie)[:/])?)(\d+)/i);
+  const m = String(value || '').match(/(?:themoviedb\.org\/(?:tv|movie|collection)\/|^(?:(?:tv|movie|collection)[:/])?)(\d+)/i);
   return m ? Number(m[1]) : null;
 }
 export function imageUrl(path, size = 'w342') { return path?.startsWith('/') ? IMAGE + size + path : ''; }
@@ -31,9 +31,65 @@ async function request(path, params = {}, signal) {
 }
 export async function validateTmdbKey() { return request('/configuration'); }
 
-const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const normalize = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export async function setManualMetadata(title, metadata) {
+  if (!title || !metadata) return null;
+  const key = `manual_tmdb:${title.id}`;
+  await kv.set(key, metadata).catch(e => console.warn('[tmdb] Error guardando identificación manual', e));
+  title.metadata = metadata;
+  title.tmdbId = metadata.id;
+  return metadata;
+}
+
+export async function clearManualMetadata(title) {
+  if (!title) return;
+  const key = `manual_tmdb:${title.id}`;
+  await kv.del(key).catch(() => {});
+  title.metadata = null;
+  title.tmdbId = null;
+}
+
+export async function searchTmdbManual({ query, type = 'movie', year = '', directId = null }, signal) {
+  const endpoint = type === 'collection' ? 'collection' : type === 'serie' || type === 'tv' ? 'tv' : 'movie';
+  const id = parseTmdbId(directId);
+  if (id) {
+    const data = await request(`/${endpoint}/${id}`, {}, signal);
+    return [{
+      id: data.id,
+      type: endpoint,
+      name: data.name || data.title,
+      overview: data.overview || '',
+      date: data.first_air_date || data.release_date || '',
+      poster: imageUrl(data.poster_path),
+      backdrop: imageUrl(data.backdrop_path, 'w1280'),
+      rating: data.vote_average || 0,
+    }];
+  }
+
+  const q = String(query || '').trim();
+  if (!q) return [];
+  const params = { query: q };
+  if (year && endpoint !== 'collection') {
+    params[endpoint === 'tv' ? 'first_air_date_year' : 'year'] = String(year).trim();
+  }
+  const search = await request(`/search/${endpoint}`, params, signal);
+  return (search.results || []).slice(0, 10).map(r => ({
+    id: r.id,
+    type: endpoint,
+    name: r.name || r.title,
+    overview: r.overview || '',
+    date: r.first_air_date || r.release_date || '',
+    poster: imageUrl(r.poster_path),
+    backdrop: imageUrl(r.backdrop_path, 'w1280'),
+    rating: r.vote_average || 0,
+  }));
+}
 
 async function enrichSaga(title, { signal } = {}) {
+  const manual = await kv.get(`manual_tmdb:${title.id}`).catch(() => null);
+  if (manual) { title.metadata = manual; title.tmdbId = manual.id; return manual; }
+
   const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
   const query = cleanSearchName(title.nombre);
   const cacheKey = `tmdb_v2:collection:${directId || query.toLowerCase()}`;
@@ -59,6 +115,9 @@ async function enrichSaga(title, { signal } = {}) {
 }
 
 export async function enrichTitle(title, { signal } = {}) {
+  const manual = await kv.get(`manual_tmdb:${title.id}`).catch(() => null);
+  if (manual) { title.metadata = manual; title.tmdbId = manual.id; return manual; }
+
   if (title.isSaga) return enrichSaga(title, { signal });
   const type = title.tipo === 'serie' ? 'tv' : 'movie';
   const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
