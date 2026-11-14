@@ -76,13 +76,14 @@ function cardHtml(t, progress) {
   const p = st.next && progress[st.next.key];
   const pct = p && p.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
   const displayName = t.metadata?.name || t.metadata?.title || t.nombre;
+  const metaBadge = t.tipo === 'serie' ? `${t.archivos.length} ep.` : t.isSaga ? `${t.archivos.length} películas` : t.archivos.length > 1 ? `${t.archivos.length} vers.` : 'Película';
   return `
     <div class="lib-card" tabindex="0" data-focusable data-title="${esc(t.id)}">
       <div class="lib-card-poster" style="--pc:${posterColor(t.grupo + t.nombre)}">
-        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" alt="${esc(displayName)}" loading="lazy">` : ''}
+        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" data-poster-url="${esc(t.metadata.poster)}" alt="${esc(displayName)}" loading="lazy">` : ''}
         <span class="poster-group">${esc(t.grupo)}</span>
         <span class="poster-name">${esc(displayName)}</span>
-        <span class="poster-meta">${t.tipo === 'serie' ? t.archivos.length + ' ep.' : t.isSaga ? t.archivos.length + ' películas' : 'Película'}</span>
+        <span class="poster-meta">${metaBadge}</span>
         ${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}
       </div>
       <div class="lib-card-name">${esc(displayName)}</div>
@@ -93,10 +94,21 @@ function cardHtml(t, progress) {
 async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const client = tg.getClient();
   const channels = await loadLibrary(client);
-  const saved = force ? {} : ((await kv.get(LIB_KEY).catch(() => null))?.cache || {});
+  const savedObj = force ? null : await kv.get(LIB_KEY).catch(() => null);
+  const saved = savedObj?.cache || {};
+  const savedMeta = savedObj?.metadataMap || {};
   const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
+  if (savedMeta) {
+    for (const t of titles) {
+      if (savedMeta[t.id]) t.metadata = savedMeta[t.id];
+    }
+  }
   const sig = channels.map(c => `${c.id}:${c.top}:${c.title}`).sort().join('|');
-  await kv.set(LIB_KEY, { cache, channels, sig, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
+  const metadataMap = { ...savedMeta };
+  for (const t of titles) {
+    if (t.metadata) metadataMap[t.id] = t.metadata;
+  }
+  await kv.set(LIB_KEY, { cache, channels, sig, metadataMap, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
   return { titles, sig };
 }
 
@@ -113,6 +125,11 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
     if (saved?.cache && saved.channels) {
       // Biblioteca local: se muestra al instante sin leer Telegram
       const { titles } = await buildTitles(null, saved.channels, tg.peerOf, null, saved.cache);
+      if (saved.metadataMap) {
+        for (const t of titles) {
+          if (saved.metadataMap[t.id]) t.metadata = saved.metadataMap[t.id];
+        }
+      }
       TITLES_CACHE = titles;
     } else {
       showLoading('Cargando biblioteca…');
@@ -163,10 +180,34 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
   document.querySelectorAll('.lib-card').forEach(card => {
     card.onclick = () => { const t = titles.find(x => x.id === card.dataset.title); if (t) showDetail(tg, sync, profile, t); };
   });
+  // Hidratar inmediatamente las portadas desde la caché local IndexedDB
+  document.querySelectorAll('.lib-card-poster img.poster-image').forEach(img => {
+    const url = img.getAttribute('data-poster-url') || img.src;
+    if (url) loadPoster(img, url);
+  });
   focusFirst('.lib-card');
   metadataController?.abort();
   metadataController = new AbortController();
+
+  let metaSaveTimer = null;
+  const saveMetaDebounced = () => {
+    clearTimeout(metaSaveTimer);
+    metaSaveTimer = setTimeout(async () => {
+      try {
+        const saved = await kv.get(LIB_KEY).catch(() => null);
+        if (saved) {
+          saved.metadataMap = saved.metadataMap || {};
+          for (const t of (TITLES_CACHE || [])) {
+            if (t.metadata) saved.metadataMap[t.id] = t.metadata;
+          }
+          await kv.set(LIB_KEY, saved);
+        }
+      } catch (_) {}
+    }, 1500);
+  };
+
   enrichTitles(titles, { signal: metadataController.signal, onUpdate: title => {
+    saveMetaDebounced();
     document.querySelectorAll('.lib-card').forEach(card => {
       if (String(card.dataset.title) !== String(title.id)) return;
       const displayName = title.metadata?.name || title.metadata?.title || title.nombre;
@@ -272,7 +313,7 @@ function applyDetailMetadata(t) {
     }
   }
   const info = detail.querySelector('.detail-metadata');
-  if (info) info.textContent = [metadata.date?.slice(0, 4), metadata.rating ? `★ ${metadata.rating.toFixed(1)}` : '', `TMDB ${metadata.id}`].filter(Boolean).join(' · ');
+  if (info) info.textContent = [metadata.date?.slice(0, 4), metadata.rating ? `★ ${metadata.rating.toFixed(1)}` : ''].filter(Boolean).join(' · ');
 }
 
 function showDetail(tg, sync, profile, t) {
@@ -311,7 +352,7 @@ function showDetail(tg, sync, profile, t) {
         <div>
           <div class="detail-kicker">${t.tipo === 'serie' ? 'Serie' : 'Película'} · ${esc(t.grupo)}</div>
           <h1>${esc(displayName)}</h1>
-          <p class="detail-sub">${t.archivos.length} ${t.isSaga ? 'películas de la saga' : t.tipo === 'serie' ? 'episodios' : 'archivo(s)'} · ${t.origen.tipo === 'macro' ? 'Sección de canal macro' : t.isSaga ? 'Saga' : t.origen.tipo === 'año_container' ? 'Película del catálogo por año' : 'Canal dedicado'}</p>
+          <p class="detail-sub">${t.isSaga ? `${t.archivos.length} películas de la saga` : t.tipo === 'serie' ? `${t.archivos.length} episodios` : t.archivos.length > 1 ? `${t.archivos.length} versiones disponibles` : (fmtDur(t.archivos[0]?.duration) || 'Película')}</p>
           <p class="detail-metadata"></p>
           <div class="detail-syn-container">
             <p class="detail-syn" ${t.archivos[0]?.synopsis ? '' : 'hidden'}>${esc(t.archivos[0]?.synopsis || '')}</p>
@@ -321,7 +362,7 @@ function showDetail(tg, sync, profile, t) {
         </div>
       </div>
       ${seasonsBarHtml}
-      <h2 class="row-title" id="d-list-title">${t.isSaga ? 'Películas de la saga' : t.tipo === 'serie' ? 'Episodios' : 'Archivos'}</h2>
+      <h2 class="row-title" id="d-list-title">${t.isSaga ? 'Películas de la saga' : t.tipo === 'serie' ? 'Episodios' : t.archivos.length > 1 ? 'Versiones disponibles' : 'Archivo de vídeo'}</h2>
       <div class="ep-list" id="ep-list"></div>
     </div>`);
 
