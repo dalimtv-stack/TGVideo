@@ -21,7 +21,7 @@ export function buildHomeRows(titles, progress) {
     list.forEach(t => { if (!m.has(t.grupo)) m.set(t.grupo, []); m.get(t.grupo).push(t); });
     [...m.keys()].sort((a, b) => a.localeCompare(b)).forEach(g =>
       rows.push({ id: `${label}-${g}`, title: `${label} · ${g}`,
-        items: m.get(g).sort((a, b) => a.nombre.localeCompare(b.nombre)) }));
+        items: m.get(g).sort((a, b) => (a.metadata?.name || a.nombre).localeCompare(b.metadata?.name || b.nombre, 'es', { numeric: true })) }));
   };
   groupRows(series, 'Series');
   groupRows(movies, 'Películas');
