@@ -92,7 +92,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       // La saga permanece agrupada como una tarjeta única.
       const sagaFiles = files.map(f => ({ ...f, sagaName: movieName(f) }));
       titles.push({
-        id: ch.id, tipo: 'pelicula', isSaga: true, grupo: ch.group || 'Sagas',
+        id: String(ch.id), tipo: 'pelicula', isSaga: true, grupo: ch.group || 'Sagas',
         nombre: ch.name, origen: { tipo: 'saga', channelId: ch.id }, channel: ch,
         archivos: sagaFiles, ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
         tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
