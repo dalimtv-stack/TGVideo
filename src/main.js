@@ -8,7 +8,7 @@ import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
 import { loadProgress, titleState } from './player/progress.js';
 import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
-import { enrichTitles } from './metadata/tmdb.js';
+import { enrichTitles, enrichTitle } from './metadata/tmdb.js';
 import { loadPoster } from './metadata/posterCache.js';
 import { showMetadataModal } from './ui/metadataModal.js';
 import { loadGlobalConfig } from './settings/global.js';
@@ -75,16 +75,17 @@ function cardHtml(t, progress) {
   const st = titleState(t, progress);
   const p = st.next && progress[st.next.key];
   const pct = p && p.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
+  const displayName = t.metadata?.name || t.metadata?.title || t.nombre;
   return `
     <div class="lib-card" tabindex="0" data-focusable data-title="${esc(t.id)}">
       <div class="lib-card-poster" style="--pc:${posterColor(t.grupo + t.nombre)}">
-        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" alt="${esc(t.nombre)}" loading="lazy">` : ''}
+        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" alt="${esc(displayName)}" loading="lazy">` : ''}
         <span class="poster-group">${esc(t.grupo)}</span>
-        <span class="poster-name">${esc(t.nombre)}</span>
+        <span class="poster-name">${esc(displayName)}</span>
         <span class="poster-meta">${t.tipo === 'serie' ? t.archivos.length + ' ep.' : t.isSaga ? t.archivos.length + ' películas' : 'Película'}</span>
         ${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}
       </div>
-      <div class="lib-card-name">${esc(t.nombre)}</div>
+      <div class="lib-card-name">${esc(displayName)}</div>
     </div>`;
 }
 
@@ -167,23 +168,39 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
   metadataController = new AbortController();
   enrichTitles(titles, { signal: metadataController.signal, onUpdate: title => {
     document.querySelectorAll('.lib-card').forEach(card => {
-      if (card.dataset.title !== title.id || !title.metadata?.poster) return;
+      if (String(card.dataset.title) !== String(title.id)) return;
+      const displayName = title.metadata?.name || title.metadata?.title || title.nombre;
+      const nameEl = card.querySelector('.lib-card-name');
+      if (nameEl && displayName) nameEl.textContent = displayName;
+      const posterNameEl = card.querySelector('.poster-name');
+      if (posterNameEl && displayName) posterNameEl.textContent = displayName;
+
+      if (!title.metadata?.poster) return;
       const poster = card.querySelector('.lib-card-poster');
-      if (!poster || poster.querySelector('img')) return;
-      const image = document.createElement('img');
-      image.className = 'poster-image';
-      image.alt = title.nombre; image.loading = 'lazy';
+      if (!poster) return;
+      let image = poster.querySelector('img.poster-image');
+      if (!image) {
+        image = document.createElement('img');
+        image.className = 'poster-image';
+        image.alt = displayName;
+        image.loading = 'lazy';
+        image.onerror = () => {
+          if (image.src !== title.metadata.poster) image.src = title.metadata.poster;
+        };
+        poster.prepend(image);
+      }
       loadPoster(image, title.metadata.poster);
-      image.onerror = () => image.remove();
-      poster.prepend(image);
     });
-    if (document.querySelector('.detail')?.dataset.title === title.id) applyDetailMetadata(title);
+    if (String(document.querySelector('.detail')?.dataset.title) === String(title.id)) {
+      applyDetailMetadata(title);
+      if (title.isSaga) applySagaFilmMetadata(title);
+    }
   } });
 }
 
 function applySagaFilmMetadata(t) {
   const detail = document.querySelector('.detail');
-  if (!detail || detail.dataset.title !== t.id) return;
+  if (!detail || String(detail.dataset.title) !== String(t.id)) return;
   for (const file of t.archivos) {
     const row = [...detail.querySelectorAll('.ep[data-key]')].find(el => el.dataset.key === file.key);
     if (!row || !file.metadata) continue;
@@ -208,7 +225,14 @@ function applyDetailMetadata(t) {
   const metadata = t.metadata;
   if (!metadata) return;
   const detail = document.querySelector('.detail');
-  if (!detail || detail.dataset.title !== t.id) return;
+  if (!detail || String(detail.dataset.title) !== String(t.id)) return;
+  const displayName = metadata.name || metadata.title || t.nombre;
+
+  const titleH1 = detail.querySelector('.detail-head h1');
+  if (titleH1 && displayName) titleH1.textContent = displayName;
+  const posterName = detail.querySelector('.detail-head .poster-name');
+  if (posterName && displayName) posterName.textContent = displayName;
+
   if (metadata.backdrop) {
     detail.style.setProperty('--detail-backdrop', `url("${metadata.backdrop}")`);
     detail.classList.add('has-backdrop');
@@ -218,9 +242,13 @@ function applyDetailMetadata(t) {
     let image = poster.querySelector('img.poster-image');
     if (!image) {
       image = document.createElement('img');
-      image.className = 'poster-image'; image.alt = t.nombre;
-      image.onerror = () => image.remove(); poster.prepend(image);
+      image.className = 'poster-image';
+      image.alt = displayName;
+      poster.prepend(image);
     }
+    image.onerror = () => {
+      if (image.src !== metadata.poster) image.src = metadata.poster;
+    };
     loadPoster(image, metadata.poster);
   }
   const synopsis = detail.querySelector('.detail-syn');
@@ -268,6 +296,7 @@ function showDetail(tg, sync, profile, t) {
     <div class="seasons-bar"><div class="seasons-label">Temporadas</div>
       <div class="seasons-track">${seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('')}</div>
     </div>` : '';
+  const displayName = t.metadata?.name || t.metadata?.title || t.nombre;
 
   showScreen(`
     <div class="screen detail" data-title="${esc(t.id)}" style="--pc:${posterColor(t.grupo + t.nombre)}">
@@ -277,10 +306,11 @@ function showDetail(tg, sync, profile, t) {
       </div>
       <div class="detail-head">
         <div class="lib-card-poster big" style="--pc:${posterColor(t.grupo + t.nombre)}">
-          <span class="poster-group">${esc(t.grupo)}</span><span class="poster-name">${esc(t.nombre)}</span></div>
+          ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" alt="${esc(displayName)}">` : ''}
+          <span class="poster-group">${esc(t.grupo)}</span><span class="poster-name">${esc(displayName)}</span></div>
         <div>
           <div class="detail-kicker">${t.tipo === 'serie' ? 'Serie' : 'Película'} · ${esc(t.grupo)}</div>
-          <h1>${esc(t.nombre)}</h1>
+          <h1>${esc(displayName)}</h1>
           <p class="detail-sub">${t.archivos.length} ${t.isSaga ? 'películas de la saga' : t.tipo === 'serie' ? 'episodios' : 'archivo(s)'} · ${t.origen.tipo === 'macro' ? 'Sección de canal macro' : t.isSaga ? 'Saga' : t.origen.tipo === 'año_container' ? 'Película del catálogo por año' : 'Canal dedicado'}</p>
           <p class="detail-metadata"></p>
           <div class="detail-syn-container">
@@ -296,6 +326,17 @@ function showDetail(tg, sync, profile, t) {
     </div>`);
 
   applyDetailMetadata(t);
+  if (t.isSaga) applySagaFilmMetadata(t);
+
+  if (!t.metadata) {
+    enrichTitle(t).then(meta => {
+      if (meta && String(document.querySelector('.detail')?.dataset.title) === String(t.id)) {
+        applyDetailMetadata(t);
+        if (t.isSaga) applySagaFilmMetadata(t);
+      }
+    }).catch(() => {});
+  }
+
   document.getElementById('d-fix-meta').onclick = () => {
     showMetadataModal(t, () => {
       applyDetailMetadata(t);
