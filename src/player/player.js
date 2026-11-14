@@ -219,28 +219,37 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   });
 
   try {
-    const targetChannel = file.channel || title?.channel;
-    if (!targetChannel) throw new Error('Canal no encontrado para este archivo.');
-    const peer = await peerOf(targetChannel);
+    const channel = file?.channel || title?.channel;
+    if (!channel || !channel.id || !channel.hash) {
+      throw new Error('Canal no encontrado para este archivo.');
+    }
+    const peer = peerOf(channel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
 
-    if (streamingAvailable()) {
+    const doc = msg.media.document;
+    const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
+    const mime = (doc?.mimeType || file.mimeType) === 'video/x-matroska'
+      ? 'video/webm'
+      : (doc?.mimeType || file.mimeType || 'video/mp4');
+
+    if (size > 0 && (await streamingAvailable())) {
+      if (cancelled) return;
       status.textContent = 'Abriendo túnel de streaming…';
-      stream = await openStream(client, peer, msg.media.document);
-      if (cancelled) { stream.close(); return; }
+      stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
       url = stream.url;
     } else {
       status.textContent = 'Descargando desde Telegram…';
-      const buffer = await client.downloadMedia(msg, {
+      const buffer = await client.downloadMedia(msg.media, {
         progressCallback: (done, total) => {
           if (cancelled) return;
-          if (total) status.textContent = `Descargando: ${Math.round((done / total) * 100)}%`;
+          const t = Number(total) || size || 1;
+          status.textContent = `Descargando: ${Math.round((Number(done) / t) * 100)}%`;
         },
       });
       if (cancelled) return;
-      url = URL.createObjectURL(new Blob([buffer], { type: file.mime || 'video/mp4' }));
+      url = URL.createObjectURL(new Blob([buffer], { type: mime }));
     }
 
     video.src = url;
@@ -366,28 +375,37 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   });
 
   try {
-    const targetChannel = file.channel || title?.channel;
-    if (!targetChannel) throw new Error('Canal no encontrado para este archivo.');
-    const peer = await peerOf(targetChannel);
+    const channel = file?.channel || title?.channel;
+    if (!channel || !channel.id || !channel.hash) {
+      throw new Error('Canal no encontrado para este archivo.');
+    }
+    const peer = peerOf(channel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
 
-    if (streamingAvailable()) {
+    const doc = msg.media.document;
+    const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
+    const mime = (doc?.mimeType || file.mimeType) === 'video/x-matroska'
+      ? 'video/webm'
+      : (doc?.mimeType || file.mimeType || 'video/mp4');
+
+    if (size > 0 && (await streamingAvailable())) {
+      if (cancelled) return;
       status.textContent = 'Abriendo túnel de streaming…';
-      stream = await openStream(client, peer, msg.media.document);
-      if (cancelled) { stream.close(); return; }
+      stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
       url = stream.url;
     } else {
       status.textContent = 'Descargando desde Telegram…';
-      const buffer = await client.downloadMedia(msg, {
+      const buffer = await client.downloadMedia(msg.media, {
         progressCallback: (done, total) => {
           if (cancelled) return;
-          if (total) status.textContent = `Descargando: ${Math.round((done / total) * 100)}%`;
+          const t = Number(total) || size || 1;
+          status.textContent = `Descargando: ${Math.round((Number(done) / t) * 100)}%`;
         },
       });
       if (cancelled) return;
-      url = URL.createObjectURL(new Blob([buffer], { type: file.mime || 'video/mp4' }));
+      url = URL.createObjectURL(new Blob([buffer], { type: mime }));
     }
 
     if (cancelled) return;
