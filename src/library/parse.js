@@ -45,3 +45,23 @@ export function parseEpisode(name = '') {
 export function prettyName(fileName = '') {
   return fileName.replace(VIDEO_EXT, '').replace(/[._]+/g, ' ').trim();
 }
+
+
+/** Limpia la etiqueta técnica del nombre de un episodio y deja el título legible. */
+export function prettyEpisodeName(fileName = '', showName = '') {
+  let label = prettyName(fileName);
+  const candidates = [showName].filter(Boolean);
+  for (const candidate of candidates) {
+    const escaped = String(candidate).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    label = label.replace(new RegExp(`^\\s*${escaped}\\s*[-–—:]*\\s*`, 'i'), '');
+  }
+  label = label
+    .replace(/^\s*(?:S\s*\d{1,2}\s*E\s*\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|T(?:emp(?:orada)?)?\s*\d{1,2}\s*(?:E|ep|cap(?:[ií]tulo)?)?\s*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\s*\d{1,3})\s*[-–—:]*\s*/i, '')
+    .replace(/\[[^\]]*\]|\([^)]*\)/g, (part) => /(?:2160|1080|720|480|4k|uhd|bluray|blu\s*ray|hdtv|web[- ]?dl|webrip|brrip|dual|castellano|latino|dts|ac3|x26[45]|h26[45]|hevc)/i.test(part) ? '' : part)
+    .replace(/\b(?:2160p|1080p|720p|480p|4k|uhd|bluray|blu\s*ray|hdtv|web[- ]?dl|webrip|brrip|dual|castellano|latino|dts|ac3|x26[45]|h26[45]|hevc)\b.*$/i, '')
+    .replace(/[._]+/g, ' ')
+    .replace(/\s*[-–—]\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return label || prettyName(fileName);
+}
