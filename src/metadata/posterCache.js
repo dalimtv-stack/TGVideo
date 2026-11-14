@@ -35,24 +35,32 @@ export async function getCachedPosterUrl(url) {
  */
 export function loadPoster(img, url) {
   if (!img || !url) return;
-  const initialUrl = blobUrls.get(url) || url;
-  img.src = initialUrl;
-
-  const handleBlobError = () => {
-    img.removeEventListener("error", handleBlobError);
-    if (img.src !== url) {
-      img.src = url;
-    }
-  };
-  img.addEventListener("error", handleBlobError, { once: true });
-
-  if (!blobUrls.has(url)) {
-    getCachedPosterUrl(url).then(cachedUrl => {
-      if (cachedUrl && cachedUrl !== url && img.isConnected) {
-        img.src = cachedUrl;
-      }
-    }).catch(() => {});
+  if (blobUrls.has(url)) {
+    img.src = blobUrls.get(url);
+    return;
   }
+
+  // Priorizar IndexedDB antes de emitir solicitudes a la red
+  posterKV.get(url).then((item) => {
+    if (item?.blob) {
+      const objectUrl = URL.createObjectURL(item.blob);
+      blobUrls.set(url, objectUrl);
+      if (img.isConnected) {
+        img.src = objectUrl;
+        img.addEventListener('error', () => {
+          if (img.src !== url) img.src = url;
+        }, { once: true });
+      }
+      posterKV.set(url, { ...item, lastUsed: Date.now() }).catch(() => {});
+    } else {
+      if (img.isConnected) {
+        img.src = url;
+      }
+      cachePosterInBackground(url).catch(() => {});
+    }
+  }).catch(() => {
+    if (img.isConnected) img.src = url;
+  });
 }
 
 async function cachePosterInBackground(url) {
