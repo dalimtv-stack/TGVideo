@@ -68,7 +68,7 @@ function promptUI(title, placeholder = '', type = 'text') {
 // ---------- Home con biblioteca ----------
 let TITLES_CACHE = null;
 let metadataController = null;
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtSize = (b) => b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(0) + ' MB';
 const fmtDur = (s) => s ? `${Math.floor(s / 3600) ? Math.floor(s / 3600) + 'h ' : ''}${Math.floor(s % 3600 / 60)}min` : '';
 
@@ -81,7 +81,7 @@ function cardHtml(t, progress) {
   return `
     <div class="lib-card" tabindex="0" data-focusable data-title="${esc(t.id)}">
       <div class="lib-card-poster" style="--pc:${posterColor(t.grupo + t.nombre)}">
-        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" data-poster-url="${esc(t.metadata.poster)}" alt="${esc(displayName)}" loading="lazy">` : ''}
+        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" data-poster-url="${esc(t.metadata.poster)}" alt="${esc(displayName)}" loading="lazy" onerror="this.onerror=null;this.remove();">` : ''}
         <span class="poster-group">${esc(t.grupo)}</span>
         <span class="poster-name">${esc(displayName)}</span>
         <span class="poster-meta">${metaBadge}</span>
@@ -145,8 +145,8 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
     refreshLibrary(tg).then(({ titles, sig }) => {
       if (sig === before) return;
       const existingMeta = new Map();
-      (TITLES_CACHE || []).forEach(t => { if (t.metadata) existingMeta.set(t.id, t.metadata); });
-      titles.forEach(t => { if (existingMeta.has(t.id)) t.metadata = existingMeta.get(t.id); });
+      (TITLES_CACHE || []).forEach(t => { if (t.metadata) existingMeta.set(String(t.id), t.metadata); });
+      titles.forEach(t => { if (existingMeta.has(String(t.id))) t.metadata = existingMeta.get(String(t.id)); });
       TITLES_CACHE = titles;
       if (document.querySelector('.home-screen')) showHome(tg, sync, profile);
     }).catch(e => console.warn('[library] comprobación fallida', e));
@@ -184,7 +184,6 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
   document.querySelectorAll('.lib-card').forEach(card => {
     card.onclick = () => { const t = titles.find(x => x.id === card.dataset.title); if (t) showDetail(tg, sync, profile, t); };
   });
-  // Revisar IndexedDB al volver a Home para reutilizar la portada local.
   document.querySelectorAll('.lib-card-poster img.poster-image').forEach(img => {
     const url = img.getAttribute('data-poster-url') || img.src;
     if (url) loadPoster(img, url);
@@ -230,9 +229,7 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
         image.className = 'poster-image';
         image.alt = displayName;
         image.loading = 'lazy';
-        image.onerror = () => {
-          if (image.src !== title.metadata.poster) image.src = title.metadata.poster;
-        };
+        image.setAttribute('data-poster-url', title.metadata.poster);
         poster.prepend(image);
       }
       loadPoster(image, title.metadata.poster);
@@ -546,7 +543,7 @@ async function showProfileSelector(tg, sync) {
   document.getElementById('btn-logout')?.addEventListener('click', async () => {
     await tg.logout();
     initDpad();
-start();
+    start();
   });
 }
 
