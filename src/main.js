@@ -79,7 +79,7 @@ function cardHtml(t, progress) {
         ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" alt="${esc(t.nombre)}" loading="lazy">` : ''}
         <span class="poster-group">${esc(t.grupo)}</span>
         <span class="poster-name">${esc(t.nombre)}</span>
-        <span class="poster-meta">${t.tipo === 'serie' ? t.archivos.length + ' ep.' : 'Película'}</span>
+        <span class="poster-meta">${t.tipo === 'serie' ? t.archivos.length + ' ep.' : t.isSaga ? t.archivos.length + ' películas' : 'Película'}</span>
         ${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}
       </div>
       <div class="lib-card-name">${esc(t.nombre)}</div>
@@ -178,6 +178,28 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
   } });
 }
 
+function applySagaFilmMetadata(t) {
+  const detail = document.querySelector('.detail');
+  if (!detail || detail.dataset.title !== t.id) return;
+  for (const file of t.archivos) {
+    const row = [...detail.querySelectorAll('.ep[data-key]')].find(el => el.dataset.key === file.key);
+    if (!row || !file.metadata) continue;
+    const image = row.querySelector('.saga-film-poster');
+    if (image && file.metadata.poster && image.tagName !== 'IMG') {
+      const img = document.createElement('img');
+      img.className = 'saga-film-poster'; img.src = file.metadata.poster; img.alt = ''; img.loading = 'lazy';
+      image.replaceWith(img);
+    }
+    const name = row.querySelector('.ep-name');
+    if (name && file.metadata.name) name.textContent = file.metadata.name;
+    const synopsis = row.querySelector('.saga-film-synopsis');
+    if (!synopsis && file.metadata.overview) {
+      const el = document.createElement('div'); el.className = 'saga-film-synopsis'; el.textContent = file.metadata.overview;
+      row.querySelector('.ep-info')?.append(el);
+    }
+  }
+}
+
 function applyDetailMetadata(t) {
   const metadata = t.metadata;
   if (!metadata) return;
@@ -230,14 +252,14 @@ function showDetail(tg, sync, profile, t) {
         <div>
           <div class="detail-kicker">${t.tipo === 'serie' ? 'Serie' : 'Película'} · ${esc(t.grupo)}</div>
           <h1>${esc(t.nombre)}</h1>
-          <p class="detail-sub">${t.archivos.length} ${t.tipo === 'serie' ? 'episodios' : 'archivo(s)'} · ${t.origen.tipo === 'macro' ? 'Sección de canal macro' : 'Canal dedicado'}</p>
+          <p class="detail-sub">${t.archivos.length} ${t.isSaga ? 'películas de la saga' : t.tipo === 'serie' ? 'episodios' : 'archivo(s)'} · ${t.origen.tipo === 'macro' ? 'Sección de canal macro' : t.isSaga ? 'Saga' : t.origen.tipo === 'año_container' ? 'Película del catálogo por año' : 'Canal dedicado'}</p>
           <p class="detail-metadata"></p>
           <p class="detail-syn" ${t.archivos[0]?.synopsis ? '' : 'hidden'}>${esc(t.archivos[0]?.synopsis || '')}</p>
           ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
         </div>
       </div>
       ${seasonsBarHtml}
-      <h2 class="row-title" id="d-list-title">${t.tipo === 'serie' ? 'Episodios' : 'Archivos'}</h2>
+      <h2 class="row-title" id="d-list-title">${t.isSaga ? 'Películas de la saga' : t.tipo === 'serie' ? 'Episodios' : 'Archivos'}</h2>
       <div class="ep-list" id="ep-list"></div>
     </div>`);
 
@@ -252,17 +274,25 @@ function showDetail(tg, sync, profile, t) {
   };
 
   const renderEpisodes = (seasonNum) => {
-    const files = hasSeasons ? (seasonsMap.get(seasonNum) || []) : t.archivos;
+    let files = hasSeasons ? (seasonsMap.get(seasonNum) || []) : t.archivos;
+    if (t.isSaga) {
+      const yearOf = (f) => Number(f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
+      files = [...files].sort((a, b) => yearOf(a) - yearOf(b) || a.label.localeCompare(b.label, 'es', { numeric: true }));
+    }
     const container = document.getElementById('ep-list');
     container.innerHTML = files.map((f) => {
       const p = progress[f.key];
       const pct = p?.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
       const ep = f.season || f.episode ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
-      return `<div class="ep" tabindex="0" data-focusable data-key="${esc(f.key)}">
-        <div class="ep-num">${ep || '•'}</div>
-        <div class="ep-info"><div class="ep-name">${esc(f.label)}</div>
-          <div class="ep-meta">${[fmtDur(f.duration), fmtSize(f.size), new Date(f.date * 1000).toLocaleDateString()].filter(Boolean).join(' · ')}</div>
-          ${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
+      const filmYear = f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || '';
+      const filmTitle = f.metadata?.name || f.sagaName || f.label;
+      const poster = f.metadata?.poster ? `<img class="saga-film-poster" src="${esc(f.metadata.poster)}" alt="" loading="lazy">` : `<div class="saga-film-poster saga-film-placeholder">${esc(filmYear || '🎬')}</div>`;
+      const synopsis = f.metadata?.overview ? `<div class="saga-film-synopsis">${esc(f.metadata.overview)}</div>` : '';
+      return `<div class="ep ${t.isSaga ? 'saga-film' : ''}" tabindex="0" data-focusable data-key="${esc(f.key)}">
+        ${t.isSaga ? poster : `<div class="ep-num">${ep || '•'}</div>`}
+        <div class="ep-info"><div class="ep-name">${esc(t.isSaga ? filmTitle : f.label)}</div>
+          <div class="ep-meta">${[filmYear, fmtDur(f.duration), fmtSize(f.size), new Date(f.date * 1000).toLocaleDateString()].filter(Boolean).join(' · ')}</div>
+          ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
         <div class="ep-state">${p?.is_completed ? '✓ Visto' : pct ? Math.round(pct) + '%' : ''}</div>
       </div>`;
     }).join('');
