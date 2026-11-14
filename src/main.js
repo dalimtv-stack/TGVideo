@@ -8,6 +8,10 @@ import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
 import { loadProgress, titleState } from './player/progress.js';
 import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
+import { enrichTitles } from './metadata/tmdb.js';
+import { loadGlobalConfig } from './settings/global.js';
+import { showProfileMenu, profileAvatar } from './ui/settings.js';
+import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 
 const kv = createKV();
 const LIB_KEY = 'library_v2';
@@ -60,6 +64,7 @@ function promptUI(title, placeholder = '', type = 'text') {
 
 // ---------- Home con biblioteca ----------
 let TITLES_CACHE = null;
+let metadataController = null;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmtSize = (b) => b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(0) + ' MB';
 const fmtDur = (s) => s ? `${Math.floor(s / 3600) ? Math.floor(s / 3600) + 'h ' : ''}${Math.floor(s % 3600 / 60)}min` : '';
@@ -71,6 +76,7 @@ function cardHtml(t, progress) {
   return `
     <div class="lib-card" tabindex="0" data-focusable data-title="${esc(t.id)}">
       <div class="lib-card-poster" style="--pc:${posterColor(t.grupo + t.nombre)}">
+        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" alt="${esc(t.nombre)}" loading="lazy">` : ''}
         <span class="poster-group">${esc(t.grupo)}</span>
         <span class="poster-name">${esc(t.nombre)}</span>
         <span class="poster-meta">${t.tipo === 'serie' ? t.archivos.length + ' ep.' : 'Película'}</span>
@@ -140,19 +146,57 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
         <div class="home-actions">
           <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
           <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile" title="${esc(profile.name)}" aria-label="Perfil: ${esc(profile.name)}">
-            <div class="avatar small">${esc((profile.name || '?')[0].toUpperCase())}</div>
+            <div class="avatar small">${profileAvatar(profile)}</div>
           </div>
         </div>
       </header>
       <main class="home-main">${body}</main>
     </div>`);
 
-  document.getElementById('btn-change-profile').onclick = () => showProfileSelector(tg, sync);
+  document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync,
+    onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
+    onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
   document.getElementById('btn-reload').onclick = () => showHome(tg, sync, profile, { reload: true });
   document.querySelectorAll('.lib-card').forEach(card => {
     card.onclick = () => { const t = titles.find(x => x.id === card.dataset.title); if (t) showDetail(tg, sync, profile, t); };
   });
   focusFirst('.lib-card');
+  metadataController?.abort();
+  metadataController = new AbortController();
+  enrichTitles(titles, { signal: metadataController.signal, onUpdate: title => {
+    document.querySelectorAll('.lib-card').forEach(card => {
+      if (card.dataset.title !== title.id || !title.metadata?.poster) return;
+      const poster = card.querySelector('.lib-card-poster');
+      if (!poster || poster.querySelector('img')) return;
+      const image = document.createElement('img');
+      image.className = 'poster-image'; image.src = title.metadata.poster;
+      image.alt = title.nombre; image.loading = 'lazy';
+      image.onerror = () => image.remove();
+      poster.prepend(image);
+    });
+    if (document.querySelector('.detail')?.dataset.title === title.id) applyDetailMetadata(title);
+  } });
+}
+
+function applyDetailMetadata(t) {
+  const metadata = t.metadata;
+  if (!metadata) return;
+  const detail = document.querySelector('.detail');
+  if (!detail || detail.dataset.title !== t.id) return;
+  if (metadata.backdrop) {
+    detail.style.setProperty('--detail-backdrop', `url("${metadata.backdrop}")`);
+    detail.classList.add('has-backdrop');
+  }
+  const poster = detail.querySelector('.lib-card-poster.big');
+  if (metadata.poster && poster && !poster.querySelector('img')) {
+    const image = document.createElement('img');
+    image.className = 'poster-image'; image.src = metadata.poster; image.alt = t.nombre;
+    image.onerror = () => image.remove(); poster.prepend(image);
+  }
+  const synopsis = detail.querySelector('.detail-syn');
+  if (synopsis && metadata.overview) { synopsis.textContent = metadata.overview; synopsis.hidden = false; }
+  const info = detail.querySelector('.detail-metadata');
+  if (info) info.textContent = [metadata.date?.slice(0, 4), metadata.rating ? `★ ${metadata.rating.toFixed(1)}` : '', `TMDB ${metadata.id}`].filter(Boolean).join(' · ');
 }
 
 function showDetail(tg, sync, profile, t) {
@@ -178,7 +222,7 @@ function showDetail(tg, sync, profile, t) {
     </div>` : '';
 
   showScreen(`
-    <div class="screen detail" style="--pc:${posterColor(t.grupo + t.nombre)}">
+    <div class="screen detail" data-title="${esc(t.id)}" style="--pc:${posterColor(t.grupo + t.nombre)}">
       <button class="btn-ghost" data-focusable id="d-back">← Volver</button>
       <div class="detail-head">
         <div class="lib-card-poster big" style="--pc:${posterColor(t.grupo + t.nombre)}">
@@ -187,7 +231,8 @@ function showDetail(tg, sync, profile, t) {
           <div class="detail-kicker">${t.tipo === 'serie' ? 'Serie' : 'Película'} · ${esc(t.grupo)}</div>
           <h1>${esc(t.nombre)}</h1>
           <p class="detail-sub">${t.archivos.length} ${t.tipo === 'serie' ? 'episodios' : 'archivo(s)'} · ${t.origen.tipo === 'macro' ? 'Sección de canal macro' : 'Canal dedicado'}</p>
-          ${t.archivos[0]?.synopsis ? `<p class="detail-syn">${esc(t.archivos[0].synopsis)}</p>` : ''}
+          <p class="detail-metadata"></p>
+          <p class="detail-syn" ${t.archivos[0]?.synopsis ? '' : 'hidden'}>${esc(t.archivos[0]?.synopsis || '')}</p>
           ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
         </div>
       </div>
@@ -195,6 +240,8 @@ function showDetail(tg, sync, profile, t) {
       <h2 class="row-title" id="d-list-title">${t.tipo === 'serie' ? 'Episodios' : 'Archivos'}</h2>
       <div class="ep-list" id="ep-list"></div>
     </div>`);
+
+  applyDetailMetadata(t);
 
   const play = (f) => {
     const p = loadProgress(profile.id)[f.key];
@@ -226,13 +273,34 @@ function showDetail(tg, sync, profile, t) {
   };
   renderEpisodes(currentSeason);
 
-  document.querySelectorAll('.season-btn').forEach(btn => {
-    btn.onclick = () => {
-      currentSeason = Number(btn.dataset.season);
-      document.querySelectorAll('.season-btn').forEach(b => b.classList.toggle('active', b === btn));
-      renderEpisodes(currentSeason);
-    };
+  const centerCurrentSeason = () => centerSeason(document.querySelector('.seasons-track'), document.querySelector('.season-btn.active'));
+  const changeSeason = (season, focusEpisode = false) => {
+    currentSeason = season;
+    document.querySelectorAll('.season-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.season) === season));
+    renderEpisodes(season);
+    centerCurrentSeason();
+    if (focusEpisode) {
+      const target = firstUncompleted(seasonsMap.get(season) || [], loadProgress(profile.id));
+      const element = [...document.querySelectorAll('.ep')].find(el => el.dataset.key === target?.key);
+      element?.focus({ preventScroll: true });
+      element?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  };
+  document.getElementById('ep-list').addEventListener('keydown', e => {
+    if (!e.target.closest('.ep') || !['ArrowLeft', 'ArrowRight'].includes(e.key) || !hasSeasons) return;
+    e.preventDefault(); e.stopPropagation();
+    const season = adjacentSeason(seasons, currentSeason, e.key === 'ArrowLeft' ? -1 : 1);
+    if (season !== null) changeSeason(season, true);
   });
+  document.querySelectorAll('.season-btn').forEach(btn => {
+    btn.onclick = () => changeSeason(Number(btn.dataset.season));
+  });
+  requestAnimationFrame(centerCurrentSeason);
+  const track = document.querySelector('.seasons-track');
+  if (track) {
+    const observer = new ResizeObserver(() => { if (track.isConnected) centerCurrentSeason(); else observer.disconnect(); });
+    observer.observe(track);
+  }
   document.getElementById('d-back').onclick = back;
   document.getElementById('d-play')?.addEventListener('click', () => play(st.next));
   focusFirst('#d-play, .season-btn.active, .ep');
@@ -251,8 +319,8 @@ async function showProfileSelector(tg, sync) {
 
   const cards = profiles.map(p => `
     <div class="profile-card" tabindex="0" data-focusable data-id="${p.id}">
-      <div class="avatar">${(p.name || '?')[0].toUpperCase()}</div>
-      <div class="profile-name">${p.name}</div>
+      <div class="avatar">${profileAvatar(p)}</div>
+      <div class="profile-name">${esc(p.name)}</div>
     </div>
   `).join('');
 
@@ -346,6 +414,7 @@ async function start() {
     window.tg = tg;
     window.sync = sync;
 
+    await loadGlobalConfig(sync);
     await showProfileSelector(tg, sync);
 
   } catch (err) {
