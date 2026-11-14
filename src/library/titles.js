@@ -22,6 +22,7 @@ async function scanFiles(client, peer, ch) {
       label: prettyName(fileName),
       section: cap.section || null,
       synopsis: cap.synopsis || null,
+      tmdbId: cap.tmdbId || null,
       season: ep.season,
       episode: ep.episode,
       size: Number(doc?.size?.toString?.() || doc?.size || 0),
@@ -48,7 +49,7 @@ function makeTitle({ id, ch, name, origen, seccion, files }) {
     channel: ch,
     archivos: files,
     ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
-    tmdbId: null,
+    tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
   };
 }
 
