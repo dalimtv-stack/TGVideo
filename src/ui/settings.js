@@ -41,17 +41,61 @@ export function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalCh
 }
 function profileSettings(profile, sync, onChanged) {
   const avatars = ['👤', '🙂', '🎬', '🌟', '🐱'];
-  const { overlay, close } = modal('Ajustes de perfil', `<form><label>Nombre<input name="name" value="${esc(profile.name)}" required maxlength="60"></label><label>Avatar<select name="avatar">${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}</select></label><p class="settings-status" role="status"></p><button class="btn" data-focusable type="submit">Guardar</button></form>`);
+  const localPlayer = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${profile.id}`) : null;
+  const currentPlayer = profile.player || localPlayer || 'artplayer';
+  const { overlay, close } = modal('Ajustes de perfil', `
+    <form class="profile-settings-form">
+      <div class="settings-fields">
+        <label>Nombre
+          <input name="name" value="${esc(profile.name)}" required maxlength="60">
+        </label>
+        <label>Avatar
+          <select name="avatar">
+            ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+
+      <fieldset class="settings-section">
+        <legend class="settings-legend">Reproductor</legend>
+        <div class="settings-radios">
+          <label class="settings-radio-label" data-focusable>
+            <input type="radio" name="player" value="artplayer" ${currentPlayer !== 'native' ? 'checked' : ''}>
+            <div class="settings-radio-info">
+              <strong>ArtPlayer</strong>
+              <small>Diseño moderno, gestos de volumen/avance, proporción y velocidad.</small>
+            </div>
+          </label>
+          <label class="settings-radio-label" data-focusable>
+            <input type="radio" name="player" value="native" ${currentPlayer === 'native' ? 'checked' : ''}>
+            <div class="settings-radio-info">
+              <strong>Reproductor nativo</strong>
+              <small>El que estaba antes. Recomendado en iPhone para seleccionar audios, subtítulos y AirPlay.</small>
+            </div>
+          </label>
+        </div>
+      </fieldset>
+
+      <p class="settings-status" role="status"></p>
+      <button class="btn" data-focusable type="submit">Guardar</button>
+    </form>
+  `);
+
   overlay.querySelector('form').onsubmit = async e => {
     e.preventDefault();
     const form = e.currentTarget, button = form.querySelector('[type="submit"]');
     const name = form.elements.name.value.trim();
     if (!name) return;
+    const player = form.elements.player?.value || 'artplayer';
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`tgvideo_player_${profile.id}`, player);
+    }
+    profile.player = player;
     button.disabled = true;
     try {
       const remote = await sync.pullProfile(profile.id);
       if (!remote) throw new Error('No se pudo leer el perfil. Inténtalo de nuevo.');
-      const changed = { ...remote.profile, name, avatar: form.elements.avatar.value };
+      const changed = { ...remote.profile, name, avatar: form.elements.avatar.value, player };
       await sync.pushProfile({ ...remote, profile: changed, progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {}) });
       Object.assign(profile, changed);
       close(); onChanged();
