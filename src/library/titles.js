@@ -17,6 +17,7 @@ async function scanFiles(client, peer, ch) {
     const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
     files.push({
       key: `${ch.id}:${msg.id}`, channelId: ch.id, messageId: msg.id,
+      channel: ch,
       fileName, label: prettyName(fileName), section: cap.section || null,
       synopsis: cap.synopsis || null, tmdbId: cap.tmdbId || null,
       season: ep.season, episode: ep.episode,
@@ -55,6 +56,15 @@ function movieName(file) {
     .replace(/\s+/g, ' ').trim();
 }
 
+function normalizeMovieKey(str) {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(castellano|latino|spa|esp|eng|dual|multi|subs?|vose|uhd|remux|hdr|dts|ac3|aac|x264|x265)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
 /** cache: { [channelId]: { top, title, files } } */
 export async function buildTitles(client, channels, peerOf, onProgress, cache = {}) {
   const titles = [];
@@ -68,7 +78,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     const prev = cache[ch.id];
     let files = [];
     if (prev && (!client || (prev.top === ch.top && prev.title === ch.title && ch.top))) {
-      files = prev.files.map(f => ({ ...f }));
+      files = prev.files.map(f => ({ ...f, channel: f.channel || ch }));
     } else {
       try { files = await scanFiles(client, peerOf(ch), ch); }
       catch (e) { console.warn('[titles] no se pudo leer', ch.title, e); }
@@ -76,16 +86,40 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     newCache[ch.id] = { top: ch.top, title: ch.title, files: files.map(f => ({ ...f })) };
 
     if (ch.isYearContainer) {
-      // Un canal por año es un contenedor: cada archivo se vuelve una película individual.
+      // Un canal por año es un contenedor: agrupa múltiples versiones de la misma película en una sola ficha
       const channelYear = ch.name.match(YEAR_RE)?.[1] || null;
+      const movieMap = new Map();
       for (const f of files) {
         const yearHint = f.fileName.match(YEAR_RE)?.[1] || channelYear;
+        const baseName = movieName(f);
+        const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
+        if (!movieMap.has(normKey)) {
+          movieMap.set(normKey, {
+            id: `${ch.id}:${f.messageId}`,
+            nombre: baseName,
+            yearHint,
+            files: [f],
+            tmdbId: f.tmdbId || null,
+          });
+        } else {
+          const grp = movieMap.get(normKey);
+          grp.files.push(f);
+          if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+          if (baseName.length < grp.nombre.length && baseName.length > 2) {
+            grp.nombre = baseName;
+          }
+        }
+      }
+      for (const grp of movieMap.values()) {
+        sortFiles(grp.files, 'pelicula');
         titles.push({
-          id: `${ch.id}:${f.messageId}`, tipo: 'pelicula', isSaga: false,
-          grupo: yearHint || ch.group || ch.name,
-          nombre: movieName(f), yearHint,
-          origen: { tipo: 'año_container', channelId: ch.id, messageId: f.messageId },
-          channel: ch, archivos: [f], ultimoMensajeFecha: f.date, tmdbId: f.tmdbId || null,
+          id: grp.id, tipo: 'pelicula', isSaga: false,
+          grupo: grp.yearHint || ch.group || ch.name,
+          nombre: grp.nombre, yearHint: grp.yearHint,
+          origen: { tipo: 'año_container', channelId: ch.id, messageId: grp.files[0].messageId },
+          channel: ch, archivos: grp.files,
+          ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date), 0),
+          tmdbId: grp.tmdbId,
         });
       }
     } else if (ch.isSaga) {
