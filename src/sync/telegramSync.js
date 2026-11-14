@@ -183,6 +183,7 @@ export function createTelegramSync({ getClient, peerOf }) {
           age_limit: data.profile?.age_limit || 'TP',
           pin: data.profile?.pin || null,
           is_kids: !!data.profile?.is_kids,
+          player: data.profile?.player || (typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${data.profile?.id || f.profileId}`) : null) || 'artplayer',
           lastSync: f.timestamp,
           messageId: f.messageId,
         });
@@ -195,6 +196,7 @@ export function createTelegramSync({ getClient, peerOf }) {
           age_limit: 'TP',
           pin: null,
           is_kids: false,
+          player: (typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${f.profileId}`) : null) || 'artplayer',
           lastSync: f.timestamp,
           messageId: f.messageId,
         });
