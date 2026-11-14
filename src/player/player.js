@@ -219,7 +219,9 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   });
 
   try {
-    const peer = await peerOf(file.channel.id);
+    const targetChannel = file.channel || title?.channel;
+    if (!targetChannel) throw new Error('Canal no encontrado para este archivo.');
+    const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
@@ -364,7 +366,9 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   });
 
   try {
-    const peer = await peerOf(file.channel.id);
+    const targetChannel = file.channel || title?.channel;
+    if (!targetChannel) throw new Error('Canal no encontrado para este archivo.');
+    const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
