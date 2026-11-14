@@ -1,12 +1,13 @@
 import { modal } from './settings.js';
-import { cleanSearchName, searchTmdbManual, setManualMetadata, clearManualMetadata } from '../metadata/tmdb.js';
+import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata } from '../metadata/tmdb.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export function showMetadataModal(title, onUpdated) {
   const currentMeta = title.metadata;
-  const initialQuery = cleanSearchName(title.nombre);
-  const initialYear = title.yearHint || title.nombre.match(/\b((?:19|20)\d{2})\b/)?.[1] || '';
+  const parsed = extractTitleAndYear(title.nombre);
+  const initialQuery = parsed.title;
+  const initialYear = title.yearHint || parsed.year || '';
   const currentType = title.isSaga ? 'collection' : title.tipo === 'serie' ? 'tv' : 'movie';
 
   const statusText = currentMeta
