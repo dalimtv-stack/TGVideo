@@ -11,22 +11,113 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   "'": '&#39;',
 }[char]));
 
+/**
+ * Configura doble toque (móvil) y doble clic (escritorio) en izquierda/derecha
+ * para atrasar o adelantar los segundos configurados en el perfil.
+ */
+function setupDoubleTapSkip({ container, video, skipSeconds = 10 }) {
+  if (!container || !video) return () => {};
+
+  const feedback = document.createElement('div');
+  feedback.className = 'player-skip-feedback';
+  container.appendChild(feedback);
+
+  let feedbackTimer = null;
+  const showSkipBadge = (side, secs) => {
+    if (feedbackTimer) clearTimeout(feedbackTimer);
+    feedback.className = `player-skip-feedback show-${side}`;
+    feedback.innerHTML = side === 'left'
+      ? `<div class="skip-pill"><span class="skip-icon">⏪</span> -${secs}s</div>`
+      : `<div class="skip-pill">+${secs}s <span class="skip-icon">⏩</span></div>`;
+    feedbackTimer = setTimeout(() => {
+      feedback.className = 'player-skip-feedback';
+      feedback.innerHTML = '';
+    }, 650);
+  };
+
+  const performSkip = (side) => {
+    const delta = side === 'left' ? -skipSeconds : skipSeconds;
+    const target = Math.max(0, Math.min(video.duration || Infinity, (video.currentTime || 0) + delta));
+    video.currentTime = target;
+    showSkipBadge(side, skipSeconds);
+  };
+
+  const onDblClick = (e) => {
+    if (e.target.closest('.art-controls, .art-bottom, .player-top-overlay, button, input, select')) return;
+    const rect = container.getBoundingClientRect();
+    if (!rect.width) return;
+    const x = (e.clientX - rect.left) / rect.width;
+    if (x <= 0.38) {
+      e.preventDefault();
+      e.stopPropagation();
+      performSkip('left');
+    } else if (x >= 0.62) {
+      e.preventDefault();
+      e.stopPropagation();
+      performSkip('right');
+    }
+  };
+
+  let lastTapTime = 0;
+  let lastTapX = 0;
+
+  const onTouchEnd = (e) => {
+    if (e.target.closest('.art-controls, .art-bottom, .player-top-overlay, button, input, select')) return;
+    const touch = e.changedTouches?.[0];
+    if (!touch) return;
+    const rect = container.getBoundingClientRect();
+    if (!rect.width) return;
+    const x = (touch.clientX - rect.left) / rect.width;
+    const now = Date.now();
+
+    if (now - lastTapTime < 320 && Math.abs(touch.clientX - lastTapX) < 60) {
+      if (x <= 0.38) {
+        e.preventDefault();
+        e.stopPropagation();
+        performSkip('left');
+      } else if (x >= 0.62) {
+        e.preventDefault();
+        e.stopPropagation();
+        performSkip('right');
+      }
+      lastTapTime = 0;
+    } else {
+      lastTapTime = now;
+      lastTapX = touch.clientX;
+    }
+  };
+
+  container.addEventListener('dblclick', onDblClick, true);
+  container.addEventListener('touchend', onTouchEnd, { passive: false, capture: true });
+
+  return () => {
+    container.removeEventListener('dblclick', onDblClick, true);
+    container.removeEventListener('touchend', onTouchEnd, { capture: true });
+    feedback.remove();
+  };
+}
+
 export async function playFile({ client, peerOf, file, title, profile, resumeAt = 0, onClose, mount }) {
   const localPref = typeof localStorage !== 'undefined' && profile?.id
     ? localStorage.getItem(`tgvideo_player_${profile.id}`)
     : null;
   const playerType = profile?.player || localPref || 'artplayer';
 
+  const localSkip = typeof localStorage !== 'undefined' && profile?.id
+    ? localStorage.getItem(`tgvideo_skip_${profile.id}`)
+    : null;
+  const skipSeconds = Number(profile?.skip_seconds || localSkip || 10);
+
   if (playerType === 'native') {
-    return playNative({ client, peerOf, file, title, profile, resumeAt, onClose, mount });
+    return playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount });
   }
-  return playArtplayer({ client, peerOf, file, title, profile, resumeAt, onClose, mount });
+  return playArtplayer({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount });
 }
 
 // -------------------------------------------------------------
 // REPRODUCTOR NATIVO (HTML5) - Recomendado para iPhone / AirPlay
 // -------------------------------------------------------------
-async function playNative({ client, peerOf, file, title, profile, resumeAt, onClose, mount }) {
+async function playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount }) {
   mount.innerHTML = `
     <div class="player player-native">
       <div class="player-top-overlay" id="pl-top">
@@ -38,31 +129,34 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, onCl
       </div>
       <div class="player-loading" id="pl-loading">
         <div class="loader"></div>
-        <p id="pl-pct">Conectando con Telegram…</p>
+        <p id="pl-status">Conectando con Telegram…</p>
       </div>
-      <video id="pl-video" class="native-video" controls playsinline style="display:none"></video>
+      <video class="native-video" playsinline webkit-playsinline controls autoplay preload="auto"></video>
     </div>`;
 
-  let cancelled = false, url = null, stream = null;
-  const video = mount.querySelector('#pl-video');
   const playerEl = mount.querySelector('.player');
-  const topOverlay = mount.querySelector('#pl-top');
+  const video = mount.querySelector('video');
   const loading = mount.querySelector('#pl-loading');
-  const status = mount.querySelector('#pl-pct');
+  const status = mount.querySelector('#pl-status');
+  const topOverlay = mount.querySelector('#pl-top');
 
+  let cancelled = false;
+  let stream = null;
+  let url = null;
   let hideTimer = null;
+
   const showTop = () => {
     topOverlay?.classList.remove('is-hidden');
     clearTimeout(hideTimer);
     if (!video.paused) {
-      hideTimer = setTimeout(() => {
-        if (!cancelled && !video.paused) topOverlay?.classList.add('is-hidden');
-      }, 3500);
+      hideTimer = setTimeout(() => topOverlay?.classList.add('is-hidden'), 3500);
     }
   };
 
   playerEl.addEventListener('mousemove', showTop);
+  playerEl.addEventListener('click', showTop);
   playerEl.addEventListener('touchstart', showTop, { passive: true });
+
   video.addEventListener('play', () => {
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => topOverlay?.classList.add('is-hidden'), 2500);
@@ -98,9 +192,12 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, onCl
   // Solicitar pantalla completa durante el gesto inicial del usuario
   goFullscreen();
 
+  const cleanupSkip = setupDoubleTapSkip({ container: playerEl, video, skipSeconds });
+
   const close = () => {
     if (cancelled) return;
     cancelled = true;
+    cleanupSkip();
     clearTimeout(hideTimer);
     exitFullscreen();
     if (video.duration) saveProgress(profile.id, file.key, video.currentTime, video.duration);
@@ -113,94 +210,115 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, onCl
   };
 
   mount.querySelector('#pl-back').onclick = close;
-  mount.querySelector('#pl-back').focus();
+
+  window.addEventListener('keydown', function onKey(e) {
+    if (cancelled) { window.removeEventListener('keydown', onKey); return; }
+    if (['Escape', 'Backspace', 'GoBack'].includes(e.key)) {
+      e.preventDefault(); e.stopPropagation(); close();
+    }
+  });
 
   try {
-    const [msg] = await client.getMessages(peerOf(title.channel), { ids: [file.messageId] });
-    const doc = msg.media?.document;
-    const size = Number(doc?.size ?? file.size ?? 0);
-    const mime = (doc?.mimeType || file.mimeType) === 'video/x-matroska' ? 'video/webm' : (doc?.mimeType || file.mimeType || 'video/mp4');
+    const peer = await peerOf(file.channel.id);
+    const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
+    if (cancelled) return;
+    if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
 
-    if (size > 0 && await streamingAvailable()) {
-      if (cancelled) return;
-      stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
+    if (streamingAvailable()) {
+      status.textContent = 'Abriendo túnel de streaming…';
+      stream = await openStream(client, peer, msg.media.document);
+      if (cancelled) { stream.close(); return; }
       url = stream.url;
     } else {
-      const buf = await client.downloadMedia(msg.media, {
-        progressCallback: (got, total) => {
-          if (cancelled) throw new Error('cancelado');
-          const t = Number(total) || file.size || 1;
-          if (status) status.textContent = `Descargando desde Telegram… ${Math.round(Number(got) / t * 100)}%`;
+      status.textContent = 'Descargando desde Telegram…';
+      const buffer = await client.downloadMedia(msg, {
+        progressCallback: (done, total) => {
+          if (cancelled) return;
+          if (total) status.textContent = `Descargando: ${Math.round((done / total) * 100)}%`;
         },
       });
       if (cancelled) return;
-      url = URL.createObjectURL(new Blob([buf], { type: mime }));
+      url = URL.createObjectURL(new Blob([buffer], { type: file.mime || 'video/mp4' }));
     }
 
-    if (cancelled) return;
-    loading.style.display = 'none';
-    video.style.display = 'block';
     video.src = url;
 
-    video.onloadedmetadata = () => {
-      if (resumeAt > 0 && resumeAt < video.duration - 5) video.currentTime = resumeAt;
-      video.play().catch(() => {});
-      goFullscreen();
+    let resumed = false;
+    const applyResume = () => {
+      if (resumed) return;
+      if (resumeAt > 0 && video.duration && resumeAt < video.duration - 10) {
+        video.currentTime = resumeAt;
+      }
+      resumed = true;
     };
 
-    let last = 0;
-    video.ontimeupdate = () => {
-      if (Date.now() - last > 5000) {
-        last = Date.now();
+    video.addEventListener('loadedmetadata', () => {
+      applyResume();
+      if (video.webkitSupportsFullscreen && !document.fullscreenElement) {
+        try { video.webkitEnterFullscreen(); } catch (_) {}
+      }
+    });
+
+    video.addEventListener('canplay', () => {
+      loading.style.display = 'none';
+      video.play().catch(() => {});
+    });
+
+    let lastSaved = 0;
+    video.addEventListener('timeupdate', () => {
+      const now = Date.now();
+      if (now - lastSaved > 5000 && video.duration) {
+        lastSaved = now;
         saveProgress(profile.id, file.key, video.currentTime, video.duration);
       }
-    };
-    video.onended = () => saveProgress(profile.id, file.key, video.duration, video.duration, true);
-    video.onerror = () => {
+    });
+
+    video.addEventListener('ended', () => {
+      if (video.duration) saveProgress(profile.id, file.key, video.duration, video.duration);
+    });
+
+    video.addEventListener('error', () => {
       loading.style.display = 'flex';
-      status.textContent = 'El navegador no puede reproducir este formato (códec no soportado).';
-    };
-    video.focus();
-  } catch (e) {
+      status.textContent = 'Error al reproducir el archivo. Prueba con ArtPlayer en Ajustes.';
+    });
+
+  } catch (error) {
     if (cancelled) return;
-    console.error(e);
-    if (status) status.textContent = 'Error al cargar el vídeo: ' + (e?.message || e);
+    status.textContent = error.message || 'Error al conectar con Telegram';
   }
 }
 
 // -------------------------------------------------------------
-// ARTPLAYER - Avanzado con tema moderno y controles cinemáticos
+// REPRODUCTOR ARTPLAYER - Avanzado, moderno y con gestos
 // -------------------------------------------------------------
-async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 0, onClose, mount }) {
+async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 0, skipSeconds, onClose, mount }) {
   mount.innerHTML = `
     <div class="player player-art">
-      <div class="artplayer-host" id="pl-artplayer"></div>
       <div class="player-top-overlay" id="pl-top">
         <div class="player-top-left">
           <button class="btn-ghost" data-focusable id="pl-back">← Volver</button>
           <div class="player-title">${escapeHtml(title.nombre)} · ${escapeHtml(file.label)}</div>
-          <span class="player-badge">Art</span>
+          <span class="player-badge">ArtPlayer</span>
         </div>
       </div>
       <div class="player-loading" id="pl-loading">
         <div class="loader"></div>
-        <p id="pl-pct">Conectando con Telegram…</p>
+        <p id="pl-status">Conectando con Telegram…</p>
       </div>
+      <div class="artplayer-host" id="artplayer-container"></div>
     </div>`;
 
-  let cancelled = false, url = null, stream = null, art = null;
-  if (!document.getElementById('artplayer-runtime-style')) {
-    const style = document.createElement('style');
-    style.id = 'artplayer-runtime-style';
-    style.textContent = Artplayer.STYLE;
-    document.head.append(style);
-  }
-
   const playerEl = mount.querySelector('.player');
-  const topOverlay = mount.querySelector('#pl-top');
+  const container = mount.querySelector('#artplayer-container');
   const loading = mount.querySelector('#pl-loading');
-  const status = mount.querySelector('#pl-pct');
-  const container = mount.querySelector('#pl-artplayer');
+  const status = mount.querySelector('#pl-status');
+  const topOverlay = mount.querySelector('#pl-top');
+
+  let cancelled = false;
+  let stream = null;
+  let url = null;
+  let art = null;
+  let cleanupSkip = null;
 
   const goFullscreen = () => {
     if (document.fullscreenElement || document.webkitFullscreenElement) return;
@@ -216,54 +334,58 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     try { screen.orientation?.unlock?.(); } catch (_) {}
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else if (document.webkitFullscreenElement) document.webkitExitFullscreen?.();
-    const vid = art?.template?.$video;
-    if (vid?.webkitExitFullscreen) try { vid.webkitExitFullscreen(); } catch (_) {}
   };
 
-  const saveCurrent = () => {
-    const video = art?.template?.$video;
-    if (video?.duration) saveProgress(profile.id, file.key, video.currentTime, video.duration);
-  };
+  goFullscreen();
 
   const close = () => {
     if (cancelled) return;
     cancelled = true;
-    saveCurrent();
+    if (cleanupSkip) cleanupSkip();
     exitFullscreen();
-    try { art?.destroy(); } catch (error) { console.warn('[player] destroy failed', error); }
-    art = null;
+    if (art) {
+      try {
+        if (art.duration) saveProgress(profile.id, file.key, art.currentTime, art.duration);
+        art.destroy(false);
+      } catch (_) {}
+    }
     if (stream) stream.close();
     else if (url) URL.revokeObjectURL(url);
     onClose?.();
   };
 
   mount.querySelector('#pl-back').onclick = close;
-  mount.querySelector('#pl-back').focus();
 
-  // Se solicita pantalla completa durante el gesto del usuario
-  goFullscreen();
+  window.addEventListener('keydown', function onKey(e) {
+    if (cancelled) { window.removeEventListener('keydown', onKey); return; }
+    if (['Escape', 'Backspace', 'GoBack'].includes(e.key)) {
+      e.preventDefault(); e.stopPropagation(); close();
+    }
+  });
 
   try {
-    const [msg] = await client.getMessages(peerOf(title.channel), { ids: [file.messageId] });
-    const doc = msg.media?.document;
-    const size = Number(doc?.size ?? file.size ?? 0);
-    const mime = (doc?.mimeType || file.mimeType) === 'video/x-matroska' ? 'video/webm' : (doc?.mimeType || file.mimeType || 'video/mp4');
+    const peer = await peerOf(file.channel.id);
+    const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
+    if (cancelled) return;
+    if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
 
-    if (size > 0 && await streamingAvailable()) {
-      if (cancelled) return;
-      stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
+    if (streamingAvailable()) {
+      status.textContent = 'Abriendo túnel de streaming…';
+      stream = await openStream(client, peer, msg.media.document);
+      if (cancelled) { stream.close(); return; }
       url = stream.url;
     } else {
-      const buf = await client.downloadMedia(msg.media, {
-        progressCallback: (got, total) => {
-          if (cancelled) throw new Error('cancelado');
-          const t = Number(total) || file.size || 1;
-          if (status) status.textContent = `Descargando desde Telegram… ${Math.round(Number(got) / t * 100)}%`;
+      status.textContent = 'Descargando desde Telegram…';
+      const buffer = await client.downloadMedia(msg, {
+        progressCallback: (done, total) => {
+          if (cancelled) return;
+          if (total) status.textContent = `Descargando: ${Math.round((done / total) * 100)}%`;
         },
       });
       if (cancelled) return;
-      url = URL.createObjectURL(new Blob([buf], { type: mime }));
+      url = URL.createObjectURL(new Blob([buffer], { type: file.mime || 'video/mp4' }));
     }
+
     if (cancelled) return;
 
     art = new Artplayer({
@@ -302,6 +424,8 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
     const video = art.template.$video;
     let lastSaved = 0;
+
+    cleanupSkip = setupDoubleTapSkip({ container: art.template.$player, video, skipSeconds });
 
     // Sincronizar barra superior con los controles de Artplayer
     art.on('control', show => {
@@ -385,46 +509,39 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     };
 
     art.on('ready', () => {
-      if (loading) loading.style.display = 'none';
-      if (resumeAt > 0 && resumeAt < video.duration - 5) video.currentTime = resumeAt;
-      art.play().catch(() => {});
+      loading.style.display = 'none';
+      if (resumeAt > 0) {
+        art.currentTime = resumeAt;
+      }
       checkTracks();
-      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        goFullscreen();
+      if (video.webkitSupportsFullscreen && !document.fullscreenElement) {
+        try { video.webkitEnterFullscreen(); } catch (_) {}
       }
     });
 
-    art.on('video:loadedmetadata', () => {
-      checkTracks();
-      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        goFullscreen();
-      }
-    });
+    art.on('video:loadedmetadata', checkTracks);
+    art.on('video:canplay', checkTracks);
 
     art.on('video:timeupdate', () => {
-      if (Date.now() - lastSaved > 5000) {
-        lastSaved = Date.now();
-        saveCurrent();
+      const now = Date.now();
+      if (now - lastSaved > 5000 && art.duration) {
+        lastSaved = now;
+        saveProgress(profile.id, file.key, art.currentTime, art.duration);
       }
     });
 
     art.on('video:ended', () => {
-      if (video.duration) saveProgress(profile.id, file.key, video.duration, video.duration, true);
+      if (art.duration) saveProgress(profile.id, file.key, art.duration, art.duration);
     });
 
-    art.on('video:error', () => {
-      if (loading) loading.style.display = 'flex';
-      if (status) status.textContent = 'El navegador no puede reproducir este formato (códec no soportado).';
+    art.on('error', (err) => {
+      console.warn('[artplayer error]', err);
+      loading.style.display = 'flex';
+      status.textContent = 'Error al reproducir. Puedes cambiar al reproductor Nativo en Ajustes.';
     });
 
-    art.on('hotkey', (event) => {
-      if (event.key === 'f' || event.key === 'F') {
-        art.fullscreen = !art.fullscreen;
-      }
-    });
-  } catch (e) {
+  } catch (error) {
     if (cancelled) return;
-    console.error(e);
-    if (status) status.textContent = 'Error al cargar el vídeo: ' + (e?.message || e);
+    status.textContent = error.message || 'Error al conectar con Telegram';
   }
 }
