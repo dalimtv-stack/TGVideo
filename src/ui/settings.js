@@ -16,23 +16,47 @@ export function modal(title, body, subtitle = '') {
   overlay.querySelector('[aria-label="Cerrar"]').onclick = close;
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   overlay.addEventListener('keydown', e => {
-    if (['Escape', 'Backspace', 'GoBack'].includes(e.key) && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) { e.preventDefault(); e.stopPropagation(); close(); }
+    const isBackKey = ['Escape', 'GoBack', 'Back'].includes(e.key) || e.keyCode === 4 ||
+      (e.key === 'Backspace' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName));
+    if (isBackKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
     if (e.key === 'Tab') {
       const items = [...overlay.querySelectorAll('button, input, select')].filter(el => !el.disabled);
       const first = items[0], last = items.at(-1);
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
     }
-    // El D-Pad queda dentro del diálogo, no en la biblioteca del fondo.
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && !['INPUT', 'SELECT'].includes(e.target.tagName)) {
-      const items = [...overlay.querySelectorAll('[data-focusable]')];
+    // El D-Pad queda dentro del diálogo, permitiendo subir/bajar entre campos e inputs
+    const isTextInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
+    if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
+      const items = [...overlay.querySelectorAll('[data-focusable]')].filter(el => !el.disabled && el.offsetParent);
       const index = items.indexOf(document.activeElement);
-      const delta = ['ArrowLeft', 'ArrowUp'].includes(e.key) ? -1 : 1;
-      items[Math.max(0, Math.min(items.length - 1, index + delta))]?.focus({ preventScroll: true });
-      e.preventDefault(); e.stopPropagation();
+      const delta = e.key === 'ArrowUp' ? -1 : 1;
+      const next = items[Math.max(0, Math.min(items.length - 1, index + delta))];
+      if (next) {
+        e.preventDefault();
+        e.stopPropagation();
+        next.focus({ preventScroll: true });
+      }
+    } else if (['ArrowLeft', 'ArrowRight'].includes(e.key) && !isTextInput) {
+      const items = [...overlay.querySelectorAll('[data-focusable]')].filter(el => !el.disabled && el.offsetParent);
+      const index = items.indexOf(document.activeElement);
+      const delta = e.key === 'ArrowLeft' ? -1 : 1;
+      const next = items[Math.max(0, Math.min(items.length - 1, index + delta))];
+      if (next) {
+        e.preventDefault();
+        e.stopPropagation();
+        next.focus({ preventScroll: true });
+      }
     }
   });
-  overlay.querySelector('button')?.focus({ preventScroll: true });
+
+  const initialFocus = overlay.querySelector('input[data-focusable], button[data-focusable]') || overlay.querySelector('button');
+  initialFocus?.focus({ preventScroll: true });
   return { overlay, close };
 }
 
