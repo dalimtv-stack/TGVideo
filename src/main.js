@@ -65,6 +65,43 @@ function promptUI(title, placeholder = '', type = 'text') {
   });
 }
 
+function promptApiCredentialsUI() {
+  return new Promise((resolve) => {
+    showScreen(`
+      <div class="screen center" style="max-width:440px;margin:0 auto;text-align:center;">
+        <h2>Configurar Telegram API</h2>
+        <p style="color:#aaa;font-size:0.9rem;margin:0.5rem 0 1.2rem;line-height:1.4;">
+          Esta APK no tiene las credenciales incrustadas.<br>
+          Introduce tu API ID y Hash de <strong style="color:#fff;">my.telegram.org</strong>:
+        </p>
+        <div style="display:flex;flex-direction:column;gap:0.8rem;width:100%;align-items:center;">
+          <input id="prompt-api-id" type="number" placeholder="API ID (ej: 1234567)"
+                 style="padding:0.8rem 1rem;width:min(320px,90%);font-size:1rem;border-radius:8px;border:1px solid #444;background:#1a1a1a;color:#fff;" />
+          <input id="prompt-api-hash" type="text" placeholder="API Hash (32 caracteres)"
+                 style="padding:0.8rem 1rem;width:min(320px,90%);font-size:1rem;border-radius:8px;border:1px solid #444;background:#1a1a1a;color:#fff;" />
+          <button id="prompt-api-ok" class="btn" style="margin-top:0.4rem;width:min(320px,90%);">Guardar y Conectar</button>
+        </div>
+      </div>
+    `);
+    const idInput = document.getElementById('prompt-api-id');
+    const hashInput = document.getElementById('prompt-api-hash');
+    const btn = document.getElementById('prompt-api-ok');
+    idInput?.focus();
+
+    const submit = () => {
+      const id = idInput?.value?.trim();
+      const hash = hashInput?.value?.trim();
+      if (!id || !hash) return;
+      resolve({ apiId: id, apiHash: hash });
+    };
+
+    btn?.addEventListener('click', submit);
+    hashInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    idInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') hashInput?.focus(); });
+  });
+}
+
+
 // ---------- Home con biblioteca ----------
 let TITLES_CACHE = null;
 let metadataController = null;
@@ -605,6 +642,7 @@ async function start() {
     promptPhone: () => promptUI('Número de teléfono', '+34 600 000 000', 'tel'),
     promptCode: () => promptUI('Código de Telegram', '12345', 'text'),
     promptPassword: () => promptUI('Contraseña 2FA', 'Tu contraseña', 'password'),
+    promptApiCredentials: () => promptApiCredentialsUI(),
     onError: (err) => showError(err?.message || String(err)),
   });
 
