@@ -28,12 +28,12 @@ export function showMetadataModal(title, onUpdated) {
         <div class="meta-search-fields">
           <label class="meta-field">
             <span>Término de búsqueda</span>
-            <input name="query" value="${esc(initialQuery)}" required placeholder="Ej: Matrix, Breaking Bad…">
+            <input name="query" data-focusable value="${esc(initialQuery)}" required placeholder="Ej: Matrix, Breaking Bad…">
           </label>
 
           <label class="meta-field meta-field-sm">
             <span>Tipo</span>
-            <select name="type">
+            <select name="type" data-focusable>
               <option value="movie" ${currentType === 'movie' ? 'selected' : ''}>Película</option>
               <option value="tv" ${currentType === 'tv' ? 'selected' : ''}>Serie</option>
               <option value="collection" ${currentType === 'collection' ? 'selected' : ''}>Saga / Colección</option>
@@ -42,14 +42,14 @@ export function showMetadataModal(title, onUpdated) {
 
           <label class="meta-field meta-field-xs">
             <span>Año</span>
-            <input name="year" type="number" min="1900" max="2099" value="${esc(initialYear)}" placeholder="Ej: 1999">
+            <input name="year" data-focusable type="number" min="1900" max="2099" value="${esc(initialYear)}" placeholder="Ej: 1999">
           </label>
         </div>
 
         <div class="meta-search-direct">
           <label class="meta-field">
             <span>O introduce ID directo de TMDB (opcional)</span>
-            <input name="directId" placeholder="Ej: 603 o https://www.themoviedb.org/movie/603">
+            <input name="directId" data-focusable placeholder="Ej: 603 o https://www.themoviedb.org/movie/603">
           </label>
           <button class="btn" type="submit" data-focusable>Buscar</button>
         </div>
