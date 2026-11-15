@@ -4,11 +4,16 @@ const key = (pid) => `tgv_progress_${pid}`;
 export function loadProgress(pid) {
   try { return JSON.parse(localStorage.getItem(key(pid)) || '{}'); } catch { return {}; }
 }
+
+export function writeFullProgress(pid, allProgress) {
+  try { localStorage.setItem(key(pid), JSON.stringify(allProgress || {})); } catch (_) {}
+}
+
 export function saveProgress(pid, fileKey, current_time, duration, forceDone = false) {
   const all = loadProgress(pid);
   const is_completed = forceDone || (duration > 0 && current_time / duration >= 0.9);
   all[fileKey] = { current_time, duration, is_completed, updated_at: Date.now() };
-  localStorage.setItem(key(pid), JSON.stringify(all));
+  writeFullProgress(pid, all);
   return all;
 }
 
