@@ -20,6 +20,10 @@ jobs:
         run: npm install
 
       - name: Build web
+        env:
+          VITE_API_ID: ${{ secrets.VITE_API_ID }}
+          VITE_API_HASH: ${{ secrets.VITE_API_HASH }}
+          VITE_TMDB_DEMO_API_KEY: ${{ secrets.VITE_TMDB_DEMO_API_KEY }}
         run: npm run build
 
       - uses: actions/setup-java@v4
