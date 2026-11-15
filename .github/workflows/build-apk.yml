@@ -4,6 +4,15 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '¿Publicar como Release oficial en GitHub?'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -58,110 +67,79 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Prepare Android TV & Fire TV Icons, Banners, and Black Splash
+      - name: Setup Signing Key and Version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          python3 -m pip install pillow --break-system-packages 2>/dev/null || python3 -m pip install pillow || sudo apt-get install -y python3-pil
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+            echo "Keystore permanente cargado desde GitHub Secrets."
+          else
+            echo "Aviso: KEYSTORE_BASE64 no configurado en Secrets. Generando clave temporal."
+            keytool -genkeypair -v -keystore android/app/release.keystore -alias tgvideo -keyalg RSA -keysize 2048 -validity 10000 -storepass tgvideo1234 -keypass tgvideo1234 -dname "CN=TGVideo"
+          fi
+
           python3 - << 'PYEOF'
-          import os
-          from PIL import Image
+          import os, re
+          gradle_file = "android/app/build.gradle"
+          with open(gradle_file, "r", encoding="utf-8") as f:
+              content = f.read()
 
-          src_path = "public/icons/icon-512.png"
-          res_base = "android/app/src/main/res"
-
-          if os.path.exists(src_path):
-              print(f"Generando recursos de imagen desde {src_path}...")
-              src = Image.open(src_path).convert("RGBA")
-
-              # 1. Iconos del launcher (todas las densidades)
-              sizes = {
-                  "mipmap-mdpi": 48,
-                  "mipmap-hdpi": 72,
-                  "mipmap-xhdpi": 96,
-                  "mipmap-xxhdpi": 144,
-                  "mipmap-xxxhdpi": 192,
+          signing_block = """
+              signingConfigs {
+                  release {
+                      storeFile file('release.keystore')
+                      storePassword 'tgvideo1234'
+                      keyAlias 'tgvideo'
+                      keyPassword 'tgvideo1234'
+                  }
+                  debug {
+                      storeFile file('release.keystore')
+                      storePassword 'tgvideo1234'
+                      keyAlias 'tgvideo'
+                      keyPassword 'tgvideo1234'
+                  }
               }
-
-              for folder, size in sizes.items():
-                  folder_path = os.path.join(res_base, folder)
-                  os.makedirs(folder_path, exist_ok=True)
-                  resized = src.resize((size, size), Image.Resampling.LANCZOS)
-                  for name in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
-                      resized.save(os.path.join(folder_path, name))
-
-              # Fondo negro para iconos adaptativos
-              bg_file = os.path.join(res_base, "values", "ic_launcher_background.xml")
-              if os.path.exists(bg_file):
-                  with open(bg_file, "w", encoding="utf-8") as f:
-                      f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#000000</color>\n</resources>\n')
-
-              # 2. Banner rectangular 16:9 para Android TV y Fire TV (320x180)
-              for draw_dir in ["drawable", "drawable-xhdpi", "drawable-hdpi", "drawable-xxhdpi"]:
-                  dp = os.path.join(res_base, draw_dir)
-                  os.makedirs(dp, exist_ok=True)
-                  banner = Image.new("RGBA", (320, 180), (0, 0, 0, 255))
-                  icon_tv = src.resize((140, 140), Image.Resampling.LANCZOS)
-                  offset = ((320 - 140) // 2, (180 - 140) // 2)
-                  banner.paste(icon_tv, offset, icon_tv)
-                  banner.save(os.path.join(dp, "banner.png"))
-                  banner.save(os.path.join(dp, "tv_banner.png"))
-
-              # 3. Splash Screen con logo de TGVideo sobre fondo negro puro
-              for root, dirs, files in os.walk(res_base):
-                  for f in files:
-                      if f.lower() == "splash.png":
-                          full_path = os.path.join(root, f)
-                          try:
-                              orig = Image.open(full_path)
-                              w, h = orig.size
-                              splash_img = Image.new("RGBA", (w, h), (0, 0, 0, 255))
-                              icon_dim = min(int(min(w, h) * 0.45), 512)
-                              icon_dim = max(icon_dim, 64)
-                              icon_splash = src.resize((icon_dim, icon_dim), Image.Resampling.LANCZOS)
-                              off = ((w - icon_dim) // 2, (h - icon_dim) // 2)
-                              splash_img.paste(icon_splash, off, icon_splash)
-                              splash_img.save(full_path)
-                              print(f"Splash reemplazado: {full_path}")
-                          except Exception as e:
-                              print(f"Error procesando {full_path}: {e}")
-
-              print("Iconos, banner rectangular y splash negro configurados.")
-          else:
-              print(f"Aviso: No se encontró {src_path}")
-
-          manifest = "android/app/src/main/AndroidManifest.xml"
-          if os.path.exists(manifest):
-              with open(manifest, "r", encoding="utf-8") as f:
-                  c = f.read()
-
-              if "android.software.leanback" not in c:
-                  features = """
-              <uses-feature android:name="android.software.leanback" android:required="false" />
-              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
           """
-                  c = c.replace("</manifest>", features + "\n</manifest>")
+          if "signingConfigs {" not in content:
+              content = content.replace("buildTypes {", signing_block + "\n    buildTypes {")
 
-              if 'android:banner="@drawable/banner"' not in c:
-                  c = c.replace("<application", '<application android:banner="@drawable/banner"')
-                  c = c.replace("<activity", '<activity android:banner="@drawable/banner"')
+          content = re.sub(r'buildTypes\s*\{\s*release\s*\{', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release', content)
+          content = re.sub(r'buildTypes\s*\{\s*debug\s*\{', 'buildTypes {\n        debug {\n            signingConfig signingConfigs.debug', content)
 
-              if "android.intent.category.LEANBACK_LAUNCHER" not in c:
-                  orig = '<category android:name="android.intent.category.LAUNCHER" />'
-                  repl = '<category android:name="android.intent.category.LAUNCHER" />\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />'
-                  c = c.replace(orig, repl)
+          run_number = os.environ.get("RUN_NUMBER", "1")
+          content = re.sub(r'versionCode\s+\d+', f'versionCode {run_number}', content)
+          content = re.sub(r'versionName\s+"[^"]+"', f'versionName "1.0.{run_number}"', content)
 
-              with open(manifest, "w", encoding="utf-8") as f:
-                  f.write(c)
-              print("AndroidManifest.xml configurado para TV y banner rectangular")
+          with open(gradle_file, "w", encoding="utf-8") as f:
+              f.write(content)
+          print(f"build.gradle actualizado: firma persistente aplicada y versionCode={run_number}")
           PYEOF
 
-      - name: Build APK
+      - name: Build APKs
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease assembleDebug --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TGVideo.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tgvideo-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: tgvideo-apks
+          path: |
+            android/app/build/outputs/apk/release/TGVideo.apk
+            android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true') || startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="v1.0.${{ github.run_number }}"
+          gh release create "$TAG_NAME" \
+            android/app/build/outputs/apk/release/TGVideo.apk \
+            --title "TGVideo $TAG_NAME" \
+            --notes "Nueva versión automática de TGVideo. Firma fija para actualizar sin desinstalar." \
+            --latest
