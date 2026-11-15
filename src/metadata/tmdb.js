@@ -8,6 +8,7 @@ const VALID_YEAR_RE = /(?:19\d{2}|20[0-2]\d|2030)/;
 
 export function extractTitleAndYear(name = '') {
   let str = String(name || '').trim();
+  try { str = decodeURIComponent(str); } catch (_) {}
   str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '')
     .replace(/\b(2160p|1080p|720p|480p|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc)\b.*/i, '')
     .replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, '')
@@ -61,7 +62,12 @@ async function request(path, params = {}, signal) {
 }
 export async function validateTmdbKey() { return request('/configuration'); }
 
-const normalize = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const normalize = s => String(s || '')
+  .replace(/ñ/g, 'n').replace(/Ñ/g, 'N')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]/g, '');
 
 export async function setManualMetadata(title, metadata) {
   if (!title || !metadata) return null;
@@ -78,6 +84,41 @@ export async function clearManualMetadata(title) {
   await kv.del(key).catch(() => {});
   title.metadata = null;
   title.tmdbId = null;
+}
+
+export async function fetchTmdbFullDetails(type, id, signal) {
+  const endpoint = type === 'collection' ? 'collection' : (type === 'serie' || type === 'tv' ? 'tv' : 'movie');
+  if (endpoint === 'collection') return {};
+  const append = endpoint === 'tv' ? 'credits,external_ids,content_ratings' : 'credits,external_ids,release_dates';
+  try {
+    const data = await request(`/${endpoint}/${id}`, { append_to_response: append }, signal);
+    const crew = data.credits?.crew || [];
+    const director = crew.find(c => c.job === 'Director')?.name || '';
+    const writer = crew.find(c => c.job === 'Screenplay' || c.job === 'Writer' || c.job === 'Story')?.name || '';
+    const cast = (data.credits?.cast || []).slice(0, 5).map(c => c.name).join(', ');
+    const imdbId = data.external_ids?.imdb_id || data.imdb_id || '';
+    let ageRating = '';
+    if (endpoint === 'movie') {
+      const esRelease = data.release_dates?.results?.find(r => r.iso_3166_1 === 'ES');
+      const cert = esRelease?.release_dates?.find(d => d.certification)?.certification;
+      if (cert) ageRating = cert;
+    } else {
+      const esRating = data.content_ratings?.results?.find(r => r.iso_3166_1 === 'ES');
+      if (esRating?.rating) ageRating = esRating.rating;
+    }
+    return {
+      director,
+      writer,
+      cast,
+      imdbId,
+      ageRating,
+      rating: data.vote_average ? data.vote_average.toFixed(1) : '',
+      overview: data.overview || '',
+    };
+  } catch (e) {
+    console.warn('[tmdb] Error fetching full details:', e);
+    return {};
+  }
 }
 
 export async function searchTmdbManual({ query, type = 'movie', year = '', directId = null }, signal) {
@@ -111,6 +152,16 @@ export async function searchTmdbManual({ query, type = 'movie', year = '', direc
     search = await request(`/search/${endpoint}`, { query: q }, signal).catch(() => search);
   }
 
+  // Fallback si contiene caracteres especiales o "ñ": probar búsqueda transliterada
+  if (!search.results || search.results.length === 0) {
+    const unaccented = q
+      .replace(/ñ/g, 'n').replace(/Ñ/g, 'N')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    if (unaccented && unaccented.toLowerCase() !== q.toLowerCase()) {
+      search = await request(`/search/${endpoint}`, { query: unaccented }, signal).catch(() => search);
+    }
+  }
+
   return (search.results || []).slice(0, 10).map(r => ({
     id: r.id,
     type: endpoint,
@@ -136,7 +187,13 @@ async function enrichSaga(title, { signal } = {}) {
   let data;
   if (directId) data = await request(`/collection/${directId}`, {}, signal);
   else {
-    const search = await request('/search/collection', { query }, signal);
+    let search = await request('/search/collection', { query }, signal);
+    if (!search.results || search.results.length === 0) {
+      const unaccented = query.replace(/ñ/g, 'n').replace(/Ñ/g, 'N').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      if (unaccented && unaccented.toLowerCase() !== query.toLowerCase()) {
+        search = await request('/search/collection', { query: unaccented }, signal).catch(() => search);
+      }
+    }
     const match = search.results?.find(r => normalize(r.name) === normalize(query)) || search.results?.[0];
     if (!match?.id) return null;
     data = await request(`/collection/${match.id}`, {}, signal);
@@ -175,7 +232,16 @@ export async function enrichTitle(title, { signal } = {}) {
     if ((!search.results || search.results.length === 0) && year) {
       search = await request(`/search/${type}`, { query }, signal).catch(() => search);
     }
-    const match = search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(query))) || search.results?.[0];
+    // Fallback para caracteres con "ñ" o tildes que puedan no coincidir exactamente en TMDB
+    if (!search.results || search.results.length === 0) {
+      const unaccented = query.replace(/ñ/g, 'n').replace(/Ñ/g, 'N').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      if (unaccented && unaccented.toLowerCase() !== query.toLowerCase()) {
+        search = await request(`/search/${type}`, { query: unaccented }, signal).catch(() => search);
+      }
+    }
+    const match = search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(query)))
+      || search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && (normalize(n).includes(normalize(query)) || normalize(query).includes(normalize(n)))))
+      || search.results?.[0];
     id = match?.id;
   }
   if (!id) return null;
