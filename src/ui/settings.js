@@ -40,7 +40,7 @@ export function modal(title, body, subtitle = '') {
       if (next) {
         e.preventDefault();
         e.stopPropagation();
-        next.focus({ preventScroll: true });
+        next.focus(); next.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
     } else if (['ArrowLeft', 'ArrowRight'].includes(e.key) && !isTextInput) {
       const items = [...overlay.querySelectorAll('[data-focusable]')].filter(el => !el.disabled && el.offsetParent);
@@ -50,7 +50,7 @@ export function modal(title, body, subtitle = '') {
       if (next) {
         e.preventDefault();
         e.stopPropagation();
-        next.focus({ preventScroll: true });
+        next.focus(); next.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
     }
   });
