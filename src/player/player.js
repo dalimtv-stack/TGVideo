@@ -1,7 +1,9 @@
 // Reproductor TGVideo: Soporta ArtPlayer (avanzado) y Reproductor Nativo (HTML5)
 import Artplayer from 'artplayer';
-import { saveProgress } from './progress.js';
+import { saveProgress, loadProgress } from './progress.js';
 import { streamingAvailable, openStream } from './stream.js';
+import { extractTitleAndYear } from '../metadata/tmdb.js';
+import { prettyEpisodeName } from '../library/parse.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;',
@@ -10,6 +12,56 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '"': '&quot;',
   "'": '&#39;',
 }[char]));
+
+/**
+ * Formatea un título limpio y descriptivo sin repetir título ni año.
+ */
+export function formatPlayerTitle(title, file) {
+  if (!title) return file?.label || 'Reproduciendo';
+
+  const rawName = title.metadata?.name || title.nombre || '';
+  const parsed = extractTitleAndYear(rawName);
+  const cleanTitle = parsed.title || rawName;
+  const year = title.metadata?.date?.slice(0, 4) || parsed.year || '';
+  const yearSuffix = year ? ` (${year})` : '';
+
+  if (title.tipo === 'serie') {
+    const epNum = (file?.season || file?.episode)
+      ? `T${file.season || 1}·E${String(file.episode || 1).padStart(2, '0')}`
+      : '';
+    const epName = file?.metadata?.name || file?.label || 'Episodio';
+    return `${cleanTitle} · ${epNum ? epNum + ' - ' : ''}${epName}`;
+  }
+
+  if (title.isSaga) {
+    const filmName = file?.metadata?.name || file?.sagaName || file?.label || cleanTitle;
+    return filmName;
+  }
+
+  // Película estándar
+  if (!file?.label) return `${cleanTitle}${yearSuffix}`;
+
+  const cleanFileLabel = file.label
+    .replace(/\b(19\d\d|20\d\d)\b/g, '')
+    .replace(/[\[\(\]\)]/g, ' ')
+    .trim();
+
+  // Si la etiqueta del archivo es casi igual al nombre del título, no duplicar
+  const normTitle = cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normLabel = cleanFileLabel.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  if (normLabel === normTitle || normLabel.length === 0) {
+    return `${cleanTitle}${yearSuffix}`;
+  }
+
+  // Si tiene un descriptor de versión útil (p.ej. Versión Extendida, 1080p, etc.)
+  const diffLabel = cleanFileLabel.replace(new RegExp(cleanTitle, 'gi'), '').trim();
+  if (diffLabel && diffLabel.length > 2) {
+    return `${cleanTitle}${yearSuffix} · ${diffLabel}`;
+  }
+
+  return `${cleanTitle}${yearSuffix}`;
+}
 
 /**
  * Configura doble toque (móvil) y doble clic (escritorio) en izquierda/derecha
@@ -97,7 +149,7 @@ function setupDoubleTapSkip({ container, video, skipSeconds = 10 }) {
   };
 }
 
-export async function playFile({ client, peerOf, file, title, profile, resumeAt = 0, onClose, mount }) {
+export async function playFile({ client, peerOf, file, title, profile, resumeAt = 0, onClose, mount, sync }) {
   const localPref = typeof localStorage !== 'undefined' && profile?.id
     ? localStorage.getItem(`tgvideo_player_${profile.id}`)
     : null;
@@ -109,23 +161,28 @@ export async function playFile({ client, peerOf, file, title, profile, resumeAt 
   const skipSeconds = Number(profile?.skip_seconds || localSkip || 10);
 
   if (playerType === 'native') {
-    return playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount });
+    return playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync });
   }
-  return playArtplayer({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount });
+  return playArtplayer({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync });
 }
 
 // -------------------------------------------------------------
 // REPRODUCTOR NATIVO (HTML5) - Recomendado para iPhone / AirPlay
 // -------------------------------------------------------------
-async function playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount }) {
+async function playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync }) {
+  const displayTitle = formatPlayerTitle(title, file);
+
   mount.innerHTML = `
     <div class="player player-native">
       <div class="player-top-overlay" id="pl-top">
         <div class="player-top-left">
           <button class="btn-ghost" data-focusable id="pl-back">← Volver</button>
-          <div class="player-title">${escapeHtml(title.nombre)} · ${escapeHtml(file.label)}</div>
+          <div class="player-title">${escapeHtml(displayTitle)}</div>
           <span class="player-badge player-badge-native">Nativo</span>
         </div>
+      </div>
+      <div class="player-codec-notice" id="pl-codec-notice" style="display:none;">
+        <span>Safari no puede mostrar este formato de vídeo. Para iPhone, el archivo debe estar convertido a MP4 con vídeo H.264 y audio AAC.</span>
       </div>
       <div class="player-loading" id="pl-loading">
         <div class="loader"></div>
@@ -139,6 +196,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   const loading = mount.querySelector('#pl-loading');
   const status = mount.querySelector('#pl-status');
   const topOverlay = mount.querySelector('#pl-top');
+  const codecNotice = mount.querySelector('#pl-codec-notice');
 
   let cancelled = false;
   let stream = null;
@@ -164,6 +222,9 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   video.addEventListener('pause', () => {
     clearTimeout(hideTimer);
     topOverlay?.classList.remove('is-hidden');
+    if (sync && profile?.id) {
+      sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
+    }
   });
 
   const goFullscreen = () => {
@@ -189,7 +250,6 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     if (video.webkitExitFullscreen) try { video.webkitExitFullscreen(); } catch (_) {}
   };
 
-  // Solicitar pantalla completa durante el gesto inicial del usuario
   goFullscreen();
 
   const cleanupSkip = setupDoubleTapSkip({ container: playerEl, video, skipSeconds });
@@ -200,7 +260,13 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     cleanupSkip();
     clearTimeout(hideTimer);
     exitFullscreen();
-    if (video.duration) saveProgress(profile.id, file.key, video.currentTime, video.duration);
+    if (video.duration) {
+      saveProgress(profile.id, file.key, video.currentTime, video.duration);
+      if (sync && profile?.id) {
+        const progress = saveProgress(profile.id, file.key, video.currentTime, video.duration);
+        sync.schedulePush({ profile, progress });
+      }
+    }
     video.pause();
     video.removeAttribute('src');
     video.load();
@@ -271,21 +337,41 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     });
 
     let lastSaved = 0;
+    let audioOnlyChecked = false;
+
     video.addEventListener('timeupdate', () => {
       const now = Date.now();
-      if (now - lastSaved > 5000 && video.duration) {
+      if (now - lastSaved > 8000 && video.duration) {
         lastSaved = now;
         saveProgress(profile.id, file.key, video.currentTime, video.duration);
+        if (sync && profile?.id) {
+          sync.schedulePush({ profile, progress: loadProgress(profile.id) });
+        }
+      }
+
+      // Detección de fallo de decodificación de vídeo en Safari / iOS (audio sonando pero videoWidth = 0)
+      if (!audioOnlyChecked && video.currentTime > 2.2 && !video.paused) {
+        audioOnlyChecked = true;
+        if (video.videoWidth === 0 && codecNotice) {
+          codecNotice.style.display = 'flex';
+          topOverlay?.classList.remove('is-hidden');
+        }
       }
     });
 
     video.addEventListener('ended', () => {
-      if (video.duration) saveProgress(profile.id, file.key, video.duration, video.duration);
+      if (video.duration) {
+        saveProgress(profile.id, file.key, video.duration, video.duration);
+        if (sync && profile?.id) {
+          sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
+        }
+      }
     });
 
     video.addEventListener('error', () => {
       loading.style.display = 'flex';
-      status.textContent = 'Error al reproducir el archivo. Prueba con ArtPlayer en Ajustes.';
+      status.textContent = 'Error al reproducir el archivo. Prueba el otro reproductor o verifica que el vídeo sea compatible con iPhone.';
+      if (codecNotice) codecNotice.style.display = 'flex';
     });
 
   } catch (error) {
@@ -297,15 +383,20 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 // -------------------------------------------------------------
 // REPRODUCTOR ARTPLAYER - Avanzado, moderno y con gestos
 // -------------------------------------------------------------
-async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 0, skipSeconds, onClose, mount }) {
+async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 0, skipSeconds, onClose, mount, sync }) {
+  const displayTitle = formatPlayerTitle(title, file);
+
   mount.innerHTML = `
     <div class="player player-art">
       <div class="player-top-overlay" id="pl-top">
         <div class="player-top-left">
           <button class="btn-ghost" data-focusable id="pl-back">← Volver</button>
-          <div class="player-title">${escapeHtml(title.nombre)} · ${escapeHtml(file.label)}</div>
+          <div class="player-title">${escapeHtml(displayTitle)}</div>
           <span class="player-badge">ArtPlayer</span>
         </div>
+      </div>
+      <div class="player-codec-notice" id="pl-codec-notice" style="display:none;">
+        <span>Safari no puede mostrar este formato de vídeo. Para iPhone, el archivo debe estar convertido a MP4 con vídeo H.264 y audio AAC.</span>
       </div>
       <div class="player-loading" id="pl-loading">
         <div class="loader"></div>
@@ -319,6 +410,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   const loading = mount.querySelector('#pl-loading');
   const status = mount.querySelector('#pl-status');
   const topOverlay = mount.querySelector('#pl-top');
+  const codecNotice = mount.querySelector('#pl-codec-notice');
 
   let cancelled = false;
   let stream = null;
@@ -351,7 +443,12 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     exitFullscreen();
     if (art) {
       try {
-        if (art.duration) saveProgress(profile.id, file.key, art.currentTime, art.duration);
+        if (art.duration) {
+          saveProgress(profile.id, file.key, art.currentTime, art.duration);
+          if (sync && profile?.id) {
+            sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
+          }
+        }
         art.destroy(false);
       } catch (_) {}
     }
@@ -403,7 +500,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     art = new Artplayer({
       container,
       url,
-      title: `${title.nombre} · ${file.label}`,
+      title: displayTitle,
       autoplay: true,
       playsInline: true,
       theme: '#e50914',
@@ -436,10 +533,10 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
     const video = art.template.$video;
     let lastSaved = 0;
+    let audioOnlyChecked = false;
 
     cleanupSkip = setupDoubleTapSkip({ container: art.template.$player, video, skipSeconds });
 
-    // Sincronizar barra superior con los controles de Artplayer
     art.on('control', show => {
       if (topOverlay) {
         if (show) topOverlay.classList.remove('is-hidden');
@@ -447,7 +544,13 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       }
     });
 
-    // En iOS / Safari: si soporta webkitEnterFullscreen, añadir botón explícito para abrir la interfaz nativa
+    art.on('pause', () => {
+      if (sync && profile?.id && art?.duration) {
+        const progress = saveProgress(profile.id, file.key, art.currentTime, art.duration);
+        sync.schedulePush({ profile, progress });
+      }
+    });
+
     if (video.webkitSupportsFullscreen) {
       art.controls.add({
         name: 'iosNativeFs',
@@ -461,7 +564,6 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       });
     }
 
-    // Comprobar y exponer pistas de audio y subtítulos si WebKit las ofrece
     const checkTracks = () => {
       if (video.audioTracks && video.audioTracks.length > 1) {
         try {
@@ -536,20 +638,38 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
     art.on('video:timeupdate', () => {
       const now = Date.now();
-      if (now - lastSaved > 5000 && art.duration) {
+      if (now - lastSaved > 8000 && art.duration) {
         lastSaved = now;
         saveProgress(profile.id, file.key, art.currentTime, art.duration);
+        if (sync && profile?.id) {
+          sync.schedulePush({ profile, progress: loadProgress(profile.id) });
+        }
+      }
+
+      // Detección de incompatibilidad de códec de vídeo en Safari / iOS
+      if (!audioOnlyChecked && video.currentTime > 2.2 && !video.paused) {
+        audioOnlyChecked = true;
+        if (video.videoWidth === 0 && codecNotice) {
+          codecNotice.style.display = 'flex';
+          topOverlay?.classList.remove('is-hidden');
+        }
       }
     });
 
     art.on('video:ended', () => {
-      if (art.duration) saveProgress(profile.id, file.key, art.duration, art.duration);
+      if (art.duration) {
+        saveProgress(profile.id, file.key, art.duration, art.duration);
+        if (sync && profile?.id) {
+          sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
+        }
+      }
     });
 
     art.on('error', (err) => {
       console.warn('[artplayer error]', err);
       loading.style.display = 'flex';
-      status.textContent = 'Error al reproducir. Puedes cambiar al reproductor Nativo en Ajustes.';
+      status.textContent = 'Error al reproducir. Puedes cambiar al reproductor Nativo en Ajustes o verificar que el vídeo sea compatible con iPhone.';
+      if (codecNotice) codecNotice.style.display = 'flex';
     });
 
   } catch (error) {
