@@ -3,9 +3,18 @@ import { App } from '@capacitor/app';
 
 let onBack = null;
 let initialized = false;
+let activePlayerController = null;
 
 export function setBackHandler(fn) {
   onBack = fn;
+}
+
+export function registerPlayerController(controller) {
+  activePlayerController = controller;
+}
+
+export function unregisterPlayerController() {
+  activePlayerController = null;
 }
 
 export function handleBack() {
@@ -21,7 +30,11 @@ export function handleBack() {
     return true;
   }
 
-  // 2. Cerrar reproductor de vídeo si está abierto
+  // 2. Si el reproductor de vídeo está abierto, cerrarlo prioritariamente
+  if (activePlayerController && typeof activePlayerController.close === 'function') {
+    activePlayerController.close();
+    return true;
+  }
   const playerBack = document.querySelector('#pl-back');
   if (playerBack) {
     playerBack.click();
@@ -50,7 +63,8 @@ function move(dir) {
 
   const cur = document.activeElement && scope.contains(document.activeElement) ? document.activeElement : null;
   if (!cur) {
-    items[0].focus({ preventScroll: true });
+    items[0].focus();
+    items[0].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     return;
   }
 
@@ -82,7 +96,7 @@ function move(dir) {
 
   if (best) {
     best.focus();
-    best.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+    best.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
   }
 }
 
@@ -101,7 +115,7 @@ export function initDpad() {
   } catch (_) {}
 
   document.addEventListener('keydown', (e) => {
-    // Tecla Atrás en Fire TV / Android TV / teclados
+    // Tecla Atrás en Fire TV / Android TV / mandos / teclados
     const isBackKey =
       e.key === 'Escape' ||
       e.key === 'GoBack' ||
@@ -120,8 +134,36 @@ export function initDpad() {
 
     if (e.defaultPrevented) return;
 
+    // Si el reproductor de vídeo está abierto y no hay un modal encima, delegar control al reproductor
+    if (activePlayerController && !document.querySelector('.settings-overlay')) {
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        activePlayerController.onLeft?.();
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        activePlayerController.onRight?.();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activePlayerController.onUp?.();
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activePlayerController.onDown?.();
+        return;
+      }
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'MediaPlayPause' || e.key === 'Play' || e.key === 'Pause') {
+        e.preventDefault();
+        activePlayerController.onSelect?.();
+        return;
+      }
+    }
+
     const isInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
-    const isSelect = e.target.tagName === 'SELECT';
 
     const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
 
@@ -131,8 +173,6 @@ export function initDpad() {
       // Si está en un input de texto, izquierda y derecha navegan dentro del texto
       if (isInput && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
 
-      // Si está en un select, arriba y abajo pueden cambiar opción si está abierto,
-      // pero si el usuario navega verticalmente queremos permitir mover el foco
       e.preventDefault();
       move(map[e.key]);
     } else if (e.key === 'Enter') {
@@ -156,6 +196,9 @@ export function initDpad() {
 export function focusFirst(sel = '[data-focusable]') {
   setTimeout(() => {
     const el = document.querySelector(sel);
-    if (el) el.focus({ preventScroll: true });
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
   }, 50);
 }

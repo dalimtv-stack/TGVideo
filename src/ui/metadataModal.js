@@ -1,9 +1,10 @@
 import { modal } from './settings.js';
-import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata, enrichTitle } from '../metadata/tmdb.js';
+import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata, enrichTitle, fetchTmdbFullDetails } from '../metadata/tmdb.js';
+import { buildStandardCaption } from '../library/parse.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-export function showMetadataModal(title, onUpdated) {
+export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
   const currentMeta = title.metadata;
   const parsed = extractTitleAndYear(title.nombre);
   const initialQuery = parsed.title;
@@ -71,6 +72,11 @@ export function showMetadataModal(title, onUpdated) {
   const resultsContainer = overlay.querySelector('#meta-results');
   const resetBtn = overlay.querySelector('#btn-reset-meta');
 
+  // Asegurar auto-scroll suave dentro del contenedor de resultados al navegar con D-Pad
+  resultsContainer.addEventListener('focusin', (e) => {
+    e.target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+
   const executeSearch = async () => {
     const query = form.elements.query.value.trim();
     const type = form.elements.type.value;
@@ -107,10 +113,72 @@ export function showMetadataModal(title, onUpdated) {
           btn.disabled = true;
           status.textContent = `Aplicando "${selected.name}"…`;
           await setManualMetadata(title, selected);
-          onUpdated?.(selected);
-          close();
+
+          // Obtener ficha completa (director, guionista, casting, imdbId, edad)
+          try {
+            status.textContent = 'Recuperando ficha completa de TMDB…';
+            const full = await fetchTmdbFullDetails(selected.type, selected.id);
+            Object.assign(selected, full);
+          } catch (_) {}
+
+          // Si hay cliente de Telegram y canal, guardar en el caption del mensaje del vídeo
+          if (client && peerOf) {
+            try {
+              status.textContent = 'Actualizando caption en Telegram…';
+              const ch = title.channel || title.archivos?.[0]?.channel;
+              if (ch?.id && ch?.hash) {
+                const peer = peerOf(ch);
+                const files = title.archivos || [];
+                for (const file of files) {
+                  if (!file.messageId) continue;
+                  try {
+                    const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
+                    // No editar si es un mensaje reenviado
+                    if (msg && !msg.fwdFrom) {
+                      const newCap = buildStandardCaption({
+                        fileName: file.fileName || file.label,
+                        section: file.section || title.origen?.seccion || null,
+                        tmdbId: selected.id,
+                        imdbId: selected.imdbId || '',
+                        director: selected.director || '',
+                        writer: selected.writer || '',
+                        cast: selected.cast || '',
+                        rating: selected.rating || '',
+                        ageRating: selected.ageRating || '',
+                        synopsis: selected.overview || '',
+                      });
+                      await client.editMessage(peer, {
+                        message: file.messageId,
+                        text: newCap,
+                      });
+                    }
+                  } catch (mErr) {
+                    console.warn('[metadataModal] Error al editar mensaje:', file.messageId, mErr);
+                  }
+                }
+              }
+            } catch (tgErr) {
+              console.warn('[metadataModal] Error actualizando caption en Telegram:', tgErr);
+            }
+          }
+
+          status.textContent = '¡Identificación completada con éxito!';
+          setTimeout(() => {
+            onUpdated?.(selected);
+            close();
+          }, 350);
         };
       });
+
+      // Enfocar automáticamente el primer botón de resultado para mando TV
+      setTimeout(() => {
+        const firstBtn = resultsContainer.querySelector('.btn-select-meta');
+        if (firstBtn) {
+          firstBtn.focus();
+          firstBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }, 50);
+
     } catch (err) {
       status.textContent = 'Error: ' + err.message;
     }
