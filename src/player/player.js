@@ -1087,7 +1087,6 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       autoSize: false,
       autoMini: false,
       mutex: true,
-      controls: false, // Ocultar barra interna de ArtPlayer, usamos OSD Stremio unificado
       hotkey: false, // Controlado por el OSD TV nativo
       playbackRate: true,
       aspectRatio: true,
