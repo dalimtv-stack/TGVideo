@@ -222,8 +222,9 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   video.addEventListener('pause', () => {
     clearTimeout(hideTimer);
     topOverlay?.classList.remove('is-hidden');
-    if (sync && profile?.id) {
-      sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
+    if (sync && profile?.id && video.duration) {
+      const progress = saveProgress(profile.id, file.key, video.currentTime, video.duration);
+      sync.schedulePush({ profile, progress });
     }
   });
 
