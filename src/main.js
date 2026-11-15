@@ -459,7 +459,7 @@ function showDetail(tg, sync, profile, t) {
     showMetadataModal(t, () => {
       applyDetailMetadata(t, profile);
       showDetail(tg, sync, profile, t);
-    });
+    }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
   };
 
   const play = (f) => {
