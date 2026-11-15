@@ -63,6 +63,162 @@ function move(dir) {
     return;
   }
 
+  // 1. Si está dentro de un carrusel horizontal (.row-track)
+  const curTrack = cur.closest('.row-track');
+  if (curTrack) {
+    const trackItems = [...curTrack.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+    const idx = trackItems.indexOf(cur);
+
+    if (dir === 'left') {
+      if (idx > 0) {
+        trackItems[idx - 1].focus();
+        trackItems[idx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+      return;
+    }
+
+    if (dir === 'right') {
+      if (idx !== -1 && idx < trackItems.length - 1) {
+        trackItems[idx + 1].focus();
+        trackItems[idx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+      return;
+    }
+
+    if (dir === 'up') {
+      const curRow = cur.closest('.row');
+      const prevRow = curRow?.previousElementSibling?.matches('.row') ? curRow.previousElementSibling : null;
+      if (prevRow) {
+        const prevTrack = prevRow.querySelector('.row-track');
+        const prevItems = [...(prevTrack?.querySelectorAll('[data-focusable]') || [])].filter(e => e.offsetParent && !e.disabled);
+        if (prevItems.length) {
+          const target = prevItems[Math.min(idx >= 0 ? idx : 0, prevItems.length - 1)];
+          target.focus();
+          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          return;
+        }
+      } else {
+        // Primera fila: subir al header
+        const headerBtn = document.querySelector('#btn-reload, #btn-change-profile');
+        if (headerBtn) {
+          headerBtn.focus();
+          headerBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          return;
+        }
+      }
+    }
+
+    if (dir === 'down') {
+      const curRow = cur.closest('.row');
+      const nextRow = curRow?.nextElementSibling?.matches('.row') ? curRow.nextElementSibling : null;
+      if (nextRow) {
+        const nextTrack = nextRow.querySelector('.row-track');
+        const nextItems = [...(nextTrack?.querySelectorAll('[data-focusable]') || [])].filter(e => e.offsetParent && !e.disabled);
+        if (nextItems.length) {
+          const target = nextItems[Math.min(idx >= 0 ? idx : 0, nextItems.length - 1)];
+          target.focus();
+          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          return;
+        }
+      }
+      return;
+    }
+  }
+
+  // 2. Si está en el header de la Home (.home-header)
+  const curHeader = cur.closest('.home-header');
+  if (curHeader) {
+    if (dir === 'left') {
+      const reload = curHeader.querySelector('#btn-reload');
+      if (reload && cur !== reload) {
+        reload.focus();
+      }
+      return;
+    }
+    if (dir === 'right') {
+      const profile = curHeader.querySelector('#btn-change-profile');
+      if (profile && cur !== profile) {
+        profile.focus();
+      }
+      return;
+    }
+    if (dir === 'down') {
+      const firstCard = document.querySelector('.row-track [data-focusable]');
+      if (firstCard) {
+        firstCard.focus();
+        firstCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+      return;
+    }
+    if (dir === 'up') {
+      return;
+    }
+  }
+
+  // 3. Si está en el selector de temporadas (.seasons-track)
+  const curSeasons = cur.closest('.seasons-track');
+  if (curSeasons) {
+    const sItems = [...curSeasons.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+    const sIdx = sItems.indexOf(cur);
+    if (dir === 'left' && sIdx > 0) {
+      sItems[sIdx - 1].focus();
+      sItems[sIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      return;
+    }
+    if (dir === 'right' && sIdx !== -1 && sIdx < sItems.length - 1) {
+      sItems[sIdx + 1].focus();
+      sItems[sIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      return;
+    }
+    if (dir === 'down') {
+      const firstEp = document.querySelector('#ep-list .ep[data-focusable]');
+      if (firstEp) {
+        firstEp.focus();
+        firstEp.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+      return;
+    }
+    if (dir === 'up') {
+      const playBtn = document.querySelector('#d-play');
+      if (playBtn) {
+        playBtn.focus();
+        playBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+      return;
+    }
+  }
+
+  // 4. Si está en la lista de episodios / archivos (.ep-list)
+  const curEpList = cur.closest('#ep-list');
+  if (curEpList) {
+    const epItems = [...curEpList.querySelectorAll('.ep[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+    const epIdx = epItems.indexOf(cur);
+    if (dir === 'up') {
+      if (epIdx > 0) {
+        epItems[epIdx - 1].focus();
+        epItems[epIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      } else {
+        const seasonBtn = document.querySelector('.season-btn.active') || document.querySelector('#d-play');
+        if (seasonBtn) {
+          seasonBtn.focus();
+          seasonBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+      }
+      return;
+    }
+    if (dir === 'down') {
+      if (epIdx !== -1 && epIdx < epItems.length - 1) {
+        epItems[epIdx + 1].focus();
+        epItems[epIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+      return;
+    }
+    if (dir === 'left' || dir === 'right') {
+      return;
+    }
+  }
+
+  // 5. Navegación espacial general para modales y formularios
   const curRect = cur.getBoundingClientRect();
   const c = { x: curRect.left + curRect.width / 2, y: curRect.top + curRect.height / 2 };
 
@@ -82,19 +238,15 @@ function move(dir) {
     if (dir === 'up' && dy >= -5) continue;
     if (dir === 'down' && dy <= 5) continue;
 
-    // Calcular solapamiento horizontal y vertical
     const yOverlap = Math.max(0, Math.min(curRect.bottom, r.bottom) - Math.max(curRect.top, r.top));
     const xOverlap = Math.max(0, Math.min(curRect.right, r.right) - Math.max(curRect.left, r.left));
 
     let score;
     if (isHoriz) {
-      // Bloqueo de fila: si hay solapamiento vertical, están en la misma fila (penalización 0)
-      // Si no comparten fila, penalizar con +50000 para no saltar de fila al ir a izquierda/derecha
       const sameRow = yOverlap > Math.min(curRect.height, r.height) * 0.25;
       const rowPenalty = sameRow ? 0 : 50000;
       score = Math.abs(dx) + Math.abs(dy) * 6 + rowPenalty;
     } else {
-      // Bloqueo de columna: si hay solapamiento horizontal, están en la misma columna
       const sameCol = xOverlap > Math.min(curRect.width, r.width) * 0.25;
       const colPenalty = sameCol ? 0 : 50000;
       score = Math.abs(dy) + Math.abs(dx) * 4 + colPenalty;

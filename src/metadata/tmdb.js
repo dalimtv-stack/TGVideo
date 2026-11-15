@@ -281,3 +281,19 @@ export async function enrichTitles(titles, { signal, onUpdate } = {}) {
     }
   }));
 }
+
+const seasonCache = new Map();
+
+export async function fetchSeasonEpisodes(tvId, seasonNumber = 1, signal) {
+  if (!tvId) return [];
+  const key = `${tvId}_s${seasonNumber}`;
+  if (seasonCache.has(key)) return seasonCache.get(key);
+  try {
+    const data = await request(`/tv/${tvId}/season/${seasonNumber}`, {}, signal);
+    const list = data.episodes || [];
+    seasonCache.set(key, list);
+    return list;
+  } catch (e) {
+    return [];
+  }
+}

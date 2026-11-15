@@ -596,8 +596,13 @@ html, body {
   transition: background 0.15s, border-color 0.15s;
 }
 
-.ep:hover,
 .ep:focus {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: #fff;
+  outline: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .ep:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: #fff;
   outline: none;
@@ -1553,4 +1558,32 @@ html, body {
   .meta-results-container::-webkit-scrollbar {
     display: none;
   }
+}
+
+/* Ocultar barra interna nativa de ArtPlayer (usamos OSD Stremio unificado) */
+.player-art .art-bottom,
+.player-art .art-controls,
+.player-art .art-progress,
+.player-art .art-loading,
+.artplayer-host .art-bottom,
+.artplayer-host .art-controls,
+.artplayer-host .art-progress,
+.artplayer-host .art-loading {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* Indicador de foco visible y potente para barra de tiempo en TV */
+.player-scrubber-track:focus {
+  height: 14px !important;
+  outline: 3px solid #e50914 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 20px rgba(229, 9, 20, 0.9) !important;
+}
+.player-scrubber-track:focus .player-scrubber-thumb {
+  transform: translateY(-50%) scale(1.6) !important;
+  background: #ffffff !important;
+  box-shadow: 0 0 12px #e50914 !important;
 }

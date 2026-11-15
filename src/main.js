@@ -9,7 +9,7 @@ import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
 import { loadProgress, writeFullProgress, titleState } from './player/progress.js';
 import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
-import { enrichTitles, enrichTitle } from './metadata/tmdb.js';
+import { enrichTitles, enrichTitle, fetchSeasonEpisodes } from './metadata/tmdb.js';
 import { loadPoster, prewarmPosterCache, memoryCache } from './metadata/posterCache.js';
 import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
@@ -311,6 +311,7 @@ async function showHome(tg, sync, profile, { reload = false, focusTitleId = null
     if (url) loadPoster(img, url);
   });
 
+
   const toFocus = focusTitleId || LAST_OPENED_TITLE_ID;
   setTimeout(() => {
     let el = null;
@@ -585,6 +586,34 @@ function showDetail(tg, sync, profile, t) {
     if (hasSeasons) document.getElementById('d-list-title').textContent = `Temporada ${seasonNum} (${files.length} ep.)`;
   };
   renderEpisodes(currentSeason);
+
+  // Enriquecer nombres normalizados de episodios desde TMDB
+  if (t.tipo === 'serie' && (t.metadata?.id || t.tmdbId)) {
+    const loadSeasonMeta = (sNum) => {
+      fetchSeasonEpisodes(t.metadata?.id || t.tmdbId, sNum).then(episodes => {
+        if (!episodes || !episodes.length) return;
+        const currentFiles = hasSeasons ? (seasonsMap.get(sNum) || []) : t.archivos;
+        let updated = false;
+        for (const f of currentFiles) {
+          const ep = episodes.find(e => e.episode_number === f.episode);
+          if (ep && ep.name) {
+            f.metadata = { ...(f.metadata || {}), name: ep.name, overview: ep.overview || f.metadata?.overview };
+            updated = true;
+          }
+        }
+        if (updated && String(document.querySelector('.detail')?.dataset.title) === String(t.id)) {
+          if (currentSeason === sNum) {
+            renderEpisodes(sNum);
+          }
+          const playBtn = document.getElementById('d-play');
+          if (playBtn) {
+            playBtn.textContent = formatPlayButtonLabel(t, st, progress);
+          }
+        }
+      }).catch(() => {});
+    };
+    loadSeasonMeta(currentSeason);
+  }
 
   const centerCurrentSeason = () => centerSeason(document.querySelector('.seasons-track'), document.querySelector('.season-btn.active'));
   const changeSeason = (season, focusEpisode = false) => {

@@ -20,7 +20,7 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
 export function formatPlayerTitle(title, file) {
   if (!title) return file?.label || 'Reproduciendo';
 
-  const rawName = title.metadata?.name || title.nombre || '';
+  const rawName = title.metadata?.name || title.metadata?.title || title.nombre || '';
   const parsed = extractTitleAndYear(rawName);
   const cleanTitle = parsed.title || rawName;
   const year = title.metadata?.date?.slice(0, 4) || parsed.year || '';
@@ -30,7 +30,7 @@ export function formatPlayerTitle(title, file) {
     const epNum = (file?.season || file?.episode)
       ? `T${file.season || 1}·E${String(file.episode || 1).padStart(2, '0')}`
       : '';
-    const epName = file?.metadata?.name || file?.label || 'Episodio';
+    const epName = file?.metadata?.name || prettyEpisodeName(file?.fileName || file?.label, cleanTitle);
     return `${cleanTitle} · ${epNum ? epNum + ' - ' : ''}${epName}`;
   }
 
@@ -38,26 +38,7 @@ export function formatPlayerTitle(title, file) {
     return file?.metadata?.name || file?.sagaName || file?.label || cleanTitle;
   }
 
-  // Película estándar
-  if (!file?.label) return `${cleanTitle}${yearSuffix}`;
-
-  const cleanFileLabel = file.label
-    .replace(/\b(19\d\d|20\d\d)\b/g, '')
-    .replace(/[\[\(\]\)]/g, ' ')
-    .trim();
-
-  const normTitle = cleanTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const normLabel = cleanFileLabel.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  if (normLabel === normTitle || normLabel.length === 0) {
-    return `${cleanTitle}${yearSuffix}`;
-  }
-
-  const diffLabel = cleanFileLabel.replace(new RegExp(cleanTitle, 'gi'), '').trim();
-  if (diffLabel && diffLabel.length > 2) {
-    return `${cleanTitle}${yearSuffix} · ${diffLabel}`;
-  }
-
+  // Película estándar: solo título normalizado de TMDB y año entre paréntesis
   return `${cleanTitle}${yearSuffix}`;
 }
 
@@ -473,9 +454,13 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   const tvController = {
     close: () => close(),
     onLeft: () => {
-      const isScrubber = document.activeElement === scrubber;
-      const isBtn = document.activeElement?.classList.contains('player-ctrl-btn');
+      if (document.activeElement?.id === 'pl-badge-toggle') {
+        mount.querySelector('#pl-btn-back')?.focus();
+        showOsd();
+        return;
+      }
 
+      const isBtn = document.activeElement?.classList.contains('player-ctrl-btn');
       if (isBtn) {
         const btns = [...mount.querySelectorAll('.player-controls-row .player-ctrl-btn')];
         const idx = btns.indexOf(document.activeElement);
@@ -486,15 +471,25 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         }
       }
 
-      // Si tiene el foco en la línea de tiempo o si el OSD está oculto, buscar atrás
+      if (document.activeElement === scrubber) {
+        video.currentTime = Math.max(0, (video.currentTime || 0) - 30);
+        showToast(playerEl, `⏪ -30s (${formatTime(video.currentTime)})`);
+        showOsd();
+        return;
+      }
+
       video.currentTime = Math.max(0, (video.currentTime || 0) - skipSeconds);
       showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(video.currentTime)})`);
       showOsd();
     },
     onRight: () => {
-      const isScrubber = document.activeElement === scrubber;
-      const isBtn = document.activeElement?.classList.contains('player-ctrl-btn');
+      if (document.activeElement?.id === 'pl-btn-back') {
+        mount.querySelector('#pl-badge-toggle')?.focus();
+        showOsd();
+        return;
+      }
 
+      const isBtn = document.activeElement?.classList.contains('player-ctrl-btn');
       if (isBtn) {
         const btns = [...mount.querySelectorAll('.player-controls-row .player-ctrl-btn')];
         const idx = btns.indexOf(document.activeElement);
@@ -505,7 +500,13 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         }
       }
 
-      // Si tiene el foco en la barra de tiempo o si el OSD está oculto, buscar adelante
+      if (document.activeElement === scrubber) {
+        video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + 30);
+        showToast(playerEl, `⏩ +30s (${formatTime(video.currentTime)})`);
+        showOsd();
+        return;
+      }
+
       video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + skipSeconds);
       showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(video.currentTime)})`);
       showOsd();
@@ -513,7 +514,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     onUp: () => {
       if (osd.classList.contains('is-hidden')) {
         showOsd();
-        mount.querySelector('#pl-btn-playpause')?.focus();
+        mount.querySelector('#pl-btn-back')?.focus();
         return;
       }
 
@@ -523,14 +524,14 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       } else if (cur === scrubber) {
         mount.querySelector('#pl-btn-back')?.focus();
       } else {
-        mount.querySelector('#pl-btn-playpause')?.focus();
+        mount.querySelector('#pl-btn-back')?.focus();
       }
       showOsd();
     },
     onDown: () => {
       if (osd.classList.contains('is-hidden')) {
         showOsd();
-        mount.querySelector('#pl-btn-playpause')?.focus();
+        scrubber.focus();
         return;
       }
 
@@ -548,6 +549,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         if (video.paused) { video.play(); showToast(playerEl, '▶ Reproduciendo'); }
         else { video.pause(); showToast(playerEl, '⏸ Pausa'); }
         showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
         return;
       }
 
@@ -564,6 +566,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         if (video.paused) { video.play(); showToast(playerEl, '▶ Reproduciendo'); }
         else { video.pause(); showToast(playerEl, '⏸ Pausa'); }
         showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
       }
     },
   };
@@ -914,6 +917,12 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   const tvController = {
     close: () => close(),
     onLeft: () => {
+      if (document.activeElement?.id === 'pl-badge-toggle') {
+        mount.querySelector('#pl-btn-back')?.focus();
+        showOsd();
+        return;
+      }
+
       const isBtn = document.activeElement?.classList.contains('player-ctrl-btn');
       if (isBtn) {
         const btns = [...mount.querySelectorAll('.player-controls-row .player-ctrl-btn')];
@@ -924,6 +933,14 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
           return;
         }
       }
+
+      if (document.activeElement === scrubber && art) {
+        art.currentTime = Math.max(0, art.currentTime - 30);
+        showToast(playerEl, `⏪ -30s (${formatTime(art.currentTime)})`);
+        showOsd();
+        return;
+      }
+
       if (art) {
         art.currentTime = Math.max(0, art.currentTime - skipSeconds);
         showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(art.currentTime)})`);
@@ -931,6 +948,12 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       }
     },
     onRight: () => {
+      if (document.activeElement?.id === 'pl-btn-back') {
+        mount.querySelector('#pl-badge-toggle')?.focus();
+        showOsd();
+        return;
+      }
+
       const isBtn = document.activeElement?.classList.contains('player-ctrl-btn');
       if (isBtn) {
         const btns = [...mount.querySelectorAll('.player-controls-row .player-ctrl-btn')];
@@ -941,6 +964,14 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
           return;
         }
       }
+
+      if (document.activeElement === scrubber && art) {
+        art.currentTime = Math.min(art.duration || Infinity, art.currentTime + 30);
+        showToast(playerEl, `⏩ +30s (${formatTime(art.currentTime)})`);
+        showOsd();
+        return;
+      }
+
       if (art) {
         art.currentTime = Math.min(art.duration || Infinity, art.currentTime + skipSeconds);
         showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(art.currentTime)})`);
@@ -950,7 +981,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     onUp: () => {
       if (osd.classList.contains('is-hidden')) {
         showOsd();
-        mount.querySelector('#pl-btn-playpause')?.focus();
+        mount.querySelector('#pl-btn-back')?.focus();
         return;
       }
 
@@ -960,14 +991,14 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       } else if (cur === scrubber) {
         mount.querySelector('#pl-btn-back')?.focus();
       } else {
-        mount.querySelector('#pl-btn-playpause')?.focus();
+        mount.querySelector('#pl-btn-back')?.focus();
       }
       showOsd();
     },
     onDown: () => {
       if (osd.classList.contains('is-hidden')) {
         showOsd();
-        mount.querySelector('#pl-btn-playpause')?.focus();
+        scrubber.focus();
         return;
       }
 
@@ -986,6 +1017,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
           if (art.template.$video.paused) { art.play(); showToast(playerEl, '▶ Reproduciendo'); }
           else { art.pause(); showToast(playerEl, '⏸ Pausa'); }
           showOsd();
+          mount.querySelector('#pl-btn-playpause')?.focus();
         }
         return;
       }
@@ -1005,6 +1037,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
         if (art.template.$video.paused) { art.play(); showToast(playerEl, '▶ Reproduciendo'); }
         else { art.pause(); showToast(playerEl, '⏸ Pausa'); }
         showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
       }
     },
   };
@@ -1054,6 +1087,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       autoSize: false,
       autoMini: false,
       mutex: true,
+      controls: false, // Ocultar barra interna de ArtPlayer, usamos OSD Stremio unificado
       hotkey: false, // Controlado por el OSD TV nativo
       playbackRate: true,
       aspectRatio: true,

@@ -135,64 +135,60 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
             }
           }
 
-          await setManualMetadata(title, selected);
+          // Guardar localmente en segundo plano: la ficha no debe quedarse bloqueada.
+          setManualMetadata(title, selected).catch(() => {});
+          onUpdated?.(selected);
+          close();
 
-          // Obtener ficha completa (director, guionista, casting, imdbId, edad, runtime)
-          try {
-            status.textContent = 'Recuperando ficha completa de TMDB…';
-            const full = await fetchTmdbFullDetails(selected.type, selected.id);
-            Object.assign(selected, full);
-            if (full.runtime && !title.metadata.runtime) {
-              title.metadata.runtime = full.runtime;
-            }
-          } catch (_) {}
-
-          // Si hay cliente de Telegram y canal, guardar en el caption del mensaje del vídeo
-          if (client && peerOf) {
+          // Enriquecimiento completo y sincronización con Telegram en segundo plano
+          (async () => {
             try {
-              status.textContent = 'Actualizando caption en Telegram…';
-              const ch = title.channel || title.archivos?.[0]?.channel;
-              if (ch?.id && ch?.hash) {
-                const peer = peerOf(ch);
-                const files = title.archivos || [];
-                for (const file of files) {
-                  if (!file.messageId) continue;
-                  try {
-                    const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
-                    // No editar si es un mensaje reenviado
-                    if (msg && !msg.fwdFrom) {
-                      const newCap = buildStandardCaption({
-                        fileName: file.fileName || file.label,
-                        section: file.section || title.origen?.seccion || null,
-                        tmdbId: selected.id,
-                        imdbId: selected.imdbId || '',
-                        director: selected.director || '',
-                        writer: selected.writer || '',
-                        cast: selected.cast || '',
-                        rating: selected.rating || '',
-                        ageRating: selected.ageRating || '',
-                        synopsis: selected.overview || '',
-                      });
-                      await client.editMessage(peer, {
-                        message: file.messageId,
-                        text: newCap,
-                      });
+              const full = await fetchTmdbFullDetails(selected.type, selected.id);
+              Object.assign(selected, full);
+              if (full.runtime && !title.metadata.runtime) {
+                title.metadata.runtime = full.runtime;
+              }
+              await setManualMetadata(title, selected).catch(() => {});
+            } catch (_) {}
+
+            if (client && peerOf) {
+              try {
+                const ch = title.channel || title.archivos?.[0]?.channel;
+                if (ch?.id && ch?.hash) {
+                  const peer = peerOf(ch);
+                  const files = title.archivos || [];
+                  for (const file of files) {
+                    if (!file.messageId) continue;
+                    try {
+                      const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
+                      if (msg && !msg.fwdFrom) {
+                        const newCap = buildStandardCaption({
+                          fileName: file.fileName || file.label,
+                          section: file.section || title.origen?.seccion || null,
+                          tmdbId: selected.id,
+                          imdbId: selected.imdbId || '',
+                          director: selected.director || '',
+                          writer: selected.writer || '',
+                          cast: selected.cast || '',
+                          rating: selected.rating || '',
+                          ageRating: selected.ageRating || '',
+                          synopsis: selected.overview || '',
+                        });
+                        await client.editMessage(peer, {
+                          message: file.messageId,
+                          text: newCap,
+                        });
+                      }
+                    } catch (mErr) {
+                      console.warn('[metadataModal] Error al editar mensaje:', file.messageId, mErr);
                     }
-                  } catch (mErr) {
-                    console.warn('[metadataModal] Error al editar mensaje:', file.messageId, mErr);
                   }
                 }
+              } catch (tgErr) {
+                console.warn('[metadataModal] Error actualizando caption en Telegram:', tgErr);
               }
-            } catch (tgErr) {
-              console.warn('[metadataModal] Error actualizando caption en Telegram:', tgErr);
             }
-          }
-
-          status.textContent = '¡Identificación completada con éxito!';
-          setTimeout(() => {
-            onUpdated?.(selected);
-            close();
-          }, 350);
+          })().catch(() => {});
         };
       });
 
