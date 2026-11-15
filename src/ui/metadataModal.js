@@ -1,6 +1,7 @@
 import { modal } from './settings.js';
 import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata, enrichTitle, fetchTmdbFullDetails } from '../metadata/tmdb.js';
 import { buildStandardCaption } from '../library/parse.js';
+import { loadPoster } from '../metadata/posterCache.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -23,46 +24,50 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
 
   const { overlay, close } = modal(modalTitle, `
     <div class="meta-modal-body">
-      <div class="meta-current-box">${statusText}</div>
+      <div class="meta-col-left">
+        <div class="meta-current-box">${statusText}</div>
 
-      <form class="meta-search-form" id="meta-form">
-        <div class="meta-search-fields">
-          <label class="meta-field">
-            <span>Término de búsqueda</span>
-            <input name="query" data-focusable value="${esc(initialQuery)}" required placeholder="Ej: Matrix, Breaking Bad…">
-          </label>
+        <form class="meta-search-form" id="meta-form">
+          <div class="meta-search-fields">
+            <label class="meta-field">
+              <span>Término de búsqueda</span>
+              <input name="query" data-focusable value="${esc(initialQuery)}" required placeholder="Ej: Matrix, Breaking Bad…">
+            </label>
 
-          <label class="meta-field meta-field-sm">
-            <span>Tipo</span>
-            <select name="type" data-focusable>
-              <option value="movie" ${currentType === 'movie' ? 'selected' : ''}>Película</option>
-              <option value="tv" ${currentType === 'tv' ? 'selected' : ''}>Serie</option>
-              <option value="collection" ${currentType === 'collection' ? 'selected' : ''}>Saga / Colección</option>
-            </select>
-          </label>
+            <label class="meta-field meta-field-sm">
+              <span>Tipo</span>
+              <select name="type" data-focusable>
+                <option value="movie" ${currentType === 'movie' ? 'selected' : ''}>Película</option>
+                <option value="tv" ${currentType === 'tv' ? 'selected' : ''}>Serie</option>
+                <option value="collection" ${currentType === 'collection' ? 'selected' : ''}>Saga / Colección</option>
+              </select>
+            </label>
 
-          <label class="meta-field meta-field-xs">
-            <span>Año</span>
-            <input name="year" data-focusable type="number" min="1900" max="2099" value="${esc(initialYear)}" placeholder="Ej: 1999">
-          </label>
+            <label class="meta-field meta-field-xs">
+              <span>Año</span>
+              <input name="year" data-focusable type="number" min="1900" max="2099" value="${esc(initialYear)}" placeholder="Ej: 1999">
+            </label>
+          </div>
+
+          <div class="meta-search-direct">
+            <label class="meta-field">
+              <span>O introduce ID directo de TMDB (opcional)</span>
+              <input name="directId" data-focusable placeholder="Ej: 603 o https://www.themoviedb.org/movie/603">
+            </label>
+            <button class="btn" type="submit" data-focusable>Buscar</button>
+          </div>
+        </form>
+
+        <div class="meta-footer-actions">
+          ${currentMeta ? `<button class="btn-ghost btn-sm" type="button" id="btn-reset-meta" data-focusable>Restablecer identificación automática</button>` : ''}
         </div>
-
-        <div class="meta-search-direct">
-          <label class="meta-field">
-            <span>O introduce ID directo de TMDB (opcional)</span>
-            <input name="directId" data-focusable placeholder="Ej: 603 o https://www.themoviedb.org/movie/603">
-          </label>
-          <button class="btn" type="submit" data-focusable>Buscar</button>
-        </div>
-      </form>
-
-      <div class="meta-results-container">
-        <p class="meta-status" role="status">Introduce un título o ID y pulsa Buscar para corregir la ficha.</p>
-        <div class="meta-results-list" id="meta-results"></div>
       </div>
 
-      <div class="meta-footer-actions">
-        ${currentMeta ? `<button class="btn-ghost btn-sm" type="button" id="btn-reset-meta" data-focusable>Restablecer identificación automática</button>` : ''}
+      <div class="meta-col-right">
+        <div class="meta-results-container">
+          <p class="meta-status" role="status">Introduce un título o ID y pulsa Buscar para corregir la ficha.</p>
+          <div class="meta-results-list" id="meta-results"></div>
+        </div>
       </div>
     </div>
   `, modalSubtitle);
@@ -112,13 +117,34 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
           const selected = results[idx];
           btn.disabled = true;
           status.textContent = `Aplicando "${selected.name}"…`;
+
+          // Precalentar póster en caché local inmediatamente
+          if (selected.poster) {
+            loadPoster(selected.poster).catch(() => {});
+          }
+
+          // Asignar al objeto de título
+          title.metadata = selected;
+          title.tmdbId = selected.id;
+
+          // Si es película o serie, asociar también los metadatos a sus archivos
+          if (title.archivos && !title.isSaga) {
+            for (const f of title.archivos) {
+              f.metadata = selected;
+              f.tmdbId = selected.id;
+            }
+          }
+
           await setManualMetadata(title, selected);
 
-          // Obtener ficha completa (director, guionista, casting, imdbId, edad)
+          // Obtener ficha completa (director, guionista, casting, imdbId, edad, runtime)
           try {
             status.textContent = 'Recuperando ficha completa de TMDB…';
             const full = await fetchTmdbFullDetails(selected.type, selected.id);
             Object.assign(selected, full);
+            if (full.runtime && !title.metadata.runtime) {
+              title.metadata.runtime = full.runtime;
+            }
           } catch (_) {}
 
           // Si hay cliente de Telegram y canal, guardar en el caption del mensaje del vídeo
@@ -193,6 +219,12 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
     if (!confirm('¿Restablecer identificación a automática?')) return;
     await clearManualMetadata(title);
     await enrichTitle(title);
+    if (title.archivos && !title.isSaga) {
+      for (const f of title.archivos) {
+        f.metadata = title.metadata;
+        f.tmdbId = title.tmdbId;
+      }
+    }
     onUpdated?.(title.metadata);
     close();
   });

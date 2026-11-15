@@ -35,7 +35,7 @@ export function handleBack() {
     activePlayerController.close();
     return true;
   }
-  const playerBack = document.querySelector('#pl-back');
+  const playerBack = document.querySelector('#pl-back, #pl-btn-back');
   if (playerBack) {
     playerBack.click();
     return true;
@@ -48,11 +48,6 @@ export function handleBack() {
   }
 
   return false;
-}
-
-function center(el) {
-  const r = el.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 }
 
 function move(dir) {
@@ -68,26 +63,43 @@ function move(dir) {
     return;
   }
 
-  const c = center(cur);
+  const curRect = cur.getBoundingClientRect();
+  const c = { x: curRect.left + curRect.width / 2, y: curRect.top + curRect.height / 2 };
+
   let best = null;
   let bestScore = Infinity;
+  const isHoriz = dir === 'left' || dir === 'right';
 
   for (const el of items) {
     if (el === cur) continue;
-    const p = center(el);
+    const r = el.getBoundingClientRect();
+    const p = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     const dx = p.x - c.x;
     const dy = p.y - c.y;
 
-    const ok =
-      (dir === 'left' && dx < -5) ||
-      (dir === 'right' && dx > 5) ||
-      (dir === 'up' && dy < -5) ||
-      (dir === 'down' && dy > 5);
+    if (dir === 'left' && dx >= -5) continue;
+    if (dir === 'right' && dx <= 5) continue;
+    if (dir === 'up' && dy >= -5) continue;
+    if (dir === 'down' && dy <= 5) continue;
 
-    if (!ok) continue;
+    // Calcular solapamiento horizontal y vertical
+    const yOverlap = Math.max(0, Math.min(curRect.bottom, r.bottom) - Math.max(curRect.top, r.top));
+    const xOverlap = Math.max(0, Math.min(curRect.right, r.right) - Math.max(curRect.left, r.left));
 
-    const horiz = dir === 'left' || dir === 'right';
-    const score = horiz ? Math.abs(dx) + Math.abs(dy) * 4 : Math.abs(dy) + Math.abs(dx) * 0.5;
+    let score;
+    if (isHoriz) {
+      // Bloqueo de fila: si hay solapamiento vertical, están en la misma fila (penalización 0)
+      // Si no comparten fila, penalizar con +50000 para no saltar de fila al ir a izquierda/derecha
+      const sameRow = yOverlap > Math.min(curRect.height, r.height) * 0.25;
+      const rowPenalty = sameRow ? 0 : 50000;
+      score = Math.abs(dx) + Math.abs(dy) * 6 + rowPenalty;
+    } else {
+      // Bloqueo de columna: si hay solapamiento horizontal, están en la misma columna
+      const sameCol = xOverlap > Math.min(curRect.width, r.width) * 0.25;
+      const colPenalty = sameCol ? 0 : 50000;
+      score = Math.abs(dy) + Math.abs(dx) * 4 + colPenalty;
+    }
+
     if (score < bestScore) {
       bestScore = score;
       best = el;
@@ -164,7 +176,6 @@ export function initDpad() {
     }
 
     const isInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
-
     const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
 
     if (map[e.key]) {
