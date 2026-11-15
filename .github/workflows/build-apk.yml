@@ -58,7 +58,7 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Prepare Android TV & Fire TV Icons and Manifest
+      - name: Prepare Android TV & Fire TV Icons, Banners, and Black Splash
         run: |
           python3 -m pip install pillow --break-system-packages 2>/dev/null || python3 -m pip install pillow || sudo apt-get install -y python3-pil
           python3 - << 'PYEOF'
@@ -69,9 +69,10 @@ jobs:
           res_base = "android/app/src/main/res"
 
           if os.path.exists(src_path):
-              print(f"Generando iconos desde {src_path}...")
+              print(f"Generando recursos de imagen desde {src_path}...")
               src = Image.open(src_path).convert("RGBA")
 
+              # 1. Iconos del launcher (todas las densidades)
               sizes = {
                   "mipmap-mdpi": 48,
                   "mipmap-hdpi": 72,
@@ -87,16 +88,43 @@ jobs:
                   for name in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
                       resized.save(os.path.join(folder_path, name))
 
-              # Banner para Android TV / Fire TV (320x180)
-              drawable_path = os.path.join(res_base, "drawable")
-              os.makedirs(drawable_path, exist_ok=True)
+              # Fondo negro para iconos adaptativos
+              bg_file = os.path.join(res_base, "values", "ic_launcher_background.xml")
+              if os.path.exists(bg_file):
+                  with open(bg_file, "w", encoding="utf-8") as f:
+                      f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#000000</color>\n</resources>\n')
 
-              banner = Image.new("RGBA", (320, 180), (15, 15, 15, 255))
-              icon_tv = src.resize((140, 140), Image.Resampling.LANCZOS)
-              offset = ((320 - 140) // 2, (180 - 140) // 2)
-              banner.paste(icon_tv, offset, icon_tv)
-              banner.save(os.path.join(drawable_path, "banner.png"))
-              print("Iconos y banner generados correctamente.")
+              # 2. Banner rectangular 16:9 para Android TV y Fire TV (320x180)
+              for draw_dir in ["drawable", "drawable-xhdpi", "drawable-hdpi", "drawable-xxhdpi"]:
+                  dp = os.path.join(res_base, draw_dir)
+                  os.makedirs(dp, exist_ok=True)
+                  banner = Image.new("RGBA", (320, 180), (0, 0, 0, 255))
+                  icon_tv = src.resize((140, 140), Image.Resampling.LANCZOS)
+                  offset = ((320 - 140) // 2, (180 - 140) // 2)
+                  banner.paste(icon_tv, offset, icon_tv)
+                  banner.save(os.path.join(dp, "banner.png"))
+                  banner.save(os.path.join(dp, "tv_banner.png"))
+
+              # 3. Splash Screen con logo de TGVideo sobre fondo negro puro
+              for root, dirs, files in os.walk(res_base):
+                  for f in files:
+                      if f.lower() == "splash.png":
+                          full_path = os.path.join(root, f)
+                          try:
+                              orig = Image.open(full_path)
+                              w, h = orig.size
+                              splash_img = Image.new("RGBA", (w, h), (0, 0, 0, 255))
+                              icon_dim = min(int(min(w, h) * 0.45), 512)
+                              icon_dim = max(icon_dim, 64)
+                              icon_splash = src.resize((icon_dim, icon_dim), Image.Resampling.LANCZOS)
+                              off = ((w - icon_dim) // 2, (h - icon_dim) // 2)
+                              splash_img.paste(icon_splash, off, icon_splash)
+                              splash_img.save(full_path)
+                              print(f"Splash reemplazado: {full_path}")
+                          except Exception as e:
+                              print(f"Error procesando {full_path}: {e}")
+
+              print("Iconos, banner rectangular y splash negro configurados.")
           else:
               print(f"Aviso: No se encontró {src_path}")
 
@@ -112,8 +140,9 @@ jobs:
           """
                   c = c.replace("</manifest>", features + "\n</manifest>")
 
-              if "android:banner=" not in c:
+              if 'android:banner="@drawable/banner"' not in c:
                   c = c.replace("<application", '<application android:banner="@drawable/banner"')
+                  c = c.replace("<activity", '<activity android:banner="@drawable/banner"')
 
               if "android.intent.category.LEANBACK_LAUNCHER" not in c:
                   orig = '<category android:name="android.intent.category.LAUNCHER" />'
@@ -122,7 +151,7 @@ jobs:
 
               with open(manifest, "w", encoding="utf-8") as f:
                   f.write(c)
-              print("AndroidManifest.xml configurado para TV")
+              print("AndroidManifest.xml configurado para TV y banner rectangular")
           PYEOF
 
       - name: Build APK
