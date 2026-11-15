@@ -438,7 +438,10 @@ html, body {
   padding-left: max(1.5rem, calc(var(--sal) + 1rem));
   padding-right: max(1.5rem, calc(var(--sar) + 1rem));
   padding-bottom: max(2.5rem, calc(var(--sab) + 1.5rem));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--pc) 45%, #141414) 0%, #141414 420px);
+  background-color: #141414;
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--pc) 45%, #141414) 0%, #141414 420px);
+  background-repeat: no-repeat;
+  min-height: 100dvh;
 }
 
 #d-back {
@@ -769,7 +772,21 @@ html, body {
 .lib-card-poster:has(.poster-image) .poster-group,
 .lib-card-poster:has(.poster-image) .poster-meta { visibility: hidden; }
 .poster-progress { z-index: 1; }
-.detail.has-backdrop { background-image: linear-gradient(180deg, rgba(20,20,20,.7), #141414 540px), var(--detail-backdrop); background-repeat: no-repeat; background-size: 100% 540px, 100% auto; background-position: top center; }
+.detail.has-backdrop {
+  background-color: #141414;
+  background-image:
+    linear-gradient(180deg, rgba(20, 20, 20, 0.45) 0%, rgba(20, 20, 20, 0.85) 260px, #141414 460px, #141414 100%),
+    var(--detail-backdrop);
+  background-repeat: no-repeat;
+  background-size: 100% 100%, 100% auto;
+  background-position: top center;
+}
+.seasons-bar,
+#d-list-title,
+.ep-list {
+  position: relative;
+  z-index: 2;
+}
 .detail-metadata { margin: .5rem 0 1rem; color: #ddd; }
 .detail-head > div:last-child { flex: 1; min-width: 0; }
 .seasons-track { position: relative; max-width: 100%; }
@@ -1178,3 +1195,13 @@ html, body {
   justify-content: flex-end;
   margin-top: 0.2rem;
 }
+
+@media (max-width: 680px) {
+  .detail.has-backdrop {
+    background-image:
+      linear-gradient(180deg, rgba(20, 20, 20, 0.45) 0%, rgba(20, 20, 20, 0.88) 320px, #141414 560px, #141414 100%),
+      var(--detail-backdrop);
+    background-size: 100% 100%, 100% auto;
+  }
+}
+

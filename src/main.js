@@ -5,11 +5,11 @@ import { loadLibrary } from './library/channels.js';
 import { buildTitles } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
 import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
-import { loadProgress, titleState } from './player/progress.js';
+import { loadProgress, writeFullProgress, titleState } from './player/progress.js';
 import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
 import { enrichTitles, enrichTitle } from './metadata/tmdb.js';
-import { loadPoster } from './metadata/posterCache.js';
+import { loadPoster, prewarmPosterCache, memoryCache } from './metadata/posterCache.js';
 import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
 import { loadGlobalConfig } from './settings/global.js';
@@ -72,16 +72,42 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
 const fmtSize = (b) => b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(0) + ' MB';
 const fmtDur = (s) => s ? `${Math.floor(s / 3600) ? Math.floor(s / 3600) + 'h ' : ''}${Math.floor(s % 3600 / 60)}min` : '';
 
+function formatPlayButtonLabel(t, st, progress) {
+  if (!st?.next) return '';
+  const isContinue = st.continueWatching && progress[st.next.key] && !progress[st.next.key].is_completed;
+  const actionPrefix = isContinue ? '▶ Continuar' : '▶ Reproducir';
+
+  if (t.tipo === 'serie') {
+    const nextFile = st.next;
+    const epNum = (nextFile.season || nextFile.episode)
+      ? `T${nextFile.season || 1}·E${String(nextFile.episode || 1).padStart(2, '0')}`
+      : '';
+    const epName = nextFile.metadata?.name || prettyEpisodeName(nextFile.fileName || nextFile.label, t.metadata?.name || t.nombre);
+    return `${actionPrefix} ${epNum ? epNum + ' - ' : ''}${epName}`;
+  }
+
+  if (t.isSaga) {
+    const nextFile = st.next;
+    const filmName = nextFile.metadata?.name || nextFile.sagaName || nextFile.label;
+    return `${actionPrefix} ${filmName}`;
+  }
+
+  return actionPrefix;
+}
+
 function cardHtml(t, progress) {
   const st = titleState(t, progress);
   const p = st.next && progress[st.next.key];
   const pct = p && p.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
   const displayName = t.metadata?.name || t.metadata?.title || t.nombre;
   const metaBadge = t.tipo === 'serie' ? `${t.archivos.length} ep.` : t.isSaga ? `${t.archivos.length} películas` : t.archivos.length > 1 ? `${t.archivos.length} vers.` : 'Película';
+  const posterUrl = t.metadata?.poster;
+  const localPoster = posterUrl ? (memoryCache.get(posterUrl) || posterUrl) : '';
+
   return `
     <div class="lib-card" tabindex="0" data-focusable data-title="${esc(t.id)}">
       <div class="lib-card-poster" style="--pc:${posterColor(t.grupo + t.nombre)}">
-        ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" data-poster-url="${esc(t.metadata.poster)}" alt="${esc(displayName)}" loading="lazy" onerror="this.onerror=null;this.remove();">` : ''}
+        ${posterUrl ? `<img class="poster-image" src="${esc(localPoster)}" data-poster-url="${esc(posterUrl)}" alt="${esc(displayName)}" loading="lazy" onerror="this.onerror=null;this.remove();">` : ''}
         <span class="poster-group">${esc(t.grupo)}</span>
         <span class="poster-name">${esc(displayName)}</span>
         <span class="poster-meta">${metaBadge}</span>
@@ -151,7 +177,11 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
       if (document.querySelector('.home-screen')) showHome(tg, sync, profile);
     }).catch(e => console.warn('[library] comprobación fallida', e));
   }
-  const titles = TITLES_CACHE;
+  const titles = TITLES_CACHE || [];
+
+  // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
+  await prewarmPosterCache(titles);
+
   const progress = loadProgress(profile.id);
   const rows = buildHomeRows(titles, progress);
 
@@ -235,7 +265,7 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
       loadPoster(image, title.metadata.poster);
     });
     if (String(document.querySelector('.detail')?.dataset.title) === String(title.id)) {
-      applyDetailMetadata(title);
+      applyDetailMetadata(title, profile);
       if (title.isSaga) applySagaFilmMetadata(title);
     }
   } });
@@ -264,7 +294,7 @@ function applySagaFilmMetadata(t) {
   }
 }
 
-function applyDetailMetadata(t) {
+function applyDetailMetadata(t, profile) {
   const metadata = t.metadata;
   if (!metadata) return;
   const detail = document.querySelector('.detail');
@@ -316,6 +346,15 @@ function applyDetailMetadata(t) {
   }
   const info = detail.querySelector('.detail-metadata');
   if (info) info.textContent = [metadata.date?.slice(0, 4), metadata.rating ? `★ ${metadata.rating.toFixed(1)}` : ''].filter(Boolean).join(' · ');
+
+  // Actualizar botón de reproducir con el nombre TMDB si está disponible
+  const playBtn = detail.querySelector('#d-play');
+  if (playBtn && profile?.id) {
+    const progress = loadProgress(profile.id);
+    const st = titleState(t, progress);
+    const label = formatPlayButtonLabel(t, st, progress);
+    if (label) playBtn.textContent = label;
+  }
 }
 
 function showDetail(tg, sync, profile, t) {
@@ -323,8 +362,7 @@ function showDetail(tg, sync, profile, t) {
   setBackHandler(back);
   const progress = loadProgress(profile.id);
   const st = titleState(t, progress);
-  const nextLabel = !st.next ? '' : st.continueWatching && progress[st.next.key] && !progress[st.next.key].is_completed
-    ? `▶ Continuar ${t.tipo === 'serie' ? esc(st.next.label) : ''}` : `▶ Reproducir ${t.tipo === 'serie' ? esc(st.next.label) : ''}`;
+  const nextLabel = formatPlayButtonLabel(t, st, progress);
 
   const seasonsMap = new Map();
   if (t.tipo === 'serie') for (const f of t.archivos) {
@@ -349,7 +387,7 @@ function showDetail(tg, sync, profile, t) {
       </div>
       <div class="detail-head">
         <div class="lib-card-poster big" style="--pc:${posterColor(t.grupo + t.nombre)}">
-          ${t.metadata?.poster ? `<img class="poster-image" src="${esc(t.metadata.poster)}" alt="${esc(displayName)}">` : ''}
+          ${t.metadata?.poster ? `<img class="poster-image" src="${esc(memoryCache.get(t.metadata.poster) || t.metadata.poster)}" alt="${esc(displayName)}">` : ''}
           <span class="poster-group">${esc(t.grupo)}</span><span class="poster-name">${esc(displayName)}</span></div>
         <div>
           <div class="detail-kicker">${t.tipo === 'serie' ? 'Serie' : 'Película'} · ${esc(t.grupo)}</div>
@@ -368,13 +406,13 @@ function showDetail(tg, sync, profile, t) {
       <div class="ep-list" id="ep-list"></div>
     </div>`);
 
-  applyDetailMetadata(t);
+  applyDetailMetadata(t, profile);
   if (t.isSaga) applySagaFilmMetadata(t);
 
   if (!t.metadata) {
     enrichTitle(t).then(meta => {
       if (meta && String(document.querySelector('.detail')?.dataset.title) === String(t.id)) {
-        applyDetailMetadata(t);
+        applyDetailMetadata(t, profile);
         if (t.isSaga) applySagaFilmMetadata(t);
       }
     }).catch(() => {});
@@ -382,7 +420,7 @@ function showDetail(tg, sync, profile, t) {
 
   document.getElementById('d-fix-meta').onclick = () => {
     showMetadataModal(t, () => {
-      applyDetailMetadata(t);
+      applyDetailMetadata(t, profile);
       showDetail(tg, sync, profile, t);
     });
   };
@@ -392,7 +430,7 @@ function showDetail(tg, sync, profile, t) {
     setBackHandler(null);
     playFile({ client: tg.getClient(), peerOf: tg.peerOf, file: f, title: t, profile,
       resumeAt: p && !p.is_completed ? p.current_time : 0, mount: app,
-      onClose: () => showDetail(tg, sync, profile, t) });
+      onClose: () => showDetail(tg, sync, profile, t), sync });
   };
 
   const renderEpisodes = (seasonNum) => {
@@ -412,8 +450,8 @@ function showDetail(tg, sync, profile, t) {
       const episodeDate = Number.isFinite(sentAt) && sentAt > 0
         ? new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(sentAt * 1000))
         : '';
-      const episodeTitle = prettyEpisodeName(f.fileName || f.label, t.metadata?.name || t.nombre);
-      const poster = f.metadata?.poster ? `<img class="saga-film-poster" src="${esc(f.metadata.poster)}" alt="" loading="lazy">` : `<div class="saga-film-poster saga-film-placeholder">${esc(filmYear || '🎬')}</div>`;
+      const episodeTitle = f.metadata?.name || prettyEpisodeName(f.fileName || f.label, t.metadata?.name || t.nombre);
+      const poster = f.metadata?.poster ? `<img class="saga-film-poster" src="${esc(memoryCache.get(f.metadata.poster) || f.metadata.poster)}" alt="" loading="lazy">` : `<div class="saga-film-poster saga-film-placeholder">${esc(filmYear || '🎬')}</div>`;
       const synopsis = f.metadata?.overview ? `<div class="saga-film-synopsis">${esc(f.metadata.overview)}</div>` : '';
       return `<div class="ep ${t.isSaga ? 'saga-film' : ''}" tabindex="0" data-focusable data-key="${esc(f.key)}">
         ${t.isSaga ? poster : `<div class="ep-num">${ep || '•'}</div>`}
@@ -500,10 +538,22 @@ async function showProfileSelector(tg, sync) {
   `);
 
   document.querySelectorAll('.profile-card[data-id]').forEach(card => {
-    card.addEventListener('click', () => {
+    card.addEventListener('click', async () => {
       const id = card.dataset.id;
       const profile = profiles.find(p => p.id === id);
-      if (profile) showHome(tg, sync, profile);
+      if (profile) {
+        showLoading('Sincronizando perfil…');
+        try {
+          const remote = await sync.pullProfile(profile.id);
+          if (remote?.progress) {
+            const merged = sync.mergeProgress(loadProgress(profile.id), remote.progress);
+            writeFullProgress(profile.id, merged);
+          }
+        } catch (err) {
+          console.warn('[sync] Error sincronizando progreso', err);
+        }
+        showHome(tg, sync, profile);
+      }
     });
   });
 
