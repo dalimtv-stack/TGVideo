@@ -9,6 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^7.1.2",
+    "@capacitor/cli": "^7.1.2",
+    "@capacitor/core": "^7.1.2",
     "telegram": "^2.26.22",
     "big-integer": "^1.6.52",
     "artplayer": "^5.2.2"
