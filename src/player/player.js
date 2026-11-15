@@ -178,7 +178,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         <div class="player-top-left">
           <button class="btn-ghost" data-focusable id="pl-back">← Volver</button>
           <div class="player-title">${escapeHtml(displayTitle)}</div>
-          <span class="player-badge player-badge-native">Nativo</span>
+          <span class="player-badge player-badge-native" id="pl-badge-toggle" title="Pulsar para cambiar a ArtPlayer" style="cursor:pointer;" data-focusable tabindex="0">Nativo ⇄</span>
         </div>
       </div>
       <div class="player-codec-notice" id="pl-codec-notice" style="display:none;">
@@ -276,7 +276,30 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     onClose?.();
   };
 
-  mount.querySelector('#pl-back').onclick = close;
+  
+
+  mount.querySelector('#pl-badge-toggle')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const curTime = video.currentTime || resumeAt || 0;
+    if (cancelled) return;
+    cancelled = true;
+    cleanupSkip();
+    clearTimeout(hideTimer);
+    exitFullscreen();
+    if (video.duration) {
+      saveProgress(profile.id, file.key, video.currentTime, video.duration);
+    }
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    if (stream) stream.close();
+    else if (url) URL.revokeObjectURL(url);
+    if (profile?.id) {
+      localStorage.setItem(`tgvideo_player_${profile.id}`, 'artplayer');
+      profile.player = 'artplayer';
+    }
+    playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync });
+  });
 
   window.addEventListener('keydown', function onKey(e) {
     if (cancelled) { window.removeEventListener('keydown', onKey); return; }
@@ -393,7 +416,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
         <div class="player-top-left">
           <button class="btn-ghost" data-focusable id="pl-back">← Volver</button>
           <div class="player-title">${escapeHtml(displayTitle)}</div>
-          <span class="player-badge">ArtPlayer</span>
+          <span class="player-badge" id="pl-badge-toggle" title="Pulsar para cambiar a Nativo" style="cursor:pointer;" data-focusable tabindex="0">ArtPlayer ⇄</span>
         </div>
       </div>
       <div class="player-codec-notice" id="pl-codec-notice" style="display:none;">
@@ -459,6 +482,30 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   };
 
   mount.querySelector('#pl-back').onclick = close;
+
+  mount.querySelector('#pl-badge-toggle')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const curTime = art?.currentTime || resumeAt || 0;
+    if (cancelled) return;
+    cancelled = true;
+    if (cleanupSkip) cleanupSkip();
+    exitFullscreen();
+    if (art) {
+      try {
+        if (art.duration) {
+          saveProgress(profile.id, file.key, art.currentTime, art.duration);
+        }
+        art.destroy(false);
+      } catch (_) {}
+    }
+    if (stream) stream.close();
+    else if (url) URL.revokeObjectURL(url);
+    if (profile?.id) {
+      localStorage.setItem(`tgvideo_player_${profile.id}`, 'native');
+      profile.player = 'native';
+    }
+    playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync });
+  });
 
   window.addEventListener('keydown', function onKey(e) {
     if (cancelled) { window.removeEventListener('keydown', onKey); return; }
