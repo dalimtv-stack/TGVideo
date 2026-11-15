@@ -60,63 +60,69 @@ jobs:
 
       - name: Prepare Android TV & Fire TV Icons and Manifest
         run: |
-          SRC="public/icons/icon-512.png"
-          RES="android/app/src/main/res"
-
-          if [ -f "$SRC" ]; then
-            echo "Inyectando iconos personalizados desde $SRC..."
-            mkdir -p "$RES/mipmap-mdpi" "$RES/mipmap-hdpi" "$RES/mipmap-xhdpi" "$RES/mipmap-xxhdpi" "$RES/mipmap-xxxhdpi" "$RES/drawable"
-
-            convert "$SRC" -resize 48x48 "$RES/mipmap-mdpi/ic_launcher.png"
-            convert "$SRC" -resize 48x48 "$RES/mipmap-mdpi/ic_launcher_round.png"
-            convert "$SRC" -resize 48x48 "$RES/mipmap-mdpi/ic_launcher_foreground.png"
-
-            convert "$SRC" -resize 72x72 "$RES/mipmap-hdpi/ic_launcher.png"
-            convert "$SRC" -resize 72x72 "$RES/mipmap-hdpi/ic_launcher_round.png"
-            convert "$SRC" -resize 72x72 "$RES/mipmap-hdpi/ic_launcher_foreground.png"
-
-            convert "$SRC" -resize 96x96 "$RES/mipmap-xhdpi/ic_launcher.png"
-            convert "$SRC" -resize 96x96 "$RES/mipmap-xhdpi/ic_launcher_round.png"
-            convert "$SRC" -resize 96x96 "$RES/mipmap-xhdpi/ic_launcher_foreground.png"
-
-            convert "$SRC" -resize 144x144 "$RES/mipmap-xxhdpi/ic_launcher.png"
-            convert "$SRC" -resize 144x144 "$RES/mipmap-xxhdpi/ic_launcher_round.png"
-            convert "$SRC" -resize 144x144 "$RES/mipmap-xxhdpi/ic_launcher_foreground.png"
-
-            convert "$SRC" -resize 192x192 "$RES/mipmap-xxxhdpi/ic_launcher.png"
-            convert "$SRC" -resize 192x192 "$RES/mipmap-xxxhdpi/ic_launcher_round.png"
-            convert "$SRC" -resize 192x192 "$RES/mipmap-xxxhdpi/ic_launcher_foreground.png"
-
-            # Generar banner para Android TV / Fire TV (320x180)
-            convert -size 320x180 xc:"#0f0f0f" \
-              \( "$SRC" -resize 140x140 \) -gravity center -composite \
-              "$RES/drawable/banner.png"
-          fi
-
-          # Configurar AndroidManifest.xml para Android TV / Fire TV
+          python3 -m pip install pillow --break-system-packages 2>/dev/null || python3 -m pip install pillow || sudo apt-get install -y python3-pil
           python3 - << 'PYEOF'
-          manifest = "android/app/src/main/AndroidManifest.xml"
-          with open(manifest, "r", encoding="utf-8") as f:
-              c = f.read()
+          import os
+          from PIL import Image
 
-          if "android.software.leanback" not in c:
-              features = """
+          src_path = "public/icons/icon-512.png"
+          res_base = "android/app/src/main/res"
+
+          if os.path.exists(src_path):
+              print(f"Generando iconos desde {src_path}...")
+              src = Image.open(src_path).convert("RGBA")
+
+              sizes = {
+                  "mipmap-mdpi": 48,
+                  "mipmap-hdpi": 72,
+                  "mipmap-xhdpi": 96,
+                  "mipmap-xxhdpi": 144,
+                  "mipmap-xxxhdpi": 192,
+              }
+
+              for folder, size in sizes.items():
+                  folder_path = os.path.join(res_base, folder)
+                  os.makedirs(folder_path, exist_ok=True)
+                  resized = src.resize((size, size), Image.Resampling.LANCZOS)
+                  for name in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
+                      resized.save(os.path.join(folder_path, name))
+
+              # Banner para Android TV / Fire TV (320x180)
+              drawable_path = os.path.join(res_base, "drawable")
+              os.makedirs(drawable_path, exist_ok=True)
+
+              banner = Image.new("RGBA", (320, 180), (15, 15, 15, 255))
+              icon_tv = src.resize((140, 140), Image.Resampling.LANCZOS)
+              offset = ((320 - 140) // 2, (180 - 140) // 2)
+              banner.paste(icon_tv, offset, icon_tv)
+              banner.save(os.path.join(drawable_path, "banner.png"))
+              print("Iconos y banner generados correctamente.")
+          else:
+              print(f"Aviso: No se encontró {src_path}")
+
+          manifest = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(manifest):
+              with open(manifest, "r", encoding="utf-8") as f:
+                  c = f.read()
+
+              if "android.software.leanback" not in c:
+                  features = """
               <uses-feature android:name="android.software.leanback" android:required="false" />
               <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
           """
-              c = c.replace("</manifest>", features + "\n</manifest>")
+                  c = c.replace("</manifest>", features + "\n</manifest>")
 
-          if "android:banner=" not in c:
-              c = c.replace("<application", '<application android:banner="@drawable/banner"')
+              if "android:banner=" not in c:
+                  c = c.replace("<application", '<application android:banner="@drawable/banner"')
 
-          if "android.intent.category.LEANBACK_LAUNCHER" not in c:
-              orig = '<category android:name="android.intent.category.LAUNCHER" />'
-              repl = '<category android:name="android.intent.category.LAUNCHER" />\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />'
-              c = c.replace(orig, repl)
+              if "android.intent.category.LEANBACK_LAUNCHER" not in c:
+                  orig = '<category android:name="android.intent.category.LAUNCHER" />'
+                  repl = '<category android:name="android.intent.category.LAUNCHER" />\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />'
+                  c = c.replace(orig, repl)
 
-          with open(manifest, "w", encoding="utf-8") as f:
-              f.write(c)
-          print("AndroidManifest.xml configurado para TV")
+              with open(manifest, "w", encoding="utf-8") as f:
+                  f.write(c)
+              print("AndroidManifest.xml configurado para TV")
           PYEOF
 
       - name: Build APK
