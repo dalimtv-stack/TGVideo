@@ -1,3 +1,4 @@
+let LAST_OPENED_TITLE_ID = null;
 import './style.css';
 import { createTelegramClient } from './core/telegram.js';
 import { createTelegramSync } from './sync/telegramSync.js';
@@ -58,10 +59,64 @@ function promptUI(title, placeholder = '', type = 'text') {
     `);
     const input = document.getElementById('prompt-input');
     const btn = document.getElementById('prompt-ok');
-    input.focus();
-    const submit = () => resolve(input.value.trim());
-    btn.addEventListener('click', submit);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    input?.focus();
+    const submit = () => resolve(input?.value?.trim() || '');
+    btn?.addEventListener('click', submit);
+    input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  });
+}
+
+function promptPhoneUI() {
+  return new Promise((resolve) => {
+    showScreen(`
+      <div class="screen center">
+        <h2>Número de teléfono</h2>
+        <p style="color:#aaa;font-size:0.95rem;margin-top:0.4rem;">Introduce tu prefijo y tu número de Telegram:</p>
+        <div style="display:flex;gap:0.6rem;margin:1.5rem 0;width:min(340px,92%);align-items:center;justify-content:center;">
+          <input id="prompt-phone-prefix" type="tel" inputmode="tel" data-focusable value="+34"
+                 style="padding:0.8rem 0.6rem;width:76px;text-align:center;font-size:1.1rem;border-radius:8px;border:1px solid #444;background:#1a1a1a;color:#fff;" />
+          <input id="prompt-phone-num" type="tel" inputmode="tel" data-focusable placeholder="600 000 000"
+                 style="flex:1;padding:0.8rem 1rem;font-size:1.1rem;border-radius:8px;border:1px solid #444;background:#1a1a1a;color:#fff;" />
+        </div>
+        <button id="prompt-ok" class="btn" data-focusable>Continuar</button>
+      </div>
+    `);
+    const prefixInput = document.getElementById('prompt-phone-prefix');
+    const numInput = document.getElementById('prompt-phone-num');
+    const btn = document.getElementById('prompt-ok');
+    numInput?.focus();
+
+    const submit = () => {
+      let pref = prefixInput?.value?.trim() || '+34';
+      if (!pref.startsWith('+')) pref = '+' + pref;
+      const num = numInput?.value?.replace(/\s+/g, '').trim();
+      if (!num) return;
+      resolve(pref + num);
+    };
+
+    btn?.addEventListener('click', submit);
+    numInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    prefixInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') numInput?.focus(); });
+  });
+}
+
+function promptCodeUI() {
+  return new Promise((resolve) => {
+    showScreen(`
+      <div class="screen center">
+        <h2>Código de Telegram</h2>
+        <p style="color:#aaa;font-size:0.95rem;margin-top:0.4rem;">Introduce el código numérico recibido en Telegram:</p>
+        <input id="prompt-input" type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" data-focusable placeholder="12345"
+               style="margin:1.5rem 0;padding:0.8rem 1rem;width:min(240px,90%);text-align:center;letter-spacing:0.3em;font-size:1.4rem;border-radius:8px;border:1px solid #444;background:#1a1a1a;color:#fff;" />
+        <button id="prompt-ok" class="btn" data-focusable>Continuar</button>
+      </div>
+    `);
+    const input = document.getElementById('prompt-input');
+    const btn = document.getElementById('prompt-ok');
+    input?.focus();
+    const submit = () => resolve(input?.value?.trim() || '');
+    btn?.addEventListener('click', submit);
+    input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
   });
 }
 
@@ -177,7 +232,7 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
 }
 
 let CHECKED = false;
-async function showHome(tg, sync, profile, { reload = false } = {}) {
+async function showHome(tg, sync, profile, { reload = false, focusTitleId = null } = {}) {
   setBackHandler(() => showProfileSelector(tg, sync));
   const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
   if (reload) {
@@ -256,7 +311,20 @@ async function showHome(tg, sync, profile, { reload = false } = {}) {
     if (url) loadPoster(img, url);
   });
 
-  focusFirst('.lib-card');
+  const toFocus = focusTitleId || LAST_OPENED_TITLE_ID;
+  setTimeout(() => {
+    let el = null;
+    if (toFocus) {
+      el = document.querySelector(`.lib-card[data-title="${toFocus}"]`);
+    }
+    if (!el) {
+      el = document.querySelector('.lib-card[data-title], [data-focusable]');
+    }
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }, 80);
   metadataController?.abort();
   metadataController = new AbortController();
 
@@ -395,7 +463,8 @@ function applyDetailMetadata(t, profile) {
 }
 
 function showDetail(tg, sync, profile, t) {
-  const back = () => showHome(tg, sync, profile);
+  LAST_OPENED_TITLE_ID = t.id;
+  const back = () => showHome(tg, sync, profile, { focusTitleId: t.id });
   setBackHandler(back);
   const progress = loadProgress(profile.id);
   const st = titleState(t, progress);
@@ -456,7 +525,13 @@ function showDetail(tg, sync, profile, t) {
   }
 
   document.getElementById('d-fix-meta').onclick = () => {
-    showMetadataModal(t, () => {
+    showMetadataModal(t, (updatedMeta) => {
+      t.metadata = updatedMeta;
+      if (t.archivos && !t.isSaga) {
+        for (const f of t.archivos) {
+          f.metadata = updatedMeta;
+        }
+      }
       applyDetailMetadata(t, profile);
       showDetail(tg, sync, profile, t);
     }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
@@ -481,19 +556,25 @@ function showDetail(tg, sync, profile, t) {
       const p = progress[f.key];
       const pct = p?.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
       const ep = f.season || f.episode ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
-      const filmYear = f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || '';
-      const filmTitle = f.metadata?.name || f.sagaName || f.label;
+      const filmYear = f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || t.metadata?.date?.slice(0, 4) || '';
+      const normalizedMovieName = t.metadata?.name || t.metadata?.title || t.nombre;
+      const filmTitle = t.isSaga
+        ? (f.metadata?.name || f.sagaName || f.label)
+        : t.tipo === 'serie'
+          ? (f.metadata?.name || prettyEpisodeName(f.fileName || f.label, normalizedMovieName))
+          : (f.metadata?.name || normalizedMovieName || f.sagaName || f.label);
       const sentAt = Number(f.date);
       const episodeDate = Number.isFinite(sentAt) && sentAt > 0
         ? new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(sentAt * 1000))
         : '';
-      const episodeTitle = f.metadata?.name || prettyEpisodeName(f.fileName || f.label, t.metadata?.name || t.nombre);
+      const fileDurationSecs = f.duration || (t.metadata?.runtime ? (t.metadata.runtime * 60) : 0);
+      const durStr = fmtDur(fileDurationSecs);
       const poster = f.metadata?.poster ? `<img class="saga-film-poster" src="${esc(memoryCache.get(f.metadata.poster) || f.metadata.poster)}" alt="" loading="lazy">` : `<div class="saga-film-poster saga-film-placeholder">${esc(filmYear || '🎬')}</div>`;
       const synopsis = f.metadata?.overview ? `<div class="saga-film-synopsis">${esc(f.metadata.overview)}</div>` : '';
       return `<div class="ep ${t.isSaga ? 'saga-film' : ''}" tabindex="0" data-focusable data-key="${esc(f.key)}">
         ${t.isSaga ? poster : `<div class="ep-num">${ep || '•'}</div>`}
-        <div class="ep-info"><div class="ep-name">${esc(t.isSaga ? filmTitle : t.tipo === 'serie' ? episodeTitle : filmTitle)}</div>
-          <div class="ep-meta">${(t.tipo === 'serie' ? [fmtDur(f.duration), fmtSize(f.size), episodeDate] : [filmYear, fmtDur(f.duration), fmtSize(f.size)]).filter(Boolean).join(' · ')}</div>
+        <div class="ep-info"><div class="ep-name">${esc(filmTitle)}</div>
+          <div class="ep-meta">${(t.tipo === 'serie' ? [durStr, fmtSize(f.size), episodeDate] : [filmYear, durStr, fmtSize(f.size)]).filter(Boolean).join(' · ')}</div>
           ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
         <div class="ep-state">${p?.is_completed ? '✓ Visto' : pct ? Math.round(pct) + '%' : ''}</div>
       </div>`;
@@ -574,10 +655,28 @@ async function showProfileSelector(tg, sync) {
     </div>
   `);
 
+  const lastProfileId = localStorage.getItem('tgvideo_last_profile_id') || profiles[0]?.id;
+  setTimeout(() => {
+    let target = null;
+    if (lastProfileId) {
+      target = document.querySelector(`.profile-card[data-id="${lastProfileId}"]`);
+    }
+    if (!target) {
+      target = document.querySelector('.profile-card[data-id], #btn-add-profile');
+    }
+    if (target) {
+      target.focus();
+      target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }, 60);
+
   document.querySelectorAll('.profile-card[data-id]').forEach(card => {
     card.addEventListener('click', async () => {
       const id = card.dataset.id;
       const profile = profiles.find(p => p.id === id);
+      if (profile) {
+        localStorage.setItem('tgvideo_last_profile_id', profile.id);
+      }
       if (profile) {
         showLoading('Sincronizando perfil…');
         try {
@@ -639,8 +738,8 @@ async function start() {
   showLoading('Conectando con Telegram…');
 
   const tg = createTelegramClient({
-    promptPhone: () => promptUI('Número de teléfono', '+34 600 000 000', 'tel'),
-    promptCode: () => promptUI('Código de Telegram', '12345', 'text'),
+    promptPhone: () => promptPhoneUI(),
+    promptCode: () => promptCodeUI(),
     promptPassword: () => promptUI('Contraseña 2FA', 'Tu contraseña', 'password'),
     promptApiCredentials: () => promptApiCredentialsUI(),
     onError: (err) => showError(err?.message || String(err)),

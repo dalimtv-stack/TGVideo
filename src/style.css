@@ -403,32 +403,87 @@ html, body {
   border-radius: 2px;
 }
 
-/* Resaltado de foco de alto contraste para TV y D-Pad */
-[data-focusable]:focus,
-[data-focusable]:focus-visible {
-  outline: 3px solid #38bdf8 !important;
-  outline-offset: 2px !important;
-  box-shadow: 0 0 16px rgba(56, 189, 248, 0.75) !important;
+/* Foco unificado TV / D-Pad: elegante, blanco y redondeado */
+:focus {
+  outline: none;
+}
+
+.lib-card:focus {
+  outline: none;
+}
+
+.lib-card:focus .lib-card-poster {
+  transform: scale(1.08);
+  border-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 0 24px rgba(255, 255, 255, 0.45);
+}
+
+.profile-card:focus {
+  outline: none;
+  transform: scale(1.08);
+}
+
+.profile-card:focus .avatar {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+  border-radius: 12px;
+  box-shadow: 0 0 22px rgba(255, 255, 255, 0.4);
+}
+
+.btn:focus,
+.btn-ghost:focus,
+.btn-icon:focus,
+.logout-btn:focus,
+.btn-syn-toggle:focus {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  border-radius: 6px;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.4);
 }
 
 .btn-icon-circle:focus,
 .btn-icon-circle:focus-visible {
-  outline: 3px solid #38bdf8 !important;
-  outline-offset: 3px !important;
-  background: rgba(56, 189, 248, 0.35) !important;
-  box-shadow: 0 0 18px rgba(56, 189, 248, 0.9) !important;
-  transform: scale(1.15) !important;
-  transition: transform 0.15s ease, background 0.15s ease;
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.6);
+  transform: scale(1.15);
 }
 
-.card:focus,
-.card:focus-visible,
-.ep:focus,
-.ep:focus-visible {
-  outline: 3px solid #38bdf8 !important;
-  outline-offset: 2px !important;
-  box-shadow: 0 0 18px rgba(56, 189, 248, 0.65) !important;
-  transform: scale(1.02);
+.ep:focus {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.3);
+  outline: none;
+}
+
+.season-btn:focus {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: #fff;
+  color: #fff;
+  border-radius: 6px;
+  outline: 2px solid #fff;
+}
+
+.settings-dialog input:focus,
+.settings-dialog select:focus,
+.meta-field input:focus,
+.meta-field select:focus {
+  outline: 2px solid #fff;
+  border-color: #fff;
+  border-radius: 6px;
+}
+
+.btn-select-meta:focus {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  background: #fff;
+  color: #111;
+  border-radius: 6px;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.4);
 }
 
 .btn-ghost {
@@ -1233,7 +1288,20 @@ html, body {
 
 
 
-/* Player TV OSD y Toast */
+
+
+/* Reproductor Stremio-Style: Barra de control limpia abajo */
+.player {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+}
+
 .player-tv-osd {
   position: absolute;
   inset: 0;
@@ -1241,133 +1309,248 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 1.5rem 2rem;
-  background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.1) 40%, rgba(0,0,0,0.1) 60%, rgba(0,0,0,0.92) 100%);
+  padding: 1.5rem 2rem 1.2rem;
+  background: linear-gradient(180deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 25%, rgba(0,0,0,0) 65%, rgba(0,0,0,0.88) 100%);
   pointer-events: auto;
-  transition: opacity 0.25s ease, visibility 0.25s ease;
+  transition: opacity 0.22s ease, visibility 0.22s ease;
   user-select: none;
 }
+
 .player-tv-osd.is-hidden {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
+
 .player-osd-top {
   display: flex;
   align-items: center;
   gap: 1rem;
 }
+
+.player-osd-back-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.2rem;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.player-osd-back-btn:focus {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
 .player-osd-title {
   flex: 1;
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: #fff;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #f1f5f9;
   text-shadow: 0 2px 4px rgba(0,0,0,0.8);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.player-osd-btn {
-  background: rgba(30, 41, 59, 0.85);
-  color: #f8fafc;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  transition: background 0.15s ease, transform 0.15s ease;
-}
-.player-osd-btn:hover {
-  background: rgba(51, 65, 85, 0.95);
-}
-.player-osd-btn-primary {
-  background: #e50914;
-  border-color: #e50914;
-  font-size: 1.25rem;
-  padding: 0.5rem 1.4rem;
-}
-.player-osd-btn-primary:hover {
-  background: #f40612;
-}
+
 .player-osd-badge {
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  cursor: pointer;
 }
-.player-osd-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  flex-wrap: wrap;
+
+.player-osd-badge:focus {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  background: rgba(255, 255, 255, 0.25);
 }
+
 .player-osd-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.player-timeline-row {
   display: flex;
   align-items: center;
   gap: 1rem;
   width: 100%;
 }
+
 .player-osd-time {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-family: monospace;
   font-weight: 600;
-  color: #e2e8f0;
-  min-width: 4rem;
+  color: #cbd5e1;
+  min-width: 3.8rem;
   text-align: center;
 }
-.player-osd-bar-bg {
+
+.player-scrubber-track {
   flex: 1;
   height: 8px;
   background: rgba(255, 255, 255, 0.25);
   border-radius: 4px;
-  overflow: hidden;
   cursor: pointer;
   position: relative;
+  transition: height 0.15s ease;
 }
-.player-osd-bar-fill {
+
+.player-scrubber-track:focus,
+.player-scrubber-track:hover {
+  height: 12px;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.player-scrubber-fill {
   height: 100%;
   width: 0%;
   background: #e50914;
   border-radius: 4px;
-  transition: width 0.1s linear;
+  position: relative;
 }
+
+.player-scrubber-thumb {
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(0,0,0,0.6);
+}
+
+.player-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2rem;
+}
+
+.player-ctrl-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f8fafc;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+  padding: 0;
+}
+
+.player-ctrl-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.player-ctrl-btn:focus {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.15);
+}
+
+.player-ctrl-btn-primary {
+  background: #e50914;
+  border-color: #e50914;
+  width: 52px;
+  height: 52px;
+}
+
+.player-ctrl-btn-primary svg {
+  width: 26px;
+  height: 26px;
+}
+
+.player-ctrl-btn-primary:focus {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  background: #ff1f2d;
+  transform: scale(1.15);
+}
+
 .player-osd-toast {
   position: absolute;
-  top: 15%;
+  top: 12%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: rgba(15, 23, 42, 0.9);
-  border: 1px solid #38bdf8;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.4);
   color: #fff;
-  font-size: 1.15rem;
-  font-weight: 700;
-  padding: 0.65rem 1.4rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  padding: 0.6rem 1.4rem;
   border-radius: 30px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 12px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
   z-index: 60;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
+
 .player-osd-toast.show {
   opacity: 1;
   transform: translate(-50%, -40%);
 }
 
-.settings-dialog {
-  scroll-behavior: smooth;
+/* Layout adaptativo modal TMDB (TV / Apaisado) */
+.meta-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
-.meta-results-container {
-  scroll-behavior: smooth;
-}
-.btn-select-meta:focus,
-.btn-select-meta:focus-visible {
-  outline: 3px solid #38bdf8 !important;
-  outline-offset: 2px !important;
-  background: #0284c7 !important;
-  color: #fff !important;
+
+@media (min-width: 768px), (orientation: landscape) and (min-height: 440px) {
+  .settings-dialog:has(.meta-modal-body) {
+    width: min(940px, 94vw);
+    max-height: 88vh;
+  }
+  .meta-modal-body {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 1.5rem;
+    align-items: start;
+  }
+  .meta-col-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+  .meta-col-right {
+    min-height: 0;
+  }
+  .meta-results-container {
+    max-height: calc(85vh - 120px);
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .meta-results-container::-webkit-scrollbar {
+    display: none;
+  }
 }
