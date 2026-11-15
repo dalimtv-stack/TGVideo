@@ -403,18 +403,32 @@ html, body {
   border-radius: 2px;
 }
 
+/* Resaltado de foco de alto contraste para TV y D-Pad */
+[data-focusable]:focus,
 [data-focusable]:focus-visible {
-  outline: none;
+  outline: 3px solid #38bdf8 !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.75) !important;
 }
 
-.btn:focus,
-.btn-ghost:focus,
-.btn-icon:focus,
-.home-profile:focus,
-.profile-card:focus .avatar,
-.logout-btn:focus {
-  outline: 3px solid #fff;
-  outline-offset: 2px;
+.btn-icon-circle:focus,
+.btn-icon-circle:focus-visible {
+  outline: 3px solid #38bdf8 !important;
+  outline-offset: 3px !important;
+  background: rgba(56, 189, 248, 0.35) !important;
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.9) !important;
+  transform: scale(1.15) !important;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.card:focus,
+.card:focus-visible,
+.ep:focus,
+.ep:focus-visible {
+  outline: 3px solid #38bdf8 !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.65) !important;
+  transform: scale(1.02);
 }
 
 .btn-ghost {
@@ -1217,3 +1231,143 @@ html, body {
   }
 }
 
+
+
+/* Player TV OSD y Toast */
+.player-tv-osd {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 1.5rem 2rem;
+  background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.1) 40%, rgba(0,0,0,0.1) 60%, rgba(0,0,0,0.92) 100%);
+  pointer-events: auto;
+  transition: opacity 0.25s ease, visibility 0.25s ease;
+  user-select: none;
+}
+.player-tv-osd.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.player-osd-top {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.player-osd-title {
+  flex: 1;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.player-osd-btn {
+  background: rgba(30, 41, 59, 0.85);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.player-osd-btn:hover {
+  background: rgba(51, 65, 85, 0.95);
+}
+.player-osd-btn-primary {
+  background: #e50914;
+  border-color: #e50914;
+  font-size: 1.25rem;
+  padding: 0.5rem 1.4rem;
+}
+.player-osd-btn-primary:hover {
+  background: #f40612;
+}
+.player-osd-badge {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  font-size: 0.85rem;
+}
+.player-osd-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.player-osd-bottom {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+}
+.player-osd-time {
+  font-size: 0.95rem;
+  font-family: monospace;
+  font-weight: 600;
+  color: #e2e8f0;
+  min-width: 4rem;
+  text-align: center;
+}
+.player-osd-bar-bg {
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+}
+.player-osd-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #e50914;
+  border-radius: 4px;
+  transition: width 0.1s linear;
+}
+.player-osd-toast {
+  position: absolute;
+  top: 15%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid #38bdf8;
+  color: #fff;
+  font-size: 1.15rem;
+  font-weight: 700;
+  padding: 0.65rem 1.4rem;
+  border-radius: 30px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 12px rgba(56, 189, 248, 0.5);
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.player-osd-toast.show {
+  opacity: 1;
+  transform: translate(-50%, -40%);
+}
+
+.settings-dialog {
+  scroll-behavior: smooth;
+}
+.meta-results-container {
+  scroll-behavior: smooth;
+}
+.btn-select-meta:focus,
+.btn-select-meta:focus-visible {
+  outline: 3px solid #38bdf8 !important;
+  outline-offset: 2px !important;
+  background: #0284c7 !important;
+  color: #fff !important;
+}
