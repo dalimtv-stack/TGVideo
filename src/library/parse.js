@@ -24,9 +24,51 @@ export function parseCaption(text = '') {
     if (k === 'sección' || k === 'seccion') out.section = v;
     else if (k === 'nombre de archivo') out.fileName = v;
     else if (k === 'id tmdb') out.tmdbId = v;
+    else if (k === 'id imdb') out.imdbId = v;
+    else if (k === 'director') out.director = v;
+    else if (k === 'guionista') out.writer = v;
+    else if (k === 'casting') out.cast = v;
+    else if (k === 'puntuación' || k === 'puntuacion') out.rating = v;
+    else if (k === 'edad') out.ageRating = v;
     else if (k === 'sinopsis') out.synopsis = v;
   }
   return out;
+}
+
+export function buildStandardCaption({
+  fileName,
+  section,
+  tmdbId,
+  imdbId,
+  director,
+  writer,
+  cast,
+  rating,
+  ageRating,
+  synopsis = ''
+}) {
+  const lines = [];
+  if (fileName) lines.push(`Nombre de archivo: ${fileName}`);
+  if (section) lines.push(`Sección: ${section}`);
+  if (tmdbId) lines.push(`ID TMDB: ${tmdbId}`);
+  if (imdbId) lines.push(`ID IMDB: ${imdbId}`);
+  if (director) lines.push(`Director: ${director}`);
+  if (writer) lines.push(`Guionista: ${writer}`);
+  if (cast) lines.push(`Casting: ${cast}`);
+  if (rating) lines.push(`Puntuación: ${rating}`);
+  if (ageRating) lines.push(`Edad: ${ageRating}`);
+
+  let base = lines.join('\n');
+  if (synopsis) {
+    const headerWithKey = base ? `${base}\nSinopsis: ` : 'Sinopsis: ';
+    const remaining = 1024 - headerWithKey.length - 1;
+    if (remaining > 30) {
+      const maxSynopsis = Math.min(remaining - 1, 350);
+      const trimmed = synopsis.length > maxSynopsis ? synopsis.slice(0, maxSynopsis).trim() + '…' : synopsis;
+      base = `${headerWithKey}${trimmed}`;
+    }
+  }
+  return base.slice(0, 1024);
 }
 
 /** S01E02, 1x02, "Episodio 3", "Cap 3", o número suelto */
