@@ -2,8 +2,23 @@ import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import bigInt from 'big-integer';
 
-const apiId = Number(import.meta.env.VITE_API_ID);
-const apiHash = import.meta.env.VITE_API_HASH;
+export function getStoredApiCredentials() {
+  const envId = Number(import.meta.env.VITE_API_ID);
+  const envHash = import.meta.env.VITE_API_HASH;
+
+  const localId = Number(localStorage.getItem('tg_api_id'));
+  const localHash = localStorage.getItem('tg_api_hash');
+
+  const finalId = (!isNaN(envId) && envId > 0)
+    ? envId
+    : ((!isNaN(localId) && localId > 0) ? localId : null);
+
+  const finalHash = (envHash && String(envHash).trim())
+    ? String(envHash).trim()
+    : ((localHash && String(localHash).trim()) ? String(localHash).trim() : null);
+
+  return { apiId: finalId, apiHash: finalHash };
+}
 
 let client = null;
 let readyPromise = null;
@@ -12,9 +27,33 @@ let readyPromise = null;
  * Crea / recupera el cliente de Telegram.
  * Maneja login por teléfono + código + 2FA y guarda la sesión en localStorage.
  */
-export function createTelegramClient({ promptPhone, promptCode, promptPassword, onError } = {}) {
+export function createTelegramClient({
+  promptPhone,
+  promptCode,
+  promptPassword,
+  promptApiCredentials,
+  onError,
+} = {}) {
   async function connect() {
     if (client && client.connected) return client;
+
+    let { apiId, apiHash } = getStoredApiCredentials();
+
+    if (!apiId || !apiHash) {
+      if (typeof promptApiCredentials === 'function') {
+        const creds = await promptApiCredentials();
+        if (creds && creds.apiId && creds.apiHash) {
+          apiId = Number(creds.apiId);
+          apiHash = String(creds.apiHash).trim();
+          localStorage.setItem('tg_api_id', String(apiId));
+          localStorage.setItem('tg_api_hash', apiHash);
+        }
+      }
+    }
+
+    if (!apiId || !apiHash) {
+      throw new Error('No se han configurado API ID y API Hash. Añádelos en los Secrets de GitHub o introdúcelos en la app.');
+    }
 
     const sessionStr = localStorage.getItem('tg_session') || '';
     const session = new StringSession(sessionStr);
