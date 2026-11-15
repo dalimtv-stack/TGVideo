@@ -4,6 +4,7 @@ import { saveProgress, loadProgress } from './progress.js';
 import { streamingAvailable, openStream } from './stream.js';
 import { extractTitleAndYear } from '../metadata/tmdb.js';
 import { prettyEpisodeName } from '../library/parse.js';
+import { registerPlayerController, unregisterPlayerController } from '../ui/dpad.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;',
@@ -54,7 +55,6 @@ export function formatPlayerTitle(title, file) {
     return `${cleanTitle}${yearSuffix}`;
   }
 
-  // Si tiene un descriptor de versión útil (p.ej. Versión Extendida, 1080p, etc.)
   const diffLabel = cleanFileLabel.replace(new RegExp(cleanTitle, 'gi'), '').trim();
   if (diffLabel && diffLabel.length > 2) {
     return `${cleanTitle}${yearSuffix} · ${diffLabel}`;
@@ -63,50 +63,93 @@ export function formatPlayerTitle(title, file) {
   return `${cleanTitle}${yearSuffix}`;
 }
 
+function formatTime(secs) {
+  if (!secs || isNaN(secs) || secs < 0) return '0:00';
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function showToast(container, text) {
+  let toast = container.querySelector('#pl-osd-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'pl-osd-toast';
+    toast.className = 'player-osd-toast';
+    container.appendChild(toast);
+  }
+  toast.textContent = text;
+  toast.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+function cycleAudio(video, container) {
+  const tracks = (video.audioTracks && video.audioTracks.length > 0)
+    ? Array.from(video.audioTracks)
+    : [];
+  if (tracks.length === 0) {
+    showToast(container, 'Pista de audio: Predeterminada');
+    return;
+  }
+  if (tracks.length === 1) {
+    const label = tracks[0].label || tracks[0].language || 'Principal';
+    showToast(container, `Audio único: ${label}`);
+    return;
+  }
+  let cur = tracks.findIndex(t => t.enabled);
+  if (cur === -1) cur = 0;
+  const next = (cur + 1) % tracks.length;
+  tracks.forEach((t, i) => { t.enabled = (i === next); });
+  const label = tracks[next].label || tracks[next].language || `Pista ${next + 1}`;
+  showToast(container, `Audio (${next + 1}/${tracks.length}): ${label}`);
+}
+
+function cycleSubtitles(video, container) {
+  const tracks = (video.textTracks && video.textTracks.length > 0)
+    ? Array.from(video.textTracks).filter(t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind)
+    : [];
+  if (tracks.length === 0) {
+    showToast(container, 'No hay subtítulos en este archivo');
+    return;
+  }
+  let cur = tracks.findIndex(t => t.mode === 'showing');
+  let next = cur + 1;
+  if (next >= tracks.length) next = -1;
+
+  tracks.forEach((t, i) => {
+    t.mode = (i === next) ? 'showing' : 'disabled';
+  });
+
+  if (next === -1) {
+    showToast(container, 'Subtítulos: Desactivados');
+  } else {
+    const label = tracks[next].label || tracks[next].language || `Pista ${next + 1}`;
+    showToast(container, `Subtítulos (${next + 1}/${tracks.length}): ${label}`);
+  }
+}
+
 /**
  * Configura doble toque (móvil) y doble clic (escritorio) en izquierda/derecha
- * para atrasar o adelantar los segundos configurados en el perfil.
  */
 function setupDoubleTapSkip({ container, video, skipSeconds = 10 }) {
   if (!container || !video) return () => {};
 
-  const feedback = document.createElement('div');
-  feedback.className = 'player-skip-feedback';
-  container.appendChild(feedback);
-
-  let feedbackTimer = null;
-  const showSkipBadge = (side, secs) => {
-    if (feedbackTimer) clearTimeout(feedbackTimer);
-    feedback.className = `player-skip-feedback show-${side}`;
-    feedback.innerHTML = side === 'left'
-      ? `<div class="skip-pill"><span class="skip-icon">⏪</span> -${secs}s</div>`
-      : `<div class="skip-pill">+${secs}s <span class="skip-icon">⏩</span></div>`;
-    feedbackTimer = setTimeout(() => {
-      feedback.className = 'player-skip-feedback';
-      feedback.innerHTML = '';
-    }, 650);
-  };
-
-  const performSkip = (side) => {
-    const delta = side === 'left' ? -skipSeconds : skipSeconds;
-    const target = Math.max(0, Math.min(video.duration || Infinity, (video.currentTime || 0) + delta));
-    video.currentTime = target;
-    showSkipBadge(side, skipSeconds);
-  };
-
   const onDblClick = (e) => {
-    if (e.target.closest('.art-controls, .art-bottom, .player-top-overlay, button, input, select')) return;
+    if (e.target.closest('.player-tv-osd, .art-controls, .art-bottom, button, input, select')) return;
     const rect = container.getBoundingClientRect();
     if (!rect.width) return;
     const x = (e.clientX - rect.left) / rect.width;
     if (x <= 0.38) {
-      e.preventDefault();
-      e.stopPropagation();
-      performSkip('left');
+      e.preventDefault(); e.stopPropagation();
+      video.currentTime = Math.max(0, (video.currentTime || 0) - skipSeconds);
+      showToast(container, `⏪ -${skipSeconds}s`);
     } else if (x >= 0.62) {
-      e.preventDefault();
-      e.stopPropagation();
-      performSkip('right');
+      e.preventDefault(); e.stopPropagation();
+      video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + skipSeconds);
+      showToast(container, `+${skipSeconds}s ⏩`);
     }
   };
 
@@ -114,7 +157,7 @@ function setupDoubleTapSkip({ container, video, skipSeconds = 10 }) {
   let lastTapX = 0;
 
   const onTouchEnd = (e) => {
-    if (e.target.closest('.art-controls, .art-bottom, .player-top-overlay, button, input, select')) return;
+    if (e.target.closest('.player-tv-osd, .art-controls, .art-bottom, button, input, select')) return;
     const touch = e.changedTouches?.[0];
     if (!touch) return;
     const rect = container.getBoundingClientRect();
@@ -124,13 +167,13 @@ function setupDoubleTapSkip({ container, video, skipSeconds = 10 }) {
 
     if (now - lastTapTime < 320 && Math.abs(touch.clientX - lastTapX) < 60) {
       if (x <= 0.38) {
-        e.preventDefault();
-        e.stopPropagation();
-        performSkip('left');
+        e.preventDefault(); e.stopPropagation();
+        video.currentTime = Math.max(0, (video.currentTime || 0) - skipSeconds);
+        showToast(container, `⏪ -${skipSeconds}s`);
       } else if (x >= 0.62) {
-        e.preventDefault();
-        e.stopPropagation();
-        performSkip('right');
+        e.preventDefault(); e.stopPropagation();
+        video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + skipSeconds);
+        showToast(container, `+${skipSeconds}s ⏩`);
       }
       lastTapTime = 0;
     } else {
@@ -145,7 +188,6 @@ function setupDoubleTapSkip({ container, video, skipSeconds = 10 }) {
   return () => {
     container.removeEventListener('dblclick', onDblClick, true);
     container.removeEventListener('touchend', onTouchEnd, { capture: true });
-    feedback.remove();
   };
 }
 
@@ -167,20 +209,35 @@ export async function playFile({ client, peerOf, file, title, profile, resumeAt 
 }
 
 // -------------------------------------------------------------
-// REPRODUCTOR NATIVO (HTML5) - Recomendado para iPhone / AirPlay
+// REPRODUCTOR NATIVO (HTML5) - Con OSD y controles TV completos
 // -------------------------------------------------------------
 async function playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync }) {
   const displayTitle = formatPlayerTitle(title, file);
 
   mount.innerHTML = `
     <div class="player player-native">
-      <div class="player-top-overlay" id="pl-top">
-        <div class="player-top-left">
-          <button class="btn-ghost" data-focusable id="pl-back">← Volver</button>
-          <div class="player-title">${escapeHtml(displayTitle)}</div>
-          <span class="player-badge player-badge-native" id="pl-badge-toggle" title="Pulsar para cambiar a ArtPlayer" style="cursor:pointer;" data-focusable tabindex="0">Nativo ⇄</span>
+      <div class="player-tv-osd" id="pl-osd">
+        <div class="player-osd-top">
+          <button class="player-osd-btn" id="pl-btn-back" data-focusable>← Volver</button>
+          <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
+          <button class="player-osd-btn player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Nativo ⇄</button>
+        </div>
+        <div class="player-osd-center">
+          <button class="player-osd-btn" id="pl-btn-rw" data-focusable title="Atrasar">⏪ -${skipSeconds}s</button>
+          <button class="player-osd-btn player-osd-btn-primary" id="pl-btn-playpause" data-focusable title="Reproducir/Pausar">⏯</button>
+          <button class="player-osd-btn" id="pl-btn-ff" data-focusable title="Adelantar">+${skipSeconds}s ⏩</button>
+          <button class="player-osd-btn" id="pl-btn-audio" data-focusable title="Cambiar audio">🔊 Audio</button>
+          <button class="player-osd-btn" id="pl-btn-subs" data-focusable title="Cambiar subtítulos">💬 Subtítulos</button>
+        </div>
+        <div class="player-osd-bottom">
+          <span class="player-osd-time" id="pl-time-cur">0:00</span>
+          <div class="player-osd-bar-bg" id="pl-bar-bg">
+            <div class="player-osd-bar-fill" id="pl-bar-fill"></div>
+          </div>
+          <span class="player-osd-time" id="pl-time-dur">0:00</span>
         </div>
       </div>
+      <div class="player-osd-toast" id="pl-osd-toast"></div>
       <div class="player-codec-notice" id="pl-codec-notice" style="display:none;">
         <span>Safari no puede mostrar este formato de vídeo. Para iPhone, el archivo debe estar convertido a MP4 con vídeo H.264 y audio AAC.</span>
       </div>
@@ -188,40 +245,61 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         <div class="loader"></div>
         <p id="pl-status">Conectando con Telegram…</p>
       </div>
-      <video class="native-video" playsinline webkit-playsinline controls autoplay preload="auto"></video>
+      <video class="native-video" playsinline webkit-playsinline autoplay preload="auto"></video>
     </div>`;
 
   const playerEl = mount.querySelector('.player');
   const video = mount.querySelector('video');
   const loading = mount.querySelector('#pl-loading');
   const status = mount.querySelector('#pl-status');
-  const topOverlay = mount.querySelector('#pl-top');
+  const osd = mount.querySelector('#pl-osd');
   const codecNotice = mount.querySelector('#pl-codec-notice');
+  const timeCur = mount.querySelector('#pl-time-cur');
+  const timeDur = mount.querySelector('#pl-time-dur');
+  const barFill = mount.querySelector('#pl-bar-fill');
+  const barBg = mount.querySelector('#pl-bar-bg');
 
   let cancelled = false;
   let stream = null;
   let url = null;
-  let hideTimer = null;
+  let osdTimer = null;
 
-  const showTop = () => {
-    topOverlay?.classList.remove('is-hidden');
-    clearTimeout(hideTimer);
+  const showOsd = () => {
+    osd.classList.remove('is-hidden');
+    clearTimeout(osdTimer);
     if (!video.paused) {
-      hideTimer = setTimeout(() => topOverlay?.classList.add('is-hidden'), 3500);
+      osdTimer = setTimeout(() => {
+        osd.classList.add('is-hidden');
+        if (osd.contains(document.activeElement)) document.activeElement.blur();
+      }, 4000);
     }
   };
 
-  playerEl.addEventListener('mousemove', showTop);
-  playerEl.addEventListener('click', showTop);
-  playerEl.addEventListener('touchstart', showTop, { passive: true });
+  const hideOsd = () => {
+    clearTimeout(osdTimer);
+    osd.classList.add('is-hidden');
+    if (osd.contains(document.activeElement)) document.activeElement.blur();
+  };
+
+  playerEl.addEventListener('mousemove', showOsd);
+  playerEl.addEventListener('click', (e) => {
+    if (!e.target.closest('.player-tv-osd, button')) {
+      if (osd.classList.contains('is-hidden')) showOsd();
+      else hideOsd();
+    }
+  });
 
   video.addEventListener('play', () => {
-    clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => topOverlay?.classList.add('is-hidden'), 2500);
+    clearTimeout(osdTimer);
+    osdTimer = setTimeout(() => {
+      osd.classList.add('is-hidden');
+      if (osd.contains(document.activeElement)) document.activeElement.blur();
+    }, 2800);
   });
+
   video.addEventListener('pause', () => {
-    clearTimeout(hideTimer);
-    topOverlay?.classList.remove('is-hidden');
+    clearTimeout(osdTimer);
+    osd.classList.remove('is-hidden');
     if (sync && profile?.id && video.duration) {
       const progress = saveProgress(profile.id, file.key, video.currentTime, video.duration);
       sync.schedulePush({ profile, progress });
@@ -258,8 +336,9 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   const close = () => {
     if (cancelled) return;
     cancelled = true;
+    unregisterPlayerController();
     cleanupSkip();
-    clearTimeout(hideTimer);
+    clearTimeout(osdTimer);
     exitFullscreen();
     if (video.duration) {
       saveProgress(profile.id, file.key, video.currentTime, video.duration);
@@ -276,15 +355,17 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     onClose?.();
   };
 
-  
+  // Botones OSD
+  mount.querySelector('#pl-btn-back').onclick = close;
 
   mount.querySelector('#pl-badge-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const curTime = video.currentTime || resumeAt || 0;
     if (cancelled) return;
     cancelled = true;
+    unregisterPlayerController();
     cleanupSkip();
-    clearTimeout(hideTimer);
+    clearTimeout(osdTimer);
     exitFullscreen();
     if (video.duration) {
       saveProgress(profile.id, file.key, video.currentTime, video.duration);
@@ -301,12 +382,119 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync });
   });
 
-  window.addEventListener('keydown', function onKey(e) {
-    if (cancelled) { window.removeEventListener('keydown', onKey); return; }
-    if (['Escape', 'Backspace', 'GoBack'].includes(e.key)) {
-      e.preventDefault(); e.stopPropagation(); close();
+  mount.querySelector('#pl-btn-playpause').onclick = () => {
+    if (video.paused) { video.play(); showToast(playerEl, '▶ Reproduciendo'); }
+    else { video.pause(); showToast(playerEl, '⏸ Pausa'); }
+    showOsd();
+  };
+
+  mount.querySelector('#pl-btn-rw').onclick = () => {
+    video.currentTime = Math.max(0, (video.currentTime || 0) - skipSeconds);
+    showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(video.currentTime)})`);
+    showOsd();
+  };
+
+  mount.querySelector('#pl-btn-ff').onclick = () => {
+    video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + skipSeconds);
+    showToast(playerEl, `+${skipSeconds}s ⏩ (${formatTime(video.currentTime)})`);
+    showOsd();
+  };
+
+  mount.querySelector('#pl-btn-audio').onclick = () => {
+    cycleAudio(video, playerEl);
+    showOsd();
+  };
+
+  mount.querySelector('#pl-btn-subs').onclick = () => {
+    cycleSubtitles(video, playerEl);
+    showOsd();
+  };
+
+  barBg.onclick = (e) => {
+    const rect = barBg.getBoundingClientRect();
+    if (rect.width && video.duration) {
+      const pos = (e.clientX - rect.left) / rect.width;
+      video.currentTime = pos * video.duration;
+      showOsd();
     }
-  });
+  };
+
+  // Controlador TV para D-Pad / Mando Fire TV
+  const tvController = {
+    close: () => close(),
+    onLeft: () => {
+      const isFocusedInOsd = osd.contains(document.activeElement) && !osd.classList.contains('is-hidden');
+      if (isFocusedInOsd) {
+        const btns = [...osd.querySelectorAll('[data-focusable]')].filter(b => b.offsetParent);
+        const idx = btns.indexOf(document.activeElement);
+        if (idx > 0) {
+          btns[idx - 1].focus();
+          showOsd();
+          return;
+        }
+      }
+      video.currentTime = Math.max(0, (video.currentTime || 0) - skipSeconds);
+      showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(video.currentTime)} / ${formatTime(video.duration)})`);
+      showOsd();
+    },
+    onRight: () => {
+      const isFocusedInOsd = osd.contains(document.activeElement) && !osd.classList.contains('is-hidden');
+      if (isFocusedInOsd) {
+        const btns = [...osd.querySelectorAll('[data-focusable]')].filter(b => b.offsetParent);
+        const idx = btns.indexOf(document.activeElement);
+        if (idx !== -1 && idx < btns.length - 1) {
+          btns[idx + 1].focus();
+          showOsd();
+          return;
+        }
+      }
+      video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + skipSeconds);
+      showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(video.currentTime)} / ${formatTime(video.duration)})`);
+      showOsd();
+    },
+    onUp: () => {
+      if (osd.classList.contains('is-hidden')) {
+        showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
+      } else {
+        const cur = document.activeElement;
+        if (cur?.id === 'pl-btn-playpause' || cur?.id === 'pl-btn-rw' || cur?.id === 'pl-btn-ff') {
+          mount.querySelector('#pl-btn-back')?.focus();
+        } else if (cur?.id === 'pl-btn-audio' || cur?.id === 'pl-btn-subs') {
+          mount.querySelector('#pl-badge-toggle')?.focus();
+        } else {
+          mount.querySelector('#pl-btn-playpause')?.focus();
+        }
+        showOsd();
+      }
+    },
+    onDown: () => {
+      if (osd.classList.contains('is-hidden')) {
+        showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
+      } else {
+        const cur = document.activeElement;
+        if (cur?.id === 'pl-btn-back' || cur?.id === 'pl-badge-toggle') {
+          mount.querySelector('#pl-btn-playpause')?.focus();
+          showOsd();
+        } else {
+          hideOsd();
+        }
+      }
+    },
+    onSelect: () => {
+      if (osd.contains(document.activeElement) && !osd.classList.contains('is-hidden')) {
+        document.activeElement.click();
+        showOsd();
+      } else {
+        if (video.paused) { video.play(); showToast(playerEl, '▶ Reproduciendo'); }
+        else { video.pause(); showToast(playerEl, '⏸ Pausa'); }
+        showOsd();
+      }
+    },
+  };
+
+  registerPlayerController(tvController);
 
   try {
     const targetChannel = file?.channel || title?.channel;
@@ -350,6 +538,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 
     video.addEventListener('loadedmetadata', () => {
       applyResume();
+      timeDur.textContent = formatTime(video.duration);
       if (video.webkitSupportsFullscreen && !document.fullscreenElement) {
         try { video.webkitEnterFullscreen(); } catch (_) {}
       }
@@ -364,6 +553,11 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     let audioOnlyChecked = false;
 
     video.addEventListener('timeupdate', () => {
+      timeCur.textContent = formatTime(video.currentTime);
+      if (video.duration) {
+        barFill.style.width = `${Math.min(100, (video.currentTime / video.duration) * 100)}%`;
+      }
+
       const now = Date.now();
       if (now - lastSaved > 8000 && video.duration) {
         lastSaved = now;
@@ -373,12 +567,11 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         }
       }
 
-      // Detección de fallo de decodificación de vídeo en Safari / iOS (audio sonando pero videoWidth = 0)
       if (!audioOnlyChecked && video.currentTime > 2.2 && !video.paused) {
         audioOnlyChecked = true;
         if (video.videoWidth === 0 && codecNotice) {
           codecNotice.style.display = 'flex';
-          topOverlay?.classList.remove('is-hidden');
+          showOsd();
         }
       }
     });
@@ -394,7 +587,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 
     video.addEventListener('error', () => {
       loading.style.display = 'flex';
-      status.textContent = 'Error al reproducir el archivo. Prueba el otro reproductor o verifica que el vídeo sea compatible con iPhone.';
+      status.textContent = 'Error al reproducir el archivo. Prueba el otro reproductor o verifica los códecs.';
       if (codecNotice) codecNotice.style.display = 'flex';
     });
 
@@ -405,20 +598,35 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 }
 
 // -------------------------------------------------------------
-// REPRODUCTOR ARTPLAYER - Avanzado, moderno y con gestos
+// REPRODUCTOR ARTPLAYER - Con OSD unificado y soporte TV
 // -------------------------------------------------------------
 async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 0, skipSeconds, onClose, mount, sync }) {
   const displayTitle = formatPlayerTitle(title, file);
 
   mount.innerHTML = `
     <div class="player player-art">
-      <div class="player-top-overlay" id="pl-top">
-        <div class="player-top-left">
-          <button class="btn-ghost" data-focusable id="pl-back">← Volver</button>
-          <div class="player-title">${escapeHtml(displayTitle)}</div>
-          <span class="player-badge" id="pl-badge-toggle" title="Pulsar para cambiar a Nativo" style="cursor:pointer;" data-focusable tabindex="0">ArtPlayer ⇄</span>
+      <div class="player-tv-osd" id="pl-osd">
+        <div class="player-osd-top">
+          <button class="player-osd-btn" id="pl-btn-back" data-focusable>← Volver</button>
+          <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
+          <button class="player-osd-btn player-osd-badge" id="pl-badge-toggle" title="Cambiar a Nativo" data-focusable>ArtPlayer ⇄</button>
+        </div>
+        <div class="player-osd-center">
+          <button class="player-osd-btn" id="pl-btn-rw" data-focusable title="Atrasar">⏪ -${skipSeconds}s</button>
+          <button class="player-osd-btn player-osd-btn-primary" id="pl-btn-playpause" data-focusable title="Reproducir/Pausar">⏯</button>
+          <button class="player-osd-btn" id="pl-btn-ff" data-focusable title="Adelantar">+${skipSeconds}s ⏩</button>
+          <button class="player-osd-btn" id="pl-btn-audio" data-focusable title="Cambiar audio">🔊 Audio</button>
+          <button class="player-osd-btn" id="pl-btn-subs" data-focusable title="Cambiar subtítulos">💬 Subtítulos</button>
+        </div>
+        <div class="player-osd-bottom">
+          <span class="player-osd-time" id="pl-time-cur">0:00</span>
+          <div class="player-osd-bar-bg" id="pl-bar-bg">
+            <div class="player-osd-bar-fill" id="pl-bar-fill"></div>
+          </div>
+          <span class="player-osd-time" id="pl-time-dur">0:00</span>
         </div>
       </div>
+      <div class="player-osd-toast" id="pl-osd-toast"></div>
       <div class="player-codec-notice" id="pl-codec-notice" style="display:none;">
         <span>Safari no puede mostrar este formato de vídeo. Para iPhone, el archivo debe estar convertido a MP4 con vídeo H.264 y audio AAC.</span>
       </div>
@@ -433,14 +641,44 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   const container = mount.querySelector('#artplayer-container');
   const loading = mount.querySelector('#pl-loading');
   const status = mount.querySelector('#pl-status');
-  const topOverlay = mount.querySelector('#pl-top');
+  const osd = mount.querySelector('#pl-osd');
   const codecNotice = mount.querySelector('#pl-codec-notice');
+  const timeCur = mount.querySelector('#pl-time-cur');
+  const timeDur = mount.querySelector('#pl-time-dur');
+  const barFill = mount.querySelector('#pl-bar-fill');
+  const barBg = mount.querySelector('#pl-bar-bg');
 
   let cancelled = false;
   let stream = null;
   let url = null;
   let art = null;
   let cleanupSkip = null;
+  let osdTimer = null;
+
+  const showOsd = () => {
+    osd.classList.remove('is-hidden');
+    clearTimeout(osdTimer);
+    if (art && !art.template.$video.paused) {
+      osdTimer = setTimeout(() => {
+        osd.classList.add('is-hidden');
+        if (osd.contains(document.activeElement)) document.activeElement.blur();
+      }, 4000);
+    }
+  };
+
+  const hideOsd = () => {
+    clearTimeout(osdTimer);
+    osd.classList.add('is-hidden');
+    if (osd.contains(document.activeElement)) document.activeElement.blur();
+  };
+
+  playerEl.addEventListener('mousemove', showOsd);
+  playerEl.addEventListener('click', (e) => {
+    if (!e.target.closest('.player-tv-osd, button')) {
+      if (osd.classList.contains('is-hidden')) showOsd();
+      else hideOsd();
+    }
+  });
 
   const goFullscreen = () => {
     if (document.fullscreenElement || document.webkitFullscreenElement) return;
@@ -463,7 +701,9 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   const close = () => {
     if (cancelled) return;
     cancelled = true;
+    unregisterPlayerController();
     if (cleanupSkip) cleanupSkip();
+    clearTimeout(osdTimer);
     exitFullscreen();
     if (art) {
       try {
@@ -481,14 +721,17 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     onClose?.();
   };
 
-  mount.querySelector('#pl-back').onclick = close;
+  // Botones OSD
+  mount.querySelector('#pl-btn-back').onclick = close;
 
   mount.querySelector('#pl-badge-toggle')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const curTime = art?.currentTime || resumeAt || 0;
     if (cancelled) return;
     cancelled = true;
+    unregisterPlayerController();
     if (cleanupSkip) cleanupSkip();
+    clearTimeout(osdTimer);
     exitFullscreen();
     if (art) {
       try {
@@ -507,12 +750,135 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync });
   });
 
-  window.addEventListener('keydown', function onKey(e) {
-    if (cancelled) { window.removeEventListener('keydown', onKey); return; }
-    if (['Escape', 'Backspace', 'GoBack'].includes(e.key)) {
-      e.preventDefault(); e.stopPropagation(); close();
+  mount.querySelector('#pl-btn-playpause').onclick = () => {
+    if (art) {
+      if (art.template.$video.paused) { art.play(); showToast(playerEl, '▶ Reproduciendo'); }
+      else { art.pause(); showToast(playerEl, '⏸ Pausa'); }
+      showOsd();
     }
-  });
+  };
+
+  mount.querySelector('#pl-btn-rw').onclick = () => {
+    if (art) {
+      art.currentTime = Math.max(0, art.currentTime - skipSeconds);
+      showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(art.currentTime)})`);
+      showOsd();
+    }
+  };
+
+  mount.querySelector('#pl-btn-ff').onclick = () => {
+    if (art) {
+      art.currentTime = Math.min(art.duration || Infinity, art.currentTime + skipSeconds);
+      showToast(playerEl, `+${skipSeconds}s ⏩ (${formatTime(art.currentTime)})`);
+      showOsd();
+    }
+  };
+
+  mount.querySelector('#pl-btn-audio').onclick = () => {
+    if (art?.template?.$video) {
+      cycleAudio(art.template.$video, playerEl);
+      showOsd();
+    }
+  };
+
+  mount.querySelector('#pl-btn-subs').onclick = () => {
+    if (art?.template?.$video) {
+      cycleSubtitles(art.template.$video, playerEl);
+      showOsd();
+    }
+  };
+
+  barBg.onclick = (e) => {
+    const rect = barBg.getBoundingClientRect();
+    if (rect.width && art?.duration) {
+      const pos = (e.clientX - rect.left) / rect.width;
+      art.currentTime = pos * art.duration;
+      showOsd();
+    }
+  };
+
+  // Controlador TV para D-Pad / Mando Fire TV
+  const tvController = {
+    close: () => close(),
+    onLeft: () => {
+      const isFocusedInOsd = osd.contains(document.activeElement) && !osd.classList.contains('is-hidden');
+      if (isFocusedInOsd) {
+        const btns = [...osd.querySelectorAll('[data-focusable]')].filter(b => b.offsetParent);
+        const idx = btns.indexOf(document.activeElement);
+        if (idx > 0) {
+          btns[idx - 1].focus();
+          showOsd();
+          return;
+        }
+      }
+      if (art) {
+        art.currentTime = Math.max(0, art.currentTime - skipSeconds);
+        showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(art.currentTime)} / ${formatTime(art.duration)})`);
+        showOsd();
+      }
+    },
+    onRight: () => {
+      const isFocusedInOsd = osd.contains(document.activeElement) && !osd.classList.contains('is-hidden');
+      if (isFocusedInOsd) {
+        const btns = [...osd.querySelectorAll('[data-focusable]')].filter(b => b.offsetParent);
+        const idx = btns.indexOf(document.activeElement);
+        if (idx !== -1 && idx < btns.length - 1) {
+          btns[idx + 1].focus();
+          showOsd();
+          return;
+        }
+      }
+      if (art) {
+        art.currentTime = Math.min(art.duration || Infinity, art.currentTime + skipSeconds);
+        showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(art.currentTime)} / ${formatTime(art.duration)})`);
+        showOsd();
+      }
+    },
+    onUp: () => {
+      if (osd.classList.contains('is-hidden')) {
+        showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
+      } else {
+        const cur = document.activeElement;
+        if (cur?.id === 'pl-btn-playpause' || cur?.id === 'pl-btn-rw' || cur?.id === 'pl-btn-ff') {
+          mount.querySelector('#pl-btn-back')?.focus();
+        } else if (cur?.id === 'pl-btn-audio' || cur?.id === 'pl-btn-subs') {
+          mount.querySelector('#pl-badge-toggle')?.focus();
+        } else {
+          mount.querySelector('#pl-btn-playpause')?.focus();
+        }
+        showOsd();
+      }
+    },
+    onDown: () => {
+      if (osd.classList.contains('is-hidden')) {
+        showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
+      } else {
+        const cur = document.activeElement;
+        if (cur?.id === 'pl-btn-back' || cur?.id === 'pl-badge-toggle') {
+          mount.querySelector('#pl-btn-playpause')?.focus();
+          showOsd();
+        } else {
+          hideOsd();
+        }
+      }
+    },
+    onSelect: () => {
+      if (osd.contains(document.activeElement) && !osd.classList.contains('is-hidden')) {
+        document.activeElement.click();
+        showOsd();
+      } else {
+        if (art) {
+          if (art.template.$video.paused) { art.play(); showToast(playerEl, '▶ Reproduciendo'); }
+          else { art.pause(); showToast(playerEl, '⏸ Pausa'); }
+          showOsd();
+        }
+      }
+    },
+  };
+
+  registerPlayerController(tvController);
 
   try {
     const targetChannel = file?.channel || title?.channel;
@@ -557,11 +923,11 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       autoSize: false,
       autoMini: false,
       mutex: true,
-      hotkey: true,
+      hotkey: false, // Controlado por el OSD TV nativo
       playbackRate: true,
       aspectRatio: true,
-      fullscreen: true,
-      fullscreenWeb: true,
+      fullscreen: false,
+      fullscreenWeb: false,
       pip: true,
       setting: true,
       screenshot: false,
@@ -585,106 +951,43 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
     cleanupSkip = setupDoubleTapSkip({ container: art.template.$player, video, skipSeconds });
 
-    art.on('control', show => {
-      if (topOverlay) {
-        if (show) topOverlay.classList.remove('is-hidden');
-        else topOverlay.classList.add('is-hidden');
+    art.on('ready', () => {
+      loading.style.display = 'none';
+      if (resumeAt > 0) {
+        art.currentTime = resumeAt;
+      }
+      if (video.duration) {
+        timeDur.textContent = formatTime(video.duration);
       }
     });
 
-    art.on('pause', () => {
+    art.on('video:loadedmetadata', () => {
+      timeDur.textContent = formatTime(video.duration);
+    });
+
+    art.on('video:play', () => {
+      clearTimeout(osdTimer);
+      osdTimer = setTimeout(() => {
+        osd.classList.add('is-hidden');
+        if (osd.contains(document.activeElement)) document.activeElement.blur();
+      }, 2800);
+    });
+
+    art.on('video:pause', () => {
+      clearTimeout(osdTimer);
+      osd.classList.remove('is-hidden');
       if (sync && profile?.id && art?.duration) {
         const progress = saveProgress(profile.id, file.key, art.currentTime, art.duration);
         sync.schedulePush({ profile, progress });
       }
     });
 
-    if (video.webkitSupportsFullscreen) {
-      art.controls.add({
-        name: 'iosNativeFs',
-        position: 'right',
-        index: 68,
-        html: '<span class="art-ios-btn" title="Pantalla completa nativa de iOS (para pistas de audio y subtítulos)">iOS</span>',
-        tooltip: 'Pantalla completa iOS (Audios/Subs)',
-        click() {
-          try { video.webkitEnterFullscreen(); } catch (err) { console.warn(err); }
-        }
-      });
-    }
-
-    const checkTracks = () => {
-      if (video.audioTracks && video.audioTracks.length > 1) {
-        try {
-          if (!art.setting.find('audioTracks')) {
-            art.setting.add({
-              name: 'audioTracks',
-              width: 220,
-              html: 'Pista de audio',
-              tooltip: 'Audio',
-              selector: Array.from(video.audioTracks).map((track, i) => ({
-                default: track.enabled,
-                html: track.label || track.language || `Audio ${i + 1}`,
-                value: i,
-              })),
-              onSelect(item) {
-                const idx = Number(item.value);
-                Array.from(video.audioTracks).forEach((t, i) => {
-                  t.enabled = (i === idx);
-                });
-                return item.html;
-              },
-            });
-          }
-        } catch (_) {}
-      }
-
-      if (video.textTracks && video.textTracks.length > 0) {
-        try {
-          if (!art.setting.find('nativeSubtitles')) {
-            const tracks = Array.from(video.textTracks).filter(t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind);
-            if (tracks.length > 0) {
-              art.setting.add({
-                name: 'nativeSubtitles',
-                width: 220,
-                html: 'Subtítulos',
-                tooltip: 'Subtítulos',
-                selector: [
-                  { default: tracks.every(t => t.mode !== 'showing'), html: 'Desactivados', value: -1 },
-                  ...tracks.map((track, i) => ({
-                    default: track.mode === 'showing',
-                    html: track.label || track.language || `Subtítulo ${i + 1}`,
-                    value: i,
-                  }))
-                ],
-                onSelect(item) {
-                  const idx = Number(item.value);
-                  tracks.forEach((t, i) => {
-                    t.mode = (i === idx) ? 'showing' : 'disabled';
-                  });
-                  return item.html;
-                },
-              });
-            }
-          }
-        } catch (_) {}
-      }
-    };
-
-    art.on('ready', () => {
-      loading.style.display = 'none';
-      if (resumeAt > 0) {
-        art.currentTime = resumeAt;
-      }
-      checkTracks();
-      if (video.webkitSupportsFullscreen && !document.fullscreenElement) {
-        try { video.webkitEnterFullscreen(); } catch (_) {}
-      }
-    });
-
-    art.on('video:loadedmetadata', checkTracks);
-    art.on('video:canplay', checkTracks);
-
     art.on('video:timeupdate', () => {
+      timeCur.textContent = formatTime(art.currentTime);
+      if (art.duration) {
+        barFill.style.width = `${Math.min(100, (art.currentTime / art.duration) * 100)}%`;
+      }
+
       const now = Date.now();
       if (now - lastSaved > 8000 && art.duration) {
         lastSaved = now;
@@ -694,12 +997,11 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
         }
       }
 
-      // Detección de incompatibilidad de códec de vídeo en Safari / iOS
       if (!audioOnlyChecked && video.currentTime > 2.2 && !video.paused) {
         audioOnlyChecked = true;
         if (video.videoWidth === 0 && codecNotice) {
           codecNotice.style.display = 'flex';
-          topOverlay?.classList.remove('is-hidden');
+          showOsd();
         }
       }
     });
@@ -713,10 +1015,9 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       }
     });
 
-    art.on('error', (err) => {
-      console.warn('[artplayer error]', err);
+    art.on('video:error', () => {
       loading.style.display = 'flex';
-      status.textContent = 'Error al reproducir. Puedes cambiar al reproductor Nativo en Ajustes o verificar que el vídeo sea compatible con iPhone.';
+      status.textContent = 'Error al reproducir el archivo. Prueba el otro reproductor o verifica los códecs.';
       if (codecNotice) codecNotice.style.display = 'flex';
     });
 
