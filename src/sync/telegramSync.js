@@ -13,6 +13,7 @@ import { Api } from 'telegram';
 const SYNC_CHANNEL_TITLE = 'Perfiles::TGVideo::tgstorage';
 const MAX_VERSIONS = 5;
 const CONFIG_RE = /^config_global_(\d{14})\.json$/i;
+const OVERRIDES_RE = /^metadata_overrides_(\d{14})\.json$/i;
 const FILE_RE = /^perfil_([a-z0-9_]+)_(\d{14})\.json$/i;
 
 function normalizeName(name) {
@@ -40,6 +41,8 @@ function nowTimestamp() {
 function parseFilename(name) {
   const m = String(name || '').match(FILE_RE);
   if (!m) {
+    const ov = String(name || '').match(OVERRIDES_RE);
+    if (ov) return { kind: 'overrides', timestamp: ov[1] };
     const config = String(name || '').match(CONFIG_RE);
     return config ? { kind: 'global', timestamp: config[1] } : null;
   }
@@ -149,6 +152,40 @@ export function createTelegramSync({ getClient, peerOf }) {
       }
     });
     globalQueue = task;
+    return task;
+  }
+
+  async function pullMetadataOverrides() {
+    const latest = (await listSyncFiles()).find(f => f.kind === 'overrides');
+    if (!latest) return null;
+    const client = await getClient();
+    const peer = peerOf(await findOrCreateSyncChannel());
+    const [msg] = await client.getMessages(peer, { ids: [latest.messageId] });
+    if (!msg?.media) return null;
+    const buffer = await client.downloadMedia(msg.media, {});
+    const data = JSON.parse(new TextDecoder().decode(buffer));
+    if (!data || typeof data.overrides !== 'object') return null;
+    return data;
+  }
+
+  let overridesQueue = Promise.resolve();
+  function pushMetadataOverrides(data) {
+    const snapshot = structuredClone(data);
+    const task = overridesQueue.catch(() => {}).then(async () => {
+      const client = await getClient();
+      const peer = peerOf(await findOrCreateSyncChannel());
+      const filename = `metadata_overrides_${nowTimestamp()}.json`;
+      const file = new File([JSON.stringify(snapshot)], filename, { type: 'application/json' });
+      const uploaded = await client.uploadFile({ file, workers: 1 });
+      await client.sendFile(peer, { file: uploaded, caption: 'Identificaciones TMDB TGVideo', forceDocument: true,
+        attributes: [new Api.DocumentAttributeFilename({ fileName: filename })] });
+      const old = (await listSyncFiles()).filter(f => f.kind === 'overrides').slice(MAX_VERSIONS);
+      for (const f of old) {
+        try { await client.deleteMessages(peer, [f.messageId], { revoke: true }); }
+        catch (error) { console.warn('[overrides] No se pudo borrar versión antigua', error); }
+      }
+    });
+    overridesQueue = task;
     return task;
   }
 
@@ -318,6 +355,8 @@ export function createTelegramSync({ getClient, peerOf }) {
   return {
     pullGlobalConfig,
     pushGlobalConfig,
+    pullMetadataOverrides,
+    pushMetadataOverrides,
     listProfiles,
     pullProfile,
     pushProfile,

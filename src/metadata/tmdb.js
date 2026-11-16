@@ -1,5 +1,6 @@
 import { createKV } from '../core/kv.js';
 import { getTmdbKey } from '../settings/global.js';
+import { getOverride, setOverride, removeOverride } from './overrides.js';
 const kv = createKV();
 const API = 'https://api.themoviedb.org/3';
 const IMAGE = 'https://image.tmdb.org/t/p/';
@@ -73,6 +74,8 @@ export async function setManualMetadata(title, metadata) {
   if (!title || !metadata) return null;
   const key = `manual_tmdb:${title.id}`;
   await kv.set(key, metadata).catch(e => console.warn('[tmdb] Error guardando identificación manual', e));
+  // Sincronizar con otros dispositivos (sirve también para mensajes reenviados)
+  await setOverride(title.id, metadata).catch(e => console.warn('[tmdb] Error guardando override', e));
   title.metadata = metadata;
   title.tmdbId = metadata.id;
   return metadata;
@@ -82,6 +85,7 @@ export async function clearManualMetadata(title) {
   if (!title) return;
   const key = `manual_tmdb:${title.id}`;
   await kv.del(key).catch(() => {});
+  await removeOverride(title.id).catch(() => {});
   title.metadata = null;
   title.tmdbId = null;
 }
@@ -176,6 +180,8 @@ export async function searchTmdbManual({ query, type = 'movie', year = '', direc
 }
 
 async function enrichSaga(title, { signal } = {}) {
+  const ov = getOverride(title.id);
+  if (ov) { title.metadata = ov; title.tmdbId = ov.id; return ov; }
   const manual = await kv.get(`manual_tmdb:${title.id}`).catch(() => null);
   if (manual) { title.metadata = manual; title.tmdbId = manual.id; return manual; }
 
@@ -210,6 +216,8 @@ async function enrichSaga(title, { signal } = {}) {
 }
 
 export async function enrichTitle(title, { signal } = {}) {
+  const ov = getOverride(title.id);
+  if (ov) { title.metadata = ov; title.tmdbId = ov.id; return ov; }
   const manual = await kv.get(`manual_tmdb:${title.id}`).catch(() => null);
   if (manual) { title.metadata = manual; title.tmdbId = manual.id; return manual; }
 

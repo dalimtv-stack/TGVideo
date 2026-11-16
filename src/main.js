@@ -14,6 +14,7 @@ import { loadPoster, prewarmPosterCache, memoryCache } from './metadata/posterCa
 import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
 import { loadGlobalConfig } from './settings/global.js';
+import { loadOverrides } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale } from './ui/settings.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 
@@ -802,6 +803,7 @@ async function start() {
     window.sync = sync;
 
     await loadGlobalConfig(sync);
+    await loadOverrides(sync).catch(e => console.warn('[overrides]', e));
     await showProfileSelector(tg, sync);
 
   } catch (err) {
