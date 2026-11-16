@@ -65,45 +65,7 @@ function move(dir) {
     return;
   }
 
-  // 1.1 Si está sobre el botón "+" de expandir fila (.row-expand-btn)
-  if (cur.matches(".row-expand-btn")) {
-    const curRow = cur.closest(".row");
-    if (dir === "right") {
-      const firstCard = curRow?.querySelector(".row-track [data-focusable]");
-      if (firstCard) {
-        firstCard.focus();
-        firstCard.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
-      }
-      return;
-    }
-    if (dir === "down") {
-      const nextRow = curRow?.nextElementSibling?.matches(".row") ? curRow.nextElementSibling : null;
-      const target = nextRow?.querySelector(".row-expand-btn") || nextRow?.querySelector(".row-track [data-focusable]");
-      if (target) {
-        target.focus();
-        nextRow.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
-      }
-      return;
-    }
-    if (dir === "up") {
-      const prevRow = curRow?.previousElementSibling?.matches(".row") ? curRow.previousElementSibling : null;
-      if (prevRow) {
-        const target = prevRow.querySelector(".row-expand-btn") || prevRow.querySelector(".row-track [data-focusable]");
-        if (target) {
-          target.focus();
-          prevRow.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
-        }
-      } else {
-        const headerBtn = document.querySelector("#btn-reload, #btn-change-profile");
-        if (headerBtn) {
-          headerBtn.focus();
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        }
-      }
-      return;
-    }
-    if (dir === "left") return;
-  }
+
 
   // 1. Si está dentro de un carrusel horizontal (.row-track)
   const curTrack = cur.closest('.row-track');
@@ -116,13 +78,6 @@ function move(dir) {
         const target = trackItems[idx - 1];
         target.focus();
         target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-      } else {
-        const curRow = cur.closest('.row');
-        const expandBtn = curRow?.querySelector('.row-expand-btn');
-        if (expandBtn) {
-          expandBtn.focus();
-          expandBtn.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-        }
       }
       return;
     }
