@@ -76,16 +76,16 @@ function openAudioSelector(video, playerEl, returnFocusEl) {
   let listHtml = '';
   if (rawTracks.length === 0) {
     listHtml = `
-      <div class="player-track-empty">Pista de audio estándar detectada</div>
+      <div class="player-track-empty">Pista de audio estándar en reproducción</div>
       <button class="player-track-option is-selected" data-focusable data-index="0">
-        <span>Principal / Predeterminada</span>
+        <span>Audio principal (predeterminado)</span>
         <span class="player-track-check">✓</span>
       </button>
     `;
   } else {
     listHtml = rawTracks.map((track, i) => {
       const isSelected = !!track.enabled;
-      const label = track.label || track.language || `Audio ${i + 1}`;
+      const label = track.label || track.language || `Pista de audio ${i + 1}`;
       return `
         <button class="player-track-option ${isSelected ? 'is-selected' : ''}" data-focusable data-index="${i}">
           <span>${escapeHtml(label)}</span>
@@ -134,6 +134,26 @@ function openAudioSelector(video, playerEl, returnFocusEl) {
     });
   });
 
+  overlay.addEventListener('keydown', (e) => {
+    const isBackKey = ['Escape', 'GoBack', 'Back'].includes(e.key) || e.keyCode === 4 ||
+      (e.key === 'Backspace' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName));
+    if (isBackKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu();
+      return;
+    }
+    if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const opts = [...overlay.querySelectorAll('.player-track-option, .player-tracks-close')].filter(el => el.offsetParent && !el.disabled);
+      const idx = opts.indexOf(document.activeElement);
+      const delta = e.key === 'ArrowUp' ? -1 : 1;
+      const next = opts[Math.max(0, Math.min(opts.length - 1, idx + delta))];
+      next?.focus();
+    }
+  });
+
   const activeBtn = overlay.querySelector('.player-track-option.is-selected') || buttons[0] || overlay.querySelector('.player-tracks-close');
   activeBtn?.focus();
 }
@@ -141,10 +161,7 @@ function openAudioSelector(video, playerEl, returnFocusEl) {
 function openSubtitlesSelector(video, playerEl, returnFocusEl) {
   playerEl.querySelector('.player-tracks-overlay')?.remove();
 
-  const rawTracks = video?.textTracks
-    ? Array.from(video.textTracks).filter(t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind)
-    : [];
-
+  const rawTracks = video?.textTracks ? Array.from(video.textTracks) : [];
   const isNoneSelected = rawTracks.every(t => t.mode !== 'showing');
 
   const overlay = document.createElement('div');
@@ -212,6 +229,26 @@ function openSubtitlesSelector(video, playerEl, returnFocusEl) {
       }
       closeMenu();
     });
+  });
+
+  overlay.addEventListener('keydown', (e) => {
+    const isBackKey = ['Escape', 'GoBack', 'Back'].includes(e.key) || e.keyCode === 4 ||
+      (e.key === 'Backspace' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName));
+    if (isBackKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu();
+      return;
+    }
+    if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const opts = [...overlay.querySelectorAll('.player-track-option, .player-tracks-close')].filter(el => el.offsetParent && !el.disabled);
+      const idx = opts.indexOf(document.activeElement);
+      const delta = e.key === 'ArrowUp' ? -1 : 1;
+      const next = opts[Math.max(0, Math.min(opts.length - 1, idx + delta))];
+      next?.focus();
+    }
   });
 
   const activeBtn = overlay.querySelector('.player-track-option.is-selected') || buttons[0] || overlay.querySelector('.player-tracks-close');
