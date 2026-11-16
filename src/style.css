@@ -1628,3 +1628,117 @@ html, body {
   background: #ffffff !important;
   box-shadow: 0 0 16px #e50914, 0 0 28px rgba(229, 9, 20, 0.9) !important;
 }
+
+/* Selector Modal de Pistas de Audio y Subtítulos */
+.player-tracks-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  animation: fadeIn 0.18s ease-out;
+}
+
+.player-tracks-menu {
+  background: #111827;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  width: min(440px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.85);
+  overflow: hidden;
+}
+
+.player-tracks-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.2rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.player-tracks-close {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #cbd5e1;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.player-tracks-close:focus,
+.player-tracks-close:hover {
+  background: #e50914;
+  color: #fff;
+  outline: 2px solid #fff;
+}
+
+.player-tracks-list {
+  padding: 0.8rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.player-track-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.8rem 1rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.player-track-option.is-selected {
+  background: rgba(229, 9, 20, 0.15);
+  border-color: #e50914;
+  color: #fff;
+  font-weight: 600;
+}
+
+.player-track-option:focus,
+.player-track-option:hover {
+  outline: 3px solid #e50914;
+  outline-offset: 1px;
+  background: rgba(229, 9, 20, 0.35);
+  color: #fff;
+  transform: scale(1.02);
+}
+
+.player-track-check {
+  color: #e50914;
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+
+.player-track-empty {
+  padding: 0.8rem;
+  color: #94a3b8;
+  font-size: 0.9rem;
+  text-align: center;
+  font-style: italic;
+}
