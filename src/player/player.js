@@ -65,49 +65,157 @@ function showToast(container, text) {
   toast._timer = setTimeout(() => toast.classList.remove('show'), 2400);
 }
 
-function cycleAudio(video, container) {
-  const tracks = (video.audioTracks && video.audioTracks.length > 0)
-    ? Array.from(video.audioTracks)
-    : [];
-  if (tracks.length === 0) {
-    showToast(container, 'Pista de audio: Predeterminada');
-    return;
-  }
-  if (tracks.length === 1) {
-    const label = tracks[0].label || tracks[0].language || 'Principal';
-    showToast(container, `Audio único: ${label}`);
-    return;
-  }
-  let cur = tracks.findIndex(t => t.enabled);
-  if (cur === -1) cur = 0;
-  const next = (cur + 1) % tracks.length;
-  tracks.forEach((t, i) => { t.enabled = (i === next); });
-  const label = tracks[next].label || tracks[next].language || `Pista ${next + 1}`;
-  showToast(container, `Audio (${next + 1}/${tracks.length}): ${label}`);
-}
+function openAudioSelector(video, playerEl, returnFocusEl) {
+  playerEl.querySelector('.player-tracks-overlay')?.remove();
 
-function cycleSubtitles(video, container) {
-  const tracks = (video.textTracks && video.textTracks.length > 0)
-    ? Array.from(video.textTracks).filter(t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind)
-    : [];
-  if (tracks.length === 0) {
-    showToast(container, 'No hay subtítulos en este archivo');
-    return;
-  }
-  let cur = tracks.findIndex(t => t.mode === 'showing');
-  let next = cur + 1;
-  if (next >= tracks.length) next = -1;
+  const rawTracks = video?.audioTracks ? Array.from(video.audioTracks) : [];
+  const overlay = document.createElement('div');
+  overlay.className = 'player-tracks-overlay';
+  overlay.id = 'pl-tracks-modal';
 
-  tracks.forEach((t, i) => {
-    t.mode = (i === next) ? 'showing' : 'disabled';
+  let listHtml = '';
+  if (rawTracks.length === 0) {
+    listHtml = `
+      <div class="player-track-empty">Pista de audio estándar detectada</div>
+      <button class="player-track-option is-selected" data-focusable data-index="0">
+        <span>Principal / Predeterminada</span>
+        <span class="player-track-check">✓</span>
+      </button>
+    `;
+  } else {
+    listHtml = rawTracks.map((track, i) => {
+      const isSelected = !!track.enabled;
+      const label = track.label || track.language || `Audio ${i + 1}`;
+      return `
+        <button class="player-track-option ${isSelected ? 'is-selected' : ''}" data-focusable data-index="${i}">
+          <span>${escapeHtml(label)}</span>
+          ${isSelected ? '<span class="player-track-check">✓</span>' : ''}
+        </button>
+      `;
+    }).join('');
+  }
+
+  overlay.innerHTML = `
+    <div class="player-tracks-menu" role="dialog" aria-label="Seleccionar audio">
+      <div class="player-tracks-title">
+        <span>🔊 Pistas de Audio</span>
+        <button class="player-tracks-close" data-focusable aria-label="Cerrar">✕</button>
+      </div>
+      <div class="player-tracks-list">
+        ${listHtml}
+      </div>
+    </div>
+  `;
+
+  playerEl.appendChild(overlay);
+
+  const closeMenu = () => {
+    overlay.remove();
+    returnFocusEl?.focus();
+  };
+
+  overlay.querySelector('.player-tracks-close')?.addEventListener('click', closeMenu);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeMenu();
   });
 
-  if (next === -1) {
-    showToast(container, 'Subtítulos: Desactivados');
+  const buttons = overlay.querySelectorAll('.player-track-option');
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-index'));
+      if (rawTracks.length > 0 && rawTracks[idx]) {
+        rawTracks.forEach((t, i) => { t.enabled = (i === idx); });
+        const label = rawTracks[idx].label || rawTracks[idx].language || `Pista ${idx + 1}`;
+        showToast(playerEl, `✓ Audio: ${label}`);
+      } else {
+        showToast(playerEl, 'Audio: Principal');
+      }
+      closeMenu();
+    });
+  });
+
+  const activeBtn = overlay.querySelector('.player-track-option.is-selected') || buttons[0] || overlay.querySelector('.player-tracks-close');
+  activeBtn?.focus();
+}
+
+function openSubtitlesSelector(video, playerEl, returnFocusEl) {
+  playerEl.querySelector('.player-tracks-overlay')?.remove();
+
+  const rawTracks = video?.textTracks
+    ? Array.from(video.textTracks).filter(t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind)
+    : [];
+
+  const isNoneSelected = rawTracks.every(t => t.mode !== 'showing');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'player-tracks-overlay';
+  overlay.id = 'pl-tracks-modal';
+
+  let listHtml = `
+    <button class="player-track-option ${isNoneSelected ? 'is-selected' : ''}" data-focusable data-index="-1">
+      <span>Desactivados</span>
+      ${isNoneSelected ? '<span class="player-track-check">✓</span>' : ''}
+    </button>
+  `;
+
+  if (rawTracks.length === 0) {
+    listHtml += `<div class="player-track-empty">No se detectaron pistas de subtítulos incrustadas</div>`;
   } else {
-    const label = tracks[next].label || tracks[next].language || `Pista ${next + 1}`;
-    showToast(container, `Subtítulos (${next + 1}/${tracks.length}): ${label}`);
+    listHtml += rawTracks.map((track, i) => {
+      const isSelected = track.mode === 'showing';
+      const label = track.label || track.language || `Subtítulo ${i + 1}`;
+      return `
+        <button class="player-track-option ${isSelected ? 'is-selected' : ''}" data-focusable data-index="${i}">
+          <span>${escapeHtml(label)}</span>
+          ${isSelected ? '<span class="player-track-check">✓</span>' : ''}
+        </button>
+      `;
+    }).join('');
   }
+
+  overlay.innerHTML = `
+    <div class="player-tracks-menu" role="dialog" aria-label="Seleccionar subtítulos">
+      <div class="player-tracks-title">
+        <span>💬 Subtítulos</span>
+        <button class="player-tracks-close" data-focusable aria-label="Cerrar">✕</button>
+      </div>
+      <div class="player-tracks-list">
+        ${listHtml}
+      </div>
+    </div>
+  `;
+
+  playerEl.appendChild(overlay);
+
+  const closeMenu = () => {
+    overlay.remove();
+    returnFocusEl?.focus();
+  };
+
+  overlay.querySelector('.player-tracks-close')?.addEventListener('click', closeMenu);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeMenu();
+  });
+
+  const buttons = overlay.querySelectorAll('.player-track-option');
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-index'));
+      rawTracks.forEach((t, i) => {
+        t.mode = (i === idx) ? 'showing' : 'disabled';
+      });
+      if (idx === -1) {
+        showToast(playerEl, 'Subtítulos desactivados');
+      } else if (rawTracks[idx]) {
+        const label = rawTracks[idx].label || rawTracks[idx].language || `Subtítulo ${idx + 1}`;
+        showToast(playerEl, `✓ Subtítulos: ${label}`);
+      }
+      closeMenu();
+    });
+  });
+
+  const activeBtn = overlay.querySelector('.player-track-option.is-selected') || buttons[0] || overlay.querySelector('.player-tracks-close');
+  activeBtn?.focus();
 }
 
 function tryOpenVlc(url, container) {
@@ -427,12 +535,12 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   };
 
   mount.querySelector('#pl-btn-audio').onclick = () => {
-    cycleAudio(video, playerEl);
+    openAudioSelector(video, playerEl, mount.querySelector('#pl-btn-audio'));
     showOsd();
   };
 
   mount.querySelector('#pl-btn-subs').onclick = () => {
-    cycleSubtitles(video, playerEl);
+    openSubtitlesSelector(video, playerEl, mount.querySelector('#pl-btn-subs'));
     showOsd();
   };
 
@@ -488,10 +596,55 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     }
   });
 
+  const handleTracksOverlayDpad = (action) => {
+    const overlay = playerEl.querySelector('.player-tracks-overlay');
+    if (!overlay) return false;
+
+    if (action === 'close') {
+      overlay.remove();
+      mount.querySelector('#pl-btn-audio')?.focus();
+      return true;
+    }
+
+    const focusables = [...overlay.querySelectorAll('[data-focusable]')];
+    if (focusables.length === 0) return true;
+
+    const curIdx = focusables.indexOf(document.activeElement);
+
+    if (action === 'up') {
+      const nextIdx = curIdx > 0 ? curIdx - 1 : focusables.length - 1;
+      focusables[nextIdx].focus();
+      return true;
+    }
+
+    if (action === 'down') {
+      const nextIdx = (curIdx !== -1 && curIdx < focusables.length - 1) ? curIdx + 1 : 0;
+      focusables[nextIdx].focus();
+      return true;
+    }
+
+    if (action === 'select') {
+      if (document.activeElement && overlay.contains(document.activeElement)) {
+        document.activeElement.click();
+      }
+      return true;
+    }
+
+    if (action === 'left' || action === 'right') {
+      return true;
+    }
+
+    return true;
+  };
+
   // Controlador TV para D-Pad / Mando Fire TV
   const tvController = {
-    close: () => close(),
+    close: () => {
+      if (handleTracksOverlayDpad('close')) return;
+      close();
+    },
     onLeft: () => {
+      if (handleTracksOverlayDpad('left')) return;
       if (osd.classList.contains('is-hidden')) {
         video.currentTime = Math.max(0, (video.currentTime || 0) - skipSeconds);
         showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(video.currentTime)})`);
@@ -529,6 +682,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       showOsd();
     },
     onRight: () => {
+      if (handleTracksOverlayDpad('right')) return;
       if (osd.classList.contains('is-hidden')) {
         video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + skipSeconds);
         showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(video.currentTime)})`);
@@ -566,6 +720,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       showOsd();
     },
     onUp: () => {
+      if (handleTracksOverlayDpad('up')) return;
       if (osd.classList.contains('is-hidden')) {
         showOsd();
         mount.querySelector('#pl-btn-back')?.focus();
@@ -583,6 +738,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       showOsd();
     },
     onDown: () => {
+      if (handleTracksOverlayDpad('down')) return;
       if (osd.classList.contains('is-hidden')) {
         showOsd();
         scrubber.focus();
@@ -601,6 +757,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       }
     },
     onSelect: () => {
+      if (handleTracksOverlayDpad('select')) return;
       if (osd.classList.contains('is-hidden')) {
         if (video.paused) { video.play(); showToast(playerEl, '▶ Reproduciendo'); }
         else { video.pause(); showToast(playerEl, '⏸ Pausa'); }
@@ -947,15 +1104,17 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   };
 
   mount.querySelector('#pl-btn-audio').onclick = () => {
-    if (art?.template?.$video) {
-      cycleAudio(art.template.$video, playerEl);
+    const vid = art?.template?.$video;
+    if (vid) {
+      openAudioSelector(vid, playerEl, mount.querySelector('#pl-btn-audio'));
       showOsd();
     }
   };
 
   mount.querySelector('#pl-btn-subs').onclick = () => {
-    if (art?.template?.$video) {
-      cycleSubtitles(art.template.$video, playerEl);
+    const vid = art?.template?.$video;
+    if (vid) {
+      openSubtitlesSelector(vid, playerEl, mount.querySelector('#pl-btn-subs'));
       showOsd();
     }
   };
@@ -1012,10 +1171,55 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     }
   });
 
+  const handleTracksOverlayDpad = (action) => {
+    const overlay = playerEl.querySelector('.player-tracks-overlay');
+    if (!overlay) return false;
+
+    if (action === 'close') {
+      overlay.remove();
+      mount.querySelector('#pl-btn-audio')?.focus();
+      return true;
+    }
+
+    const focusables = [...overlay.querySelectorAll('[data-focusable]')];
+    if (focusables.length === 0) return true;
+
+    const curIdx = focusables.indexOf(document.activeElement);
+
+    if (action === 'up') {
+      const nextIdx = curIdx > 0 ? curIdx - 1 : focusables.length - 1;
+      focusables[nextIdx].focus();
+      return true;
+    }
+
+    if (action === 'down') {
+      const nextIdx = (curIdx !== -1 && curIdx < focusables.length - 1) ? curIdx + 1 : 0;
+      focusables[nextIdx].focus();
+      return true;
+    }
+
+    if (action === 'select') {
+      if (document.activeElement && overlay.contains(document.activeElement)) {
+        document.activeElement.click();
+      }
+      return true;
+    }
+
+    if (action === 'left' || action === 'right') {
+      return true;
+    }
+
+    return true;
+  };
+
   // Controlador TV para D-Pad / Mando Fire TV
   const tvController = {
-    close: () => close(),
+    close: () => {
+      if (handleTracksOverlayDpad('close')) return;
+      close();
+    },
     onLeft: () => {
+      if (handleTracksOverlayDpad('left')) return;
       if (osd.classList.contains('is-hidden')) {
         if (art) {
           art.currentTime = Math.max(0, art.currentTime - skipSeconds);
@@ -1057,6 +1261,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       }
     },
     onRight: () => {
+      if (handleTracksOverlayDpad('right')) return;
       if (osd.classList.contains('is-hidden')) {
         if (art) {
           art.currentTime = Math.min(art.duration || Infinity, art.currentTime + skipSeconds);
@@ -1098,6 +1303,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       }
     },
     onUp: () => {
+      if (handleTracksOverlayDpad('up')) return;
       if (osd.classList.contains('is-hidden')) {
         showOsd();
         mount.querySelector('#pl-btn-back')?.focus();
@@ -1115,6 +1321,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       showOsd();
     },
     onDown: () => {
+      if (handleTracksOverlayDpad('down')) return;
       if (osd.classList.contains('is-hidden')) {
         showOsd();
         scrubber.focus();
@@ -1133,6 +1340,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       }
     },
     onSelect: () => {
+      if (handleTracksOverlayDpad('select')) return;
       if (osd.classList.contains('is-hidden')) {
         if (art) {
           if (art.template.$video.paused) { art.play(); showToast(playerEl, '▶ Reproduciendo'); }
@@ -1240,6 +1448,77 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
     cleanupSkip = setupDoubleTapSkip({ container: art.template.$player, video, skipSeconds });
 
+    if (video.webkitSupportsFullscreen) {
+      art.controls.add({
+        name: 'iosNativeFs',
+        position: 'right',
+        index: 68,
+        html: '<span class="art-ios-btn" title="Pantalla completa nativa de iOS (para pistas de audio y subtítulos)">iOS</span>',
+        tooltip: 'Pantalla completa iOS (Audios/Subs)',
+        click() {
+          try { video.webkitEnterFullscreen(); } catch (err) { console.warn(err); }
+        }
+      });
+    }
+
+    const checkTracks = () => {
+      if (video.audioTracks && video.audioTracks.length > 1) {
+        try {
+          if (!art.setting.find('audioTracks')) {
+            art.setting.add({
+              name: 'audioTracks',
+              width: 220,
+              html: 'Pista de audio',
+              tooltip: 'Audio',
+              selector: Array.from(video.audioTracks).map((track, i) => ({
+                default: track.enabled,
+                html: track.label || track.language || `Audio ${i + 1}`,
+                value: i,
+              })),
+              onSelect(item) {
+                const idx = Number(item.value);
+                Array.from(video.audioTracks).forEach((t, i) => {
+                  t.enabled = (i === idx);
+                });
+                return item.html;
+              },
+            });
+          }
+        } catch (_) {}
+      }
+
+      if (video.textTracks && video.textTracks.length > 0) {
+        try {
+          if (!art.setting.find('nativeSubtitles')) {
+            const tracks = Array.from(video.textTracks).filter(t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind);
+            if (tracks.length > 0) {
+              art.setting.add({
+                name: 'nativeSubtitles',
+                width: 220,
+                html: 'Subtítulos',
+                tooltip: 'Subtítulos',
+                selector: [
+                  { default: tracks.every(t => t.mode !== 'showing'), html: 'Desactivados', value: -1 },
+                  ...tracks.map((track, i) => ({
+                    default: track.mode === 'showing',
+                    html: track.label || track.language || `Subtítulo ${i + 1}`,
+                    value: i,
+                  }))
+                ],
+                onSelect(item) {
+                  const idx = Number(item.value);
+                  tracks.forEach((t, i) => {
+                    t.mode = (i === idx) ? 'showing' : 'disabled';
+                  });
+                  return item.html;
+                },
+              });
+            }
+          }
+        } catch (_) {}
+      }
+    };
+
     art.on('ready', () => {
       loading.style.display = 'none';
       if (resumeAt > 0) {
@@ -1248,11 +1527,15 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       if (video.duration) {
         timeDur.textContent = formatTime(video.duration);
       }
+      checkTracks();
     });
 
     art.on('video:loadedmetadata', () => {
       timeDur.textContent = formatTime(video.duration);
+      checkTracks();
     });
+
+    art.on('video:canplay', checkTracks);
 
     art.on('video:play', () => {
       updatePlayIcons();
