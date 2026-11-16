@@ -71,16 +71,18 @@ function move(dir) {
 
     if (dir === 'left') {
       if (idx > 0) {
-        trackItems[idx - 1].focus();
-        trackItems[idx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        const target = trackItems[idx - 1];
+        target.focus();
+        target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
       }
       return;
     }
 
     if (dir === 'right') {
       if (idx !== -1 && idx < trackItems.length - 1) {
-        trackItems[idx + 1].focus();
-        trackItems[idx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        const target = trackItems[idx + 1];
+        target.focus();
+        target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
       }
       return;
     }
@@ -94,7 +96,8 @@ function move(dir) {
         if (prevItems.length) {
           const target = prevItems[Math.min(idx >= 0 ? idx : 0, prevItems.length - 1)];
           target.focus();
-          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          prevRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
           return;
         }
       } else {
@@ -102,7 +105,7 @@ function move(dir) {
         const headerBtn = document.querySelector('#btn-reload, #btn-change-profile');
         if (headerBtn) {
           headerBtn.focus();
-          headerBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
           return;
         }
       }
@@ -117,7 +120,8 @@ function move(dir) {
         if (nextItems.length) {
           const target = nextItems[Math.min(idx >= 0 ? idx : 0, nextItems.length - 1)];
           target.focus();
-          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          nextRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
           return;
         }
       }
@@ -143,10 +147,12 @@ function move(dir) {
       return;
     }
     if (dir === 'down') {
-      const firstCard = document.querySelector('.row-track [data-focusable]');
+      const firstRow = document.querySelector('.row');
+      const firstCard = firstRow?.querySelector('.row-track [data-focusable]') || document.querySelector('.row-track [data-focusable]');
       if (firstCard) {
         firstCard.focus();
-        firstCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        firstRow?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        firstCard.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
       }
       return;
     }
@@ -158,132 +164,170 @@ function move(dir) {
   // 3. Si está dentro de la ficha de detalle (.detail)
   const detailScreen = cur.closest('.detail');
   if (detailScreen && !scope.matches('.settings-overlay')) {
-    // 3.1 Barra superior (#d-back, #d-fix-meta)
-    if (cur.id === 'd-back') {
+    const backBtn = detailScreen.querySelector('#d-back');
+    const fixMetaBtn = detailScreen.querySelector('#d-fix-meta');
+    const synToggle = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
+    const playBtn = detailScreen.querySelector('#d-play');
+    const seasonActive = detailScreen.querySelector('.seasons-track .season-btn.active') || detailScreen.querySelector('.seasons-track .season-btn');
+    const curSeasonTrack = cur.closest('.seasons-track');
+    const curEpList = cur.closest('#ep-list');
+
+    // 3.1 Botón Volver (#d-back)
+    if (cur === backBtn) {
       if (dir === 'right') {
-        detailScreen.querySelector('#d-fix-meta')?.focus();
+        if (fixMetaBtn) {
+          fixMetaBtn.focus();
+          fixMetaBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
         return;
       }
       if (dir === 'down') {
-        const syn = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
-        const play = detailScreen.querySelector('#d-play');
-        const target = syn || play;
+        const target = synToggle || playBtn || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (target) {
           target.focus();
-          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
       return;
     }
 
-    if (cur.id === 'd-fix-meta') {
+    // 3.2 Botón Identificación TMDB (#d-fix-meta)
+    if (cur === fixMetaBtn) {
       if (dir === 'left') {
-        detailScreen.querySelector('#d-back')?.focus();
+        if (backBtn) {
+          backBtn.focus();
+          backBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
         return;
       }
       if (dir === 'down') {
-        const syn = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
-        const play = detailScreen.querySelector('#d-play');
-        const target = syn || play;
+        const target = synToggle || playBtn || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (target) {
           target.focus();
-          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
       return;
     }
 
-    // 3.2 Botón de sinopsis "más" / "menos" (.btn-syn-toggle)
-    if (cur.matches('.btn-syn-toggle')) {
+    // 3.3 Botón sinopsis "más" / "menos" (.btn-syn-toggle)
+    if (cur === synToggle) {
       if (dir === 'up') {
-        detailScreen.querySelector('#d-back')?.focus();
+        const target = backBtn || fixMetaBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
         return;
       }
       if (dir === 'down') {
-        const play = detailScreen.querySelector('#d-play');
-        if (play) {
-          play.focus();
-          play.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        const target = playBtn || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'left') {
+        if (backBtn) {
+          backBtn.focus();
+          backBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'right') {
+        if (fixMetaBtn) {
+          fixMetaBtn.focus();
+          fixMetaBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
       return;
     }
 
-    // 3.3 Botón de Reproducir / Continuar (#d-play)
-    if (cur.id === 'd-play') {
+    // 3.4 Botón Reproducir / Continuar (#d-play)
+    if (cur === playBtn) {
       if (dir === 'up') {
-        const syn = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
-        const back = detailScreen.querySelector('#d-back');
-        const target = syn || back;
+        const target = synToggle || backBtn;
         if (target) {
           target.focus();
-          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
       if (dir === 'down') {
-        const seasonActive = detailScreen.querySelector('.seasons-track .season-btn.active') || detailScreen.querySelector('.seasons-track .season-btn');
-        const firstEp = detailScreen.querySelector('#ep-list .ep[data-focusable]');
-        const target = seasonActive || firstEp;
+        const target = seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (target) {
           target.focus();
-          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'left') {
+        if (backBtn) {
+          backBtn.focus();
+          backBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'right') {
+        if (fixMetaBtn) {
+          fixMetaBtn.focus();
+          fixMetaBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
       return;
     }
 
-    // 3.4 Temporadas (.seasons-track)
-    const curSeasons = cur.closest('.seasons-track');
-    if (curSeasons) {
-      const sItems = [...curSeasons.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+    // 3.5 Selector de temporadas (.seasons-track)
+    if (curSeasonTrack) {
+      const sItems = [...curSeasonTrack.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
       const sIdx = sItems.indexOf(cur);
       if (dir === 'left' && sIdx > 0) {
         sItems[sIdx - 1].focus();
-        sItems[sIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        sItems[sIdx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
         return;
       }
       if (dir === 'right' && sIdx !== -1 && sIdx < sItems.length - 1) {
         sItems[sIdx + 1].focus();
-        sItems[sIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        sItems[sIdx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
+      if (dir === 'up') {
+        const target = playBtn || synToggle || backBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
         return;
       }
       if (dir === 'down') {
         const firstEp = detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (firstEp) {
           firstEp.focus();
-          firstEp.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          firstEp.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
-      if (dir === 'up') {
-        const playBtn = detailScreen.querySelector('#d-play');
-        if (playBtn) {
-          playBtn.focus();
-          playBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-        }
-        return;
-      }
+      return;
     }
 
-    // 3.5 Lista de episodios (#ep-list)
-    const curEpList = cur.closest('#ep-list');
+    // 3.6 Lista de episodios / archivos (#ep-list)
     if (curEpList) {
       const epItems = [...curEpList.querySelectorAll('.ep[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
       const epIdx = epItems.indexOf(cur);
       if (dir === 'up') {
         if (epIdx > 0) {
           epItems[epIdx - 1].focus();
-          epItems[epIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          epItems[epIdx - 1].scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         } else {
-          const seasonBtn = detailScreen.querySelector('.seasons-track .season-btn.active') || detailScreen.querySelector('#d-play');
-          if (seasonBtn) {
-            seasonBtn.focus();
-            seasonBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          const target = seasonActive || playBtn || synToggle || backBtn;
+          if (target) {
+            target.focus();
+            target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           }
         }
         return;
@@ -291,7 +335,20 @@ function move(dir) {
       if (dir === 'down') {
         if (epIdx !== -1 && epIdx < epItems.length - 1) {
           epItems[epIdx + 1].focus();
-          epItems[epIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          epItems[epIdx + 1].scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'left' || dir === 'right') {
+        if (seasonActive) {
+          const sItems = [...detailScreen.querySelectorAll('.seasons-track [data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+          const actIdx = sItems.indexOf(seasonActive);
+          const targetSeason = dir === 'left' ? sItems[Math.max(0, actIdx - 1)] : sItems[Math.min(sItems.length - 1, actIdx + 1)];
+          if (targetSeason && targetSeason !== seasonActive) {
+            targetSeason.click();
+            targetSeason.focus();
+            targetSeason.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          }
         }
         return;
       }
@@ -299,37 +356,7 @@ function move(dir) {
     }
   }
 
-  // 4. Si está en la lista de episodios / archivos (.ep-list)
-  const curEpList = cur.closest('#ep-list');
-  if (curEpList) {
-    const epItems = [...curEpList.querySelectorAll('.ep[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
-    const epIdx = epItems.indexOf(cur);
-    if (dir === 'up') {
-      if (epIdx > 0) {
-        epItems[epIdx - 1].focus();
-        epItems[epIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-      } else {
-        const seasonBtn = document.querySelector('.season-btn.active') || document.querySelector('#d-play');
-        if (seasonBtn) {
-          seasonBtn.focus();
-          seasonBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-        }
-      }
-      return;
-    }
-    if (dir === 'down') {
-      if (epIdx !== -1 && epIdx < epItems.length - 1) {
-        epItems[epIdx + 1].focus();
-        epItems[epIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-      }
-      return;
-    }
-    if (dir === 'left' || dir === 'right') {
-      return;
-    }
-  }
-
-  // 5. Navegación espacial general para modales y formularios
+  // 4. Navegación espacial general para modales y formularios
   const curRect = cur.getBoundingClientRect();
   const c = { x: curRect.left + curRect.width / 2, y: curRect.top + curRect.height / 2 };
 
@@ -371,7 +398,7 @@ function move(dir) {
 
   if (best) {
     best.focus();
-    best.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    best.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
   }
 }
 
@@ -439,13 +466,14 @@ export function initDpad() {
     }
 
     const isInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
+    const isRange = e.target.tagName === 'INPUT' && e.target.type === 'range';
     const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
 
     if (map[e.key]) {
       if (document.activeElement?.tagName === 'VIDEO') return;
 
-      // Si está en un input de texto, izquierda y derecha navegan dentro del texto
-      if (isInput && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return;
+      // Si está en un input de texto o en un slider de tamaño, izquierda y derecha controlan el input
+      if ((isInput && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) || (isRange && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'))) return;
 
       e.preventDefault();
       move(map[e.key]);
