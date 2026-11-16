@@ -99,11 +99,9 @@ jobs:
               drawable_path = os.path.join(res_base, "drawable")
               os.makedirs(drawable_path, exist_ok=True)
 
-              # Banner Android TV / Fire TV (320x180)
-              banner = Image.new("RGBA", (320, 180), (20, 20, 20, 255))
-              icon_tv = src.resize((140, 140), Image.Resampling.LANCZOS)
-              offset = ((320 - 140) // 2, (180 - 140) // 2)
-              banner.paste(icon_tv, offset, icon_tv)
+              # Banner Android TV / Fire TV (320x180) ocupando el rectangulo completo
+              from PIL import ImageOps
+              banner = ImageOps.fit(src, (320, 180), Image.Resampling.LANCZOS)
               banner.save(os.path.join(drawable_path, "banner.png"))
 
               # Reemplazar todos los splash.png de Capacitor para que nunca salga el logo de Capacitor
@@ -152,6 +150,19 @@ jobs:
               with open(manifest_path, "w", encoding="utf-8") as f:
                   f.write(m)
               print("AndroidManifest.xml configurado para Leanback / Android TV.")
+
+          # Fondo de ventana oscuro para eliminar el destello blanco al iniciar
+          for styles_path in ["android/app/src/main/res/values/styles.xml", "android/app/src/main/res/values-night/styles.xml"]:
+              if os.path.exists(styles_path):
+                  with open(styles_path, "r", encoding="utf-8") as f:
+                      st = f.read()
+                  if "android:windowBackground" in st:
+                      st = re.sub(r'<item name="android:windowBackground">[^<]+</item>', '<item name="android:windowBackground">@android:color/black</item>', st)
+                  else:
+                      st = st.replace("</style>", '    <item name="android:windowBackground">@android:color/black</item>\n    </style>')
+                  with open(styles_path, "w", encoding="utf-8") as f:
+                      f.write(st)
+                  print(f"Fondo de ventana configurado a negro en {styles_path}")
           PYEOF
 
       - name: Setup Signing Key and Version
