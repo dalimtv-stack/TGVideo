@@ -1,5 +1,6 @@
 {
   "appId": "com.tgvideo.app",
   "appName": "TGVideo",
-  "webDir": "dist"
+  "webDir": "dist",
+  "backgroundColor": "#0f0f0f"
 }
