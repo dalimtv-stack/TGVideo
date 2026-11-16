@@ -1,3 +1,4 @@
+// src/library/titles.js
 /**
  * Capa de datos: convierte canales (dedicados, contenedores de año y macro) en "Títulos" unificados.
  * No toca el DOM.
@@ -110,11 +111,12 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
           }
         }
       }
+      const containerGroup = (YEAR_GROUP_RE.test(ch.group) ? ch.name : (ch.group || ch.name)) || grp.yearHint || 'Películas';
       for (const grp of movieMap.values()) {
         sortFiles(grp.files, 'pelicula');
         titles.push({
           id: grp.id, tipo: 'pelicula', isSaga: false,
-          grupo: grp.yearHint || ch.group || ch.name,
+          grupo: containerGroup,
           nombre: grp.nombre, yearHint: grp.yearHint,
           origen: { tipo: 'año_container', channelId: ch.id, messageId: grp.files[0].messageId },
           channel: ch, archivos: grp.files,
