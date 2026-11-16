@@ -15,7 +15,7 @@ import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
 import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides } from './metadata/overrides.js';
-import { showProfileMenu, profileAvatar, applyProfileScale } from './ui/settings.js';
+import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 
 const kv = createKV();
@@ -234,15 +234,9 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
 
 
 function showUpdateDialog({ onQuick, onFull }) {
-  const overlay = document.createElement("div");
-  overlay.className = "settings-overlay";
-  overlay.innerHTML = `
-    <div class="settings-modal update-modal" role="dialog" aria-label="Actualizar biblioteca">
-      <div class="settings-modal-header">
-        <h2 style="margin:0;font-size:1.3rem;">Actualizar biblioteca</h2>
-        <button class="settings-close-btn" data-focusable aria-label="Cerrar">✕</button>
-      </div>
-      <p style="color:#aaa;font-size:0.95rem;margin:0.5rem 0 1.2rem;">Selecciona el modo de actualización de canales y vídeos:</p>
+  const { overlay, close } = modal("Actualizar biblioteca", `
+    <div style="display:flex;flex-direction:column;gap:1rem;">
+      <p style="color:#aaa;font-size:0.95rem;margin:0 0 0.2rem;">Selecciona el modo de actualización de canales y vídeos:</p>
       <div class="update-options-list" style="display:flex;flex-direction:column;gap:0.8rem;">
         <button class="btn btn-update-option" id="btn-update-quick" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
           <div style="font-weight:700;font-size:1.05rem;color:#fff;">⚡ Actualización rápida</div>
@@ -254,18 +248,13 @@ function showUpdateDialog({ onQuick, onFull }) {
         </button>
       </div>
     </div>
-  `;
-  document.body.appendChild(overlay);
+  `, "Comprueba nuevos vídeos o reescanea canales");
 
-  const close = () => overlay.remove();
-  overlay.querySelector(".settings-close-btn").onclick = close;
-  overlay.onclick = (e) => { if (e.target === overlay) close(); };
-
-  document.getElementById("btn-update-quick").onclick = () => { close(); onQuick(); };
-  document.getElementById("btn-update-full").onclick = () => { close(); onFull(); };
+  overlay.querySelector("#btn-update-quick").onclick = () => { close(); onQuick(); };
+  overlay.querySelector("#btn-update-full").onclick = () => { close(); onFull(); };
 
   setTimeout(() => {
-    document.getElementById("btn-update-quick")?.focus();
+    overlay.querySelector("#btn-update-quick")?.focus();
   }, 50);
 }
 
@@ -375,10 +364,16 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     : rows.map(r => `
       <section class="row" data-row-id="${esc(r.id)}">
         <div class="row-header">
-          <button class="row-expand-btn btn-icon" data-focusable data-row-id="${esc(r.id)}" title="Ver todos en cuadrícula" aria-label="Ver todos ${esc(r.title)}">+</button>
           <h2 class="row-title">${esc(r.title)}</h2>
         </div>
-        <div class="row-track">${r.items.map(t => cardHtml(t, progress)).join('')}</div>
+        <div class="row-track">
+          <div class="lib-card row-expand-card" tabindex="0" data-focusable data-row-id="${esc(r.id)}" title="Ver todos en cuadrícula" aria-label="Ver todos ${esc(r.title)}">
+            <div class="row-expand-card-inner">
+              <span class="row-expand-plus">+</span>
+            </div>
+          </div>
+          ${r.items.map(t => cardHtml(t, progress)).join('')}
+        </div>
       </section>`).join('');
 
   showScreen(`
@@ -405,8 +400,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     });
   };
 
-  document.querySelectorAll('#app .row-expand-btn').forEach(btn => {
-    btn.onclick = () => {
+  document.querySelectorAll('#app .row-expand-card').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
       const rowId = btn.dataset.rowId;
       const r = rows.find(x => x.id === rowId);
       if (r) showGroupGrid(tg, sync, profile, r);
@@ -414,10 +410,10 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   });
   document.querySelectorAll('#app .row').forEach(rowEl => {
     const rowId = rowEl.dataset.rowId;
-    rowEl.querySelectorAll('.lib-card').forEach((card, idx) => {
+    rowEl.querySelectorAll('.lib-card[data-title]').forEach((card, idx) => {
       card.onclick = () => {
         const t = titles.find(x => String(x.id) === String(card.dataset.title));
-        if (t) showDetail(tg, sync, profile, t, { fromRowId: rowId, fromCardIndex: idx });
+        if (t) showDetail(tg, sync, profile, t, { fromRowId: rowId, fromCardIndex: idx + 1 });
       };
     });
   });
@@ -430,13 +426,13 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   setTimeout(() => {
     let el = null;
     if (focusRowId && focusExpandBtn) {
-      el = document.querySelector(`.row[data-row-id="${focusRowId}"] .row-expand-btn`);
+      el = document.querySelector(`.row[data-row-id="${focusRowId}"] .row-expand-card`);
     } else if (focusRowId && focusTitleId) {
       el = document.querySelector(`.row[data-row-id="${focusRowId}"] .lib-card[data-title="${focusTitleId}"]`);
     }
     if (!el && focusRowId && typeof focusCardIndex === "number") {
       const row = document.querySelector(`.row[data-row-id="${focusRowId}"]`);
-      el = row?.querySelectorAll(".lib-card")?.[focusCardIndex];
+      el = row?.querySelectorAll(".row-track > [data-focusable]")?.[focusCardIndex];
     }
     if (!el && focusTitleId) {
       el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
@@ -696,6 +692,9 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     if (t.isSaga) {
       const yearOf = (f) => Number(f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
       files = [...files].sort((a, b) => yearOf(a) - yearOf(b) || a.label.localeCompare(b.label, 'es', { numeric: true }));
+    } else if (t.tipo === 'pelicula') {
+      // Ordenar las versiones de mayor a menor tamaño
+      files = [...files].sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
     }
     const container = document.getElementById('ep-list');
     container.innerHTML = files.map((f) => {
