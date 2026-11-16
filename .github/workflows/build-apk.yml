@@ -69,6 +69,7 @@ jobs:
 
       - name: Prepare Android TV & Fire TV Icons, Splash and Manifest
         run: |
+          pip install Pillow
           python3 - << 'PYEOF'
           import os, re
           from PIL import Image
