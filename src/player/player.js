@@ -89,20 +89,32 @@ function formatTrackName(track, i, fallbackPrefix) {
 
 function getAudioTracks(video) {
   if (!video) return [];
-  if (video.audioTracks && video.audioTracks.length > 0) {
-    return Array.from(video.audioTracks);
-  }
-  if (video.webkitAudioTracks && video.webkitAudioTracks.length > 0) {
-    return Array.from(video.webkitAudioTracks);
-  }
+  try {
+    if (video.audioTracks && video.audioTracks.length > 0) {
+      return Array.from(video.audioTracks);
+    }
+  } catch (_) {}
+  try {
+    if (video.webkitAudioTracks && video.webkitAudioTracks.length > 0) {
+      return Array.from(video.webkitAudioTracks);
+    }
+  } catch (_) {}
+  // ArtPlayer / algunos motores exponen pistas en el propio player
+  try {
+    if (video._artplayer?.audioTracks?.length) {
+      return Array.from(video._artplayer.audioTracks);
+    }
+  } catch (_) {}
   return [];
 }
 
 function getTextTracks(video) {
   if (!video) return [];
-  if (video.textTracks && video.textTracks.length > 0) {
-    return Array.from(video.textTracks).filter(t => t.kind !== "chapters");
-  }
+  try {
+    if (video.textTracks && video.textTracks.length > 0) {
+      return Array.from(video.textTracks).filter(t => t.kind !== "chapters" && t.kind !== "metadata");
+    }
+  } catch (_) {}
   return [];
 }
 
@@ -318,19 +330,6 @@ function openSubtitlesSelector(video, playerEl, returnFocusEl) {
   activeBtn?.focus();
 }
 
-function tryOpenVlc(url, container) {
-  if (!url) {
-    showToast(container, 'No hay enlace de streaming disponible para VLC');
-    return;
-  }
-  try {
-    const intentUrl = `intent:${url}#Intent;package=org.videolan.vlc;type=video/*;scheme=http;end`;
-    window.location.href = intentUrl;
-    showToast(container, 'Enviando a VLC…');
-  } catch (_) {
-    showToast(container, 'Telegram requiere streaming interno. Para VLC externo se necesita proxy HTTP.');
-  }
-}
 
 function setupDoubleTapSkip({ container, video, skipSeconds = 10 }) {
   if (!container || !video) return () => {};
@@ -449,13 +448,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
             <button class="player-ctrl-btn" id="pl-btn-subs" data-focusable title="Subtítulos">
               <svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
             </button>
-            <button class="player-ctrl-btn" id="pl-btn-fs" data-focusable title="Pantalla completa">
-              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-            </button>
-            <button class="player-ctrl-btn" id="pl-btn-vlc" data-focusable title="Abrir en VLC">
-              <svg viewBox="0 0 24 24"><path d="M12 2L9.5 9h5L12 2zm-4 8L6 16h12l-2-6H8zm-3 7L3 21h18l-2-4H5z"/></svg>
-            </button>
-          </div>
+</div>
         </div>
       </div>
 
@@ -646,17 +639,6 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     showOsd();
   };
 
-  mount.querySelector('#pl-btn-fs').onclick = () => {
-    if (video.webkitSupportsFullscreen) {
-      try { video.webkitEnterFullscreen(); } catch (_) { goFullscreen(); }
-    } else {
-      if (document.fullscreenElement || document.webkitFullscreenElement) {
-        exitFullscreen();
-      } else {
-        goFullscreen();
-      }
-    }
-  };
 
   const updateNativeTrackLabels = () => {
     const audios = getAudioTracks(video);
@@ -679,10 +661,6 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     video.audioTracks.addEventListener('change', updateNativeTrackLabels);
   }
 
-  mount.querySelector('#pl-btn-vlc').onclick = () => {
-    tryOpenVlc(url, playerEl);
-    showOsd();
-  };
 
   scrubber.onclick = (e) => {
     const rect = scrubber.getBoundingClientRect();
@@ -1070,13 +1048,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
             <button class="player-ctrl-btn" id="pl-btn-subs" data-focusable title="Subtítulos">
               <svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
             </button>
-            <button class="player-ctrl-btn" id="pl-btn-fs" data-focusable title="Pantalla completa">
-              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-            </button>
-            <button class="player-ctrl-btn" id="pl-btn-vlc" data-focusable title="Abrir en VLC">
-              <svg viewBox="0 0 24 24"><path d="M12 2L9.5 9h5L12 2zm-4 8L6 16h12l-2-6H8zm-3 7L3 21h18l-2-4H5z"/></svg>
-            </button>
-          </div>
+</div>
         </div>
       </div>
 
@@ -1260,19 +1232,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     }
   };
 
-  mount.querySelector('#pl-btn-fs').onclick = () => {
-    const v = art?.template?.$video;
-    if (v?.webkitSupportsFullscreen) {
-      try { v.webkitEnterFullscreen(); } catch (_) { if (art) art.fullscreen = !art.fullscreen; }
-    } else if (art) {
-      art.fullscreen = !art.fullscreen;
-    }
-  };
 
-  mount.querySelector('#pl-btn-vlc').onclick = () => {
-    tryOpenVlc(url, playerEl);
-    showOsd();
-  };
 
   scrubber.onclick = (e) => {
     const rect = scrubber.getBoundingClientRect();
