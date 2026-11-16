@@ -78,10 +78,10 @@ function profileSettings(profile, sync, onChanged) {
     <form class="profile-settings-form">
       <div class="settings-fields">
         <label>Nombre
-          <input name="name" value="${esc(profile.name)}" required maxlength="60">
+          <input name="name" value="${esc(profile.name)}" required maxlength="60" data-focusable>
         </label>
         <label>Avatar
-          <select name="avatar">
+          <select name="avatar" data-focusable>
             ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
           </select>
         </label>
@@ -90,14 +90,14 @@ function profileSettings(profile, sync, onChanged) {
       <fieldset class="settings-section">
         <legend class="settings-legend">Reproductor</legend>
         <div class="settings-radios">
-          <label class="settings-radio-label" data-focusable>
+          <label class="settings-radio-label ${currentPlayer !== 'native' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer !== 'native'}">
             <input type="radio" name="player" value="artplayer" ${currentPlayer !== 'native' ? 'checked' : ''}>
             <div class="settings-radio-info">
               <strong>ArtPlayer</strong>
               <small>Diseño cinemático, gestos táctiles, proporción, subtítulos y velocidad.</small>
             </div>
           </label>
-          <label class="settings-radio-label" data-focusable>
+          <label class="settings-radio-label ${currentPlayer === 'native' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'native'}">
             <input type="radio" name="player" value="native" ${currentPlayer === 'native' ? 'checked' : ''}>
             <div class="settings-radio-info">
               <strong>Reproductor nativo</strong>
@@ -123,6 +123,28 @@ function profileSettings(profile, sync, onChanged) {
       <button class="btn" data-focusable type="submit">Guardar</button>
     </form>
   `);
+
+  overlay.querySelectorAll('.settings-radio-label').forEach(label => {
+    const radio = label.querySelector('input[type="radio"]');
+    const updateRadios = () => {
+      if (radio) {
+        radio.checked = true;
+        overlay.querySelectorAll('.settings-radio-label').forEach(l => {
+          const r = l.querySelector('input[type="radio"]');
+          const isCh = Boolean(r?.checked);
+          l.setAttribute('aria-checked', String(isCh));
+          l.classList.toggle('is-checked', isCh);
+        });
+      }
+    };
+    label.addEventListener('click', updateRadios);
+    label.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        updateRadios();
+      }
+    });
+  });
 
   overlay.querySelector('form').onsubmit = async e => {
     e.preventDefault();
@@ -164,7 +186,7 @@ function globalSettings(sync, onChanged, libraryTitles = []) {
         <legend class="settings-legend">Metadatos (TMDB)</legend>
         <p class="settings-hint">${status}</p>
         <label>Clave de TMDB
-          <input name="apiKey" type="password" autocomplete="off" placeholder="${ownKey ? 'Nueva clave (dejar vacío para conservar)' : 'API Key o token de lectura'}">
+          <input name="apiKey" type="password" autocomplete="off" data-focusable placeholder="${ownKey ? 'Nueva clave (dejar vacío para conservar)' : 'API Key o token de lectura'}">
         </label>
         ${ownKey ? `<button class="btn-ghost btn-sm" data-focusable type="button" id="reset-tmdb">${demoAvailable ? 'Usar clave demo' : 'Eliminar clave personalizada'}</button>` : ''}
       </fieldset>
@@ -173,7 +195,7 @@ function globalSettings(sync, onChanged, libraryTitles = []) {
         <legend class="settings-legend">Caché de portadas</legend>
         <p class="settings-hint">Almacena las carátulas en el dispositivo para no descargarlas continuamente.</p>
         <label>Límite de espacio en megas (MB)
-          <input name="cacheMaxMb" type="number" min="10" max="2000" step="10" value="${currentMaxMb}">
+          <input name="cacheMaxMb" type="number" min="10" max="2000" step="10" value="${currentMaxMb}" data-focusable>
         </label>
         <div class="cache-stats-box" id="cache-stats">
           <span>Calculando espacio de caché…</span>
