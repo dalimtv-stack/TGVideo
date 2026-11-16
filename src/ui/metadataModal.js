@@ -1,3 +1,5 @@
+// src/ui/metadataModal.js
+import { Api } from 'telegram';
 import { modal } from './settings.js';
 import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata, enrichTitle, fetchTmdbFullDetails } from '../metadata/tmdb.js';
 import { buildStandardCaption } from '../library/parse.js';
@@ -118,16 +120,18 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
           btn.disabled = true;
           status.textContent = `Aplicando "${selected.name}"…`;
 
-          // Precalentar póster en caché local inmediatamente
+          // Precalentar póster en navegador
           if (selected.poster) {
-            loadPoster(selected.poster).catch(() => {});
+            try {
+              const img = new Image();
+              img.src = selected.poster;
+            } catch (_) {}
           }
 
-          // Asignar al objeto de título
+          // Asignar metadatos básicos de inmediato
           title.metadata = selected;
           title.tmdbId = selected.id;
 
-          // Si es película o serie, asociar también los metadatos a sus archivos
           if (title.archivos && !title.isSaga) {
             for (const f of title.archivos) {
               f.metadata = selected;
@@ -135,21 +139,25 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
             }
           }
 
-          // Guardar localmente en segundo plano: la ficha no debe quedarse bloqueada.
-          setManualMetadata(title, selected).catch(() => {});
-          onUpdated?.(selected);
+          // Guardar localmente y actualizar vista
+          await setManualMetadata(title, selected).catch(() => {});
+          try { onUpdated?.(selected); } catch (e) { console.warn('[metadataModal] onUpdated error', e); }
           close();
 
-          // Enriquecimiento completo y sincronización con Telegram en segundo plano
+          // Enriquecimiento completo de metadatos y edición del caption en Telegram
           (async () => {
             try {
               const full = await fetchTmdbFullDetails(selected.type, selected.id);
-              Object.assign(selected, full);
-              if (full.runtime && !title.metadata.runtime) {
-                title.metadata.runtime = full.runtime;
+              if (full) {
+                Object.assign(selected, full);
+                if (full.runtime && !title.metadata.runtime) {
+                  title.metadata.runtime = full.runtime;
+                }
+                await setManualMetadata(title, selected).catch(() => {});
               }
-              await setManualMetadata(title, selected).catch(() => {});
-            } catch (_) {}
+            } catch (err) {
+              console.warn('[metadataModal] Error obteniendo detalles TMDB:', err);
+            }
 
             if (client && peerOf) {
               try {
@@ -160,27 +168,33 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
                   for (const file of files) {
                     if (!file.messageId) continue;
                     try {
-                      const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
-                      if (msg && !msg.fwdFrom) {
-                        const newCap = buildStandardCaption({
-                          fileName: file.fileName || file.label,
-                          section: file.section || title.origen?.seccion || null,
-                          tmdbId: selected.id,
-                          imdbId: selected.imdbId || '',
-                          director: selected.director || '',
-                          writer: selected.writer || '',
-                          cast: selected.cast || '',
-                          rating: selected.rating || '',
-                          ageRating: selected.ageRating || '',
-                          synopsis: selected.overview || '',
-                        });
-                        await client.editMessage(peer, {
-                          message: file.messageId,
-                          text: newCap,
-                        });
-                      }
+                      const newCap = buildStandardCaption({
+                        fileName: file.fileName || file.label,
+                        section: file.section || title.origen?.seccion || null,
+                        tmdbId: selected.id,
+                        imdbId: selected.imdbId || '',
+                        director: selected.director || '',
+                        writer: selected.writer || '',
+                        cast: selected.cast || '',
+                        rating: selected.rating || '',
+                        ageRating: selected.ageRating || '',
+                        synopsis: selected.overview || '',
+                      });
+
+                      // EditMessage al estilo TGComic con Api.messages.EditMessage
+                      await client.invoke(new Api.messages.EditMessage({
+                        peer,
+                        id: Number(file.messageId),
+                        message: String(newCap || ''),
+                      }));
+
+                      file.caption = newCap;
+                      if (!file.synopsis) file.synopsis = selected.overview || null;
                     } catch (mErr) {
-                      console.warn('[metadataModal] Error al editar mensaje:', file.messageId, mErr);
+                      const em = String(mErr?.errorMessage || mErr?.message || mErr || '');
+                      if (!/MESSAGE_NOT_MODIFIED/i.test(em)) {
+                        console.warn('[metadataModal] Error al editar mensaje:', file.messageId, mErr);
+                      }
                     }
                   }
                 }
@@ -188,7 +202,7 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
                 console.warn('[metadataModal] Error actualizando caption en Telegram:', tgErr);
               }
             }
-          })().catch(() => {});
+          })().catch(e => console.warn('[metadataModal] Error en guardado en segundo plano:', e));
         };
       });
 
