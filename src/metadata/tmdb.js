@@ -112,9 +112,10 @@ export async function fetchTmdbFullDetails(type, id, signal) {
       cast,
       imdbId,
       ageRating,
-      rating: data.vote_average ? data.vote_average.toFixed(1) : '',
+      rating: data.vote_average != null ? Number(data.vote_average) : 0,
       overview: data.overview || '',
     };
+
   } catch (e) {
     console.warn('[tmdb] Error fetching full details:', e);
     return {};
