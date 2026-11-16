@@ -155,34 +155,145 @@ function move(dir) {
     }
   }
 
-  // 3. Si está en el selector de temporadas (.seasons-track)
-  const curSeasons = cur.closest('.seasons-track');
-  if (curSeasons) {
-    const sItems = [...curSeasons.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
-    const sIdx = sItems.indexOf(cur);
-    if (dir === 'left' && sIdx > 0) {
-      sItems[sIdx - 1].focus();
-      sItems[sIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-      return;
-    }
-    if (dir === 'right' && sIdx !== -1 && sIdx < sItems.length - 1) {
-      sItems[sIdx + 1].focus();
-      sItems[sIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-      return;
-    }
-    if (dir === 'down') {
-      const firstEp = document.querySelector('#ep-list .ep[data-focusable]');
-      if (firstEp) {
-        firstEp.focus();
-        firstEp.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  // 3. Si está dentro de la ficha de detalle (.detail)
+  const detailScreen = cur.closest('.detail');
+  if (detailScreen && !scope.matches('.settings-overlay')) {
+    // 3.1 Barra superior (#d-back, #d-fix-meta)
+    if (cur.id === 'd-back') {
+      if (dir === 'right') {
+        detailScreen.querySelector('#d-fix-meta')?.focus();
+        return;
+      }
+      if (dir === 'down') {
+        const syn = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
+        const play = detailScreen.querySelector('#d-play');
+        const target = syn || play;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
       }
       return;
     }
-    if (dir === 'up') {
-      const playBtn = document.querySelector('#d-play');
-      if (playBtn) {
-        playBtn.focus();
-        playBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+
+    if (cur.id === 'd-fix-meta') {
+      if (dir === 'left') {
+        detailScreen.querySelector('#d-back')?.focus();
+        return;
+      }
+      if (dir === 'down') {
+        const syn = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
+        const play = detailScreen.querySelector('#d-play');
+        const target = syn || play;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      return;
+    }
+
+    // 3.2 Botón de sinopsis "más" / "menos" (.btn-syn-toggle)
+    if (cur.matches('.btn-syn-toggle')) {
+      if (dir === 'up') {
+        detailScreen.querySelector('#d-back')?.focus();
+        return;
+      }
+      if (dir === 'down') {
+        const play = detailScreen.querySelector('#d-play');
+        if (play) {
+          play.focus();
+          play.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      return;
+    }
+
+    // 3.3 Botón de Reproducir / Continuar (#d-play)
+    if (cur.id === 'd-play') {
+      if (dir === 'up') {
+        const syn = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
+        const back = detailScreen.querySelector('#d-back');
+        const target = syn || back;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'down') {
+        const seasonActive = detailScreen.querySelector('.seasons-track .season-btn.active') || detailScreen.querySelector('.seasons-track .season-btn');
+        const firstEp = detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        const target = seasonActive || firstEp;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      return;
+    }
+
+    // 3.4 Temporadas (.seasons-track)
+    const curSeasons = cur.closest('.seasons-track');
+    if (curSeasons) {
+      const sItems = [...curSeasons.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+      const sIdx = sItems.indexOf(cur);
+      if (dir === 'left' && sIdx > 0) {
+        sItems[sIdx - 1].focus();
+        sItems[sIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        return;
+      }
+      if (dir === 'right' && sIdx !== -1 && sIdx < sItems.length - 1) {
+        sItems[sIdx + 1].focus();
+        sItems[sIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        return;
+      }
+      if (dir === 'down') {
+        const firstEp = detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        if (firstEp) {
+          firstEp.focus();
+          firstEp.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'up') {
+        const playBtn = detailScreen.querySelector('#d-play');
+        if (playBtn) {
+          playBtn.focus();
+          playBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+    }
+
+    // 3.5 Lista de episodios (#ep-list)
+    const curEpList = cur.closest('#ep-list');
+    if (curEpList) {
+      const epItems = [...curEpList.querySelectorAll('.ep[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+      const epIdx = epItems.indexOf(cur);
+      if (dir === 'up') {
+        if (epIdx > 0) {
+          epItems[epIdx - 1].focus();
+          epItems[epIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        } else {
+          const seasonBtn = detailScreen.querySelector('.seasons-track .season-btn.active') || detailScreen.querySelector('#d-play');
+          if (seasonBtn) {
+            seasonBtn.focus();
+            seasonBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+          }
+        }
+        return;
+      }
+      if (dir === 'down') {
+        if (epIdx !== -1 && epIdx < epItems.length - 1) {
+          epItems[epIdx + 1].focus();
+          epItems[epIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
       }
       return;
     }
