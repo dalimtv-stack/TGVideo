@@ -100,6 +100,9 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
         return;
       }
       status.textContent = `Se encontraron ${results.length} resultado(s):`;
+      const numRating = Number(r.rating);
+      const ratingBadge = Number.isFinite(numRating) && numRating > 0 ? `· ★ ${numRating.toFixed(1)}` : '';
+
       resultsContainer.innerHTML = results.map(r => `
         <div class="meta-result-card" data-id="${r.id}">
           <div class="meta-result-poster">
@@ -107,7 +110,7 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
           </div>
           <div class="meta-result-info">
             <div class="meta-result-title">${esc(r.name)} <span class="meta-result-year">(${esc(r.date?.slice(0, 4) || 's/f')})</span></div>
-            <div class="meta-result-id">TMDB #${r.id} ${r.rating ? `· ★ ${r.rating.toFixed(1)}` : ''}</div>
+            <div class="meta-result-id">TMDB #${r.id} ${ratingBadge}` : ''}</div>
             <p class="meta-result-overview">${esc(r.overview ? r.overview.slice(0, 160) + '…' : 'Sin sinopsis disponible.')}</p>
             <button class="btn btn-sm btn-select-meta" data-focusable type="button">Seleccionar esta</button>
           </div>
