@@ -450,12 +450,60 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     }
   };
 
+  let pendingSeekTime = null;
+  let seekDebounceTimer = null;
+
+  const applyPendingSeek = () => {
+    if (pendingSeekTime !== null) {
+      const target = pendingSeekTime;
+      pendingSeekTime = null;
+      video.currentTime = target;
+    }
+  };
+
+  const stepScrubber = (delta) => {
+    const dur = video.duration || 0;
+    if (!dur) return;
+    const current = pendingSeekTime !== null ? pendingSeekTime : (video.currentTime || 0);
+    const target = Math.max(0, Math.min(dur, current + delta));
+    pendingSeekTime = target;
+
+    timeCur.textContent = formatTime(target);
+    scrubberFill.style.width = `${Math.min(100, (target / dur) * 100)}%`;
+    showToast(playerEl, `⏱ ${formatTime(target)}`);
+    showOsd();
+
+    clearTimeout(seekDebounceTimer);
+    seekDebounceTimer = setTimeout(() => {
+      applyPendingSeek();
+    }, 1000);
+  };
+
+  scrubber.addEventListener('focus', () => scrubber.classList.add('dpad-focused'));
+  scrubber.addEventListener('blur', () => {
+    scrubber.classList.remove('dpad-focused');
+    if (pendingSeekTime !== null) {
+      clearTimeout(seekDebounceTimer);
+      applyPendingSeek();
+    }
+  });
+
   // Controlador TV para D-Pad / Mando Fire TV
   const tvController = {
     close: () => close(),
     onLeft: () => {
+      if (osd.classList.contains('is-hidden')) {
+        video.currentTime = Math.max(0, (video.currentTime || 0) - skipSeconds);
+        showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(video.currentTime)})`);
+        return;
+      }
+
       if (document.activeElement?.id === 'pl-badge-toggle') {
         mount.querySelector('#pl-btn-back')?.focus();
+        showOsd();
+        return;
+      }
+      if (document.activeElement?.id === 'pl-btn-back') {
         showOsd();
         return;
       }
@@ -466,15 +514,13 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         const idx = btns.indexOf(document.activeElement);
         if (idx > 0) {
           btns[idx - 1].focus();
-          showOsd();
-          return;
         }
+        showOsd();
+        return;
       }
 
       if (document.activeElement === scrubber) {
-        video.currentTime = Math.max(0, (video.currentTime || 0) - 30);
-        showToast(playerEl, `⏪ -30s (${formatTime(video.currentTime)})`);
-        showOsd();
+        stepScrubber(-skipSeconds);
         return;
       }
 
@@ -483,8 +529,18 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       showOsd();
     },
     onRight: () => {
+      if (osd.classList.contains('is-hidden')) {
+        video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + skipSeconds);
+        showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(video.currentTime)})`);
+        return;
+      }
+
       if (document.activeElement?.id === 'pl-btn-back') {
         mount.querySelector('#pl-badge-toggle')?.focus();
+        showOsd();
+        return;
+      }
+      if (document.activeElement?.id === 'pl-badge-toggle') {
         showOsd();
         return;
       }
@@ -495,15 +551,13 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         const idx = btns.indexOf(document.activeElement);
         if (idx !== -1 && idx < btns.length - 1) {
           btns[idx + 1].focus();
-          showOsd();
-          return;
         }
+        showOsd();
+        return;
       }
 
       if (document.activeElement === scrubber) {
-        video.currentTime = Math.min(video.duration || Infinity, (video.currentTime || 0) + 30);
-        showToast(playerEl, `⏩ +30s (${formatTime(video.currentTime)})`);
-        showOsd();
+        stepScrubber(skipSeconds);
         return;
       }
 
@@ -540,8 +594,10 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         scrubber.focus();
       } else if (cur === scrubber) {
         mount.querySelector('#pl-btn-playpause')?.focus();
-      } else {
+      } else if (cur?.classList.contains('player-ctrl-btn')) {
         hideOsd();
+      } else {
+        scrubber.focus();
       }
     },
     onSelect: () => {
@@ -554,6 +610,10 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       }
 
       if (document.activeElement === scrubber) {
+        if (pendingSeekTime !== null) {
+          clearTimeout(seekDebounceTimer);
+          applyPendingSeek();
+        }
         if (video.paused) video.play(); else video.pause();
         showOsd();
         return;
@@ -630,6 +690,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     let audioOnlyChecked = false;
 
     video.addEventListener('timeupdate', () => {
+      if (pendingSeekTime !== null) return;
       timeCur.textContent = formatTime(video.currentTime);
       if (video.duration) {
         scrubberFill.style.width = `${Math.min(100, (video.currentTime / video.duration) * 100)}%`;
@@ -913,12 +974,62 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     }
   };
 
+  let pendingSeekTime = null;
+  let seekDebounceTimer = null;
+
+  const applyPendingSeek = () => {
+    if (pendingSeekTime !== null && art) {
+      const target = pendingSeekTime;
+      pendingSeekTime = null;
+      art.currentTime = target;
+    }
+  };
+
+  const stepScrubber = (delta) => {
+    const dur = art?.duration || 0;
+    if (!dur) return;
+    const current = pendingSeekTime !== null ? pendingSeekTime : (art?.currentTime || 0);
+    const target = Math.max(0, Math.min(dur, current + delta));
+    pendingSeekTime = target;
+
+    timeCur.textContent = formatTime(target);
+    scrubberFill.style.width = `${Math.min(100, (target / dur) * 100)}%`;
+    showToast(playerEl, `⏱ ${formatTime(target)}`);
+    showOsd();
+
+    clearTimeout(seekDebounceTimer);
+    seekDebounceTimer = setTimeout(() => {
+      applyPendingSeek();
+    }, 1000);
+  };
+
+  scrubber.addEventListener('focus', () => scrubber.classList.add('dpad-focused'));
+  scrubber.addEventListener('blur', () => {
+    scrubber.classList.remove('dpad-focused');
+    if (pendingSeekTime !== null) {
+      clearTimeout(seekDebounceTimer);
+      applyPendingSeek();
+    }
+  });
+
   // Controlador TV para D-Pad / Mando Fire TV
   const tvController = {
     close: () => close(),
     onLeft: () => {
+      if (osd.classList.contains('is-hidden')) {
+        if (art) {
+          art.currentTime = Math.max(0, art.currentTime - skipSeconds);
+          showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(art.currentTime)})`);
+        }
+        return;
+      }
+
       if (document.activeElement?.id === 'pl-badge-toggle') {
         mount.querySelector('#pl-btn-back')?.focus();
+        showOsd();
+        return;
+      }
+      if (document.activeElement?.id === 'pl-btn-back') {
         showOsd();
         return;
       }
@@ -929,15 +1040,13 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
         const idx = btns.indexOf(document.activeElement);
         if (idx > 0) {
           btns[idx - 1].focus();
-          showOsd();
-          return;
         }
+        showOsd();
+        return;
       }
 
       if (document.activeElement === scrubber && art) {
-        art.currentTime = Math.max(0, art.currentTime - 30);
-        showToast(playerEl, `⏪ -30s (${formatTime(art.currentTime)})`);
-        showOsd();
+        stepScrubber(-skipSeconds);
         return;
       }
 
@@ -948,8 +1057,20 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       }
     },
     onRight: () => {
+      if (osd.classList.contains('is-hidden')) {
+        if (art) {
+          art.currentTime = Math.min(art.duration || Infinity, art.currentTime + skipSeconds);
+          showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(art.currentTime)})`);
+        }
+        return;
+      }
+
       if (document.activeElement?.id === 'pl-btn-back') {
         mount.querySelector('#pl-badge-toggle')?.focus();
+        showOsd();
+        return;
+      }
+      if (document.activeElement?.id === 'pl-badge-toggle') {
         showOsd();
         return;
       }
@@ -960,15 +1081,13 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
         const idx = btns.indexOf(document.activeElement);
         if (idx !== -1 && idx < btns.length - 1) {
           btns[idx + 1].focus();
-          showOsd();
-          return;
         }
+        showOsd();
+        return;
       }
 
       if (document.activeElement === scrubber && art) {
-        art.currentTime = Math.min(art.duration || Infinity, art.currentTime + 30);
-        showToast(playerEl, `⏩ +30s (${formatTime(art.currentTime)})`);
-        showOsd();
+        stepScrubber(skipSeconds);
         return;
       }
 
@@ -1007,8 +1126,10 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
         scrubber.focus();
       } else if (cur === scrubber) {
         mount.querySelector('#pl-btn-playpause')?.focus();
-      } else {
+      } else if (cur?.classList.contains('player-ctrl-btn')) {
         hideOsd();
+      } else {
+        scrubber.focus();
       }
     },
     onSelect: () => {
@@ -1023,6 +1144,10 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       }
 
       if (document.activeElement === scrubber) {
+        if (pendingSeekTime !== null) {
+          clearTimeout(seekDebounceTimer);
+          applyPendingSeek();
+        }
         if (art) {
           if (art.template.$video.paused) art.play(); else art.pause();
           showOsd();
@@ -1149,6 +1274,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     });
 
     art.on('video:timeupdate', () => {
+      if (pendingSeekTime !== null) return;
       timeCur.textContent = formatTime(art.currentTime);
       if (art.duration) {
         scrubberFill.style.width = `${Math.min(100, (art.currentTime / art.duration) * 100)}%`;
