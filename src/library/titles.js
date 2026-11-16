@@ -17,10 +17,10 @@ async function scanFiles(client, peer, ch) {
     const doc = msg.document || msg.media?.document;
     const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
     files.push({
-      key: `${ch.id}:${msg.id}`, channelId: ch.id, messageId: msg.id,
+      key: `${ch.id}:${msg.id}`, channelId: String(ch.id), messageId: msg.id,
       channel: ch,
       fileName, label: prettyName(fileName), section: cap.section || null,
-      synopsis: cap.synopsis || null, tmdbId: cap.tmdbId || null,
+      synopsis: cap.synopsis || null, tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null,
       season: ep.season, episode: ep.episode,
       size: Number(doc?.size?.toString?.() || doc?.size || 0),
       duration: durAttr?.duration || 0, mimeType: doc?.mimeType || 'video/mp4', date: msg.date,
@@ -38,8 +38,8 @@ function makeTitle({ id, ch, name, origen, seccion, files }) {
   const tipo = ch.category === 'Películas' ? 'pelicula' : 'serie';
   sortFiles(files, tipo);
   return {
-    id, tipo, grupo: ch.group, nombre: name,
-    origen: { tipo: origen, channelId: ch.id, seccion: seccion || null },
+    id: String(id), tipo, grupo: ch.group, nombre: name,
+    origen: { tipo: origen, channelId: String(ch.id), seccion: seccion || null },
     channel: ch, archivos: files,
     ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
     tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
@@ -66,6 +66,50 @@ function normalizeMovieKey(str) {
     .replace(/[^a-z0-9]/g, '');
 }
 
+/**
+ * Agrupa películas con el mismo ID de TMDB en una sola ficha de biblioteca,
+ * consolidando todas sus versiones de vídeo en el array `archivos`.
+ */
+export function mergeMoviesByTmdb(titles) {
+  if (!Array.isArray(titles)) return [];
+  const result = [];
+  const movieTmdbMap = new Map(); // tmdbId -> index in result
+
+  for (const t of titles) {
+    if (t.tipo !== 'pelicula' || t.isSaga) {
+      result.push(t);
+      continue;
+    }
+
+    const rawTmdbId = t.metadata?.id || t.tmdbId;
+    if (!rawTmdbId) {
+      result.push(t);
+      continue;
+    }
+
+    const tmdbKey = String(rawTmdbId);
+    if (!movieTmdbMap.has(tmdbKey)) {
+      movieTmdbMap.set(tmdbKey, result.length);
+      result.push(t);
+    } else {
+      const existing = result[movieTmdbMap.get(tmdbKey)];
+      const existingKeys = new Set(existing.archivos.map(f => f.key));
+      for (const f of t.archivos) {
+        if (!existingKeys.has(f.key)) {
+          existing.archivos.push(f);
+          existingKeys.add(f.key);
+        }
+      }
+      existing.ultimoMensajeFecha = Math.max(existing.ultimoMensajeFecha || 0, t.ultimoMensajeFecha || 0);
+      if (!existing.metadata && t.metadata) existing.metadata = t.metadata;
+      if (!existing.tmdbId && tmdbKey) existing.tmdbId = tmdbKey;
+      sortFiles(existing.archivos, 'pelicula');
+    }
+  }
+
+  return result;
+}
+
 /** cache: { [channelId]: { top, title, files } } */
 export async function buildTitles(client, channels, peerOf, onProgress, cache = {}) {
   const titles = [];
@@ -85,6 +129,12 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       catch (e) { console.warn('[titles] no se pudo leer', ch.title, e); }
     }
     newCache[ch.id] = { top: ch.top, title: ch.title, files: files.map(f => ({ ...f })) };
+
+    // Filtro: NO mostrar canales vacíos en TGVideo
+    if (!files || files.length === 0) {
+      onProgress?.(++done, channels.length);
+      return;
+    }
 
     if (ch.isYearContainer) {
       // Un canal por año es un contenedor: agrupa múltiples versiones de la misma película en una sola ficha
@@ -111,14 +161,14 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
           }
         }
       }
-      const containerGroup = (YEAR_GROUP_RE.test(ch.group) ? ch.name : (ch.group || ch.name)) || grp.yearHint || 'Películas';
+      const containerGroup = (YEAR_GROUP_RE.test(ch.group) ? ch.name : (ch.group || ch.name)) || 'Películas';
       for (const grp of movieMap.values()) {
         sortFiles(grp.files, 'pelicula');
         titles.push({
-          id: grp.id, tipo: 'pelicula', isSaga: false,
+          id: String(grp.id), tipo: 'pelicula', isSaga: false,
           grupo: containerGroup,
           nombre: grp.nombre, yearHint: grp.yearHint,
-          origen: { tipo: 'año_container', channelId: ch.id, messageId: grp.files[0].messageId },
+          origen: { tipo: 'año_container', channelId: String(ch.id), messageId: grp.files[0].messageId },
           channel: ch, archivos: grp.files,
           ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date), 0),
           tmdbId: grp.tmdbId,
@@ -129,18 +179,23 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       const sagaFiles = files.map(f => ({ ...f, sagaName: movieName(f) }));
       titles.push({
         id: String(ch.id), tipo: 'pelicula', isSaga: true, grupo: ch.group || 'Sagas',
-        nombre: ch.name, origen: { tipo: 'saga', channelId: ch.id }, channel: ch,
+        nombre: ch.name, origen: { tipo: 'saga', channelId: String(ch.id) }, channel: ch,
         archivos: sagaFiles, ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
         tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
       });
     } else if (ch.macro) {
       for (const [sec, fs] of splitBySection(files)) {
-        titles.push(makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs }));
+        if (fs && fs.length > 0) {
+          titles.push(makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs }));
+        }
       }
     } else {
       titles.push(makeTitle({ id: ch.id, ch, name: ch.name, origen: 'dedicado', files }));
     }
     onProgress?.(++done, channels.length);
   }));
-  return { titles, cache: newCache };
+
+  // Consolidar películas con el mismo ID de TMDB detectado previamente
+  const finalTitles = mergeMoviesByTmdb(titles.filter(t => t.archivos && t.archivos.length > 0));
+  return { titles: finalTitles, cache: newCache };
 }
