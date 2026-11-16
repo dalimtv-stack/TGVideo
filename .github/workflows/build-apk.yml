@@ -67,26 +67,116 @@ jobs:
           fi
           npx cap sync android
 
+      - name: Prepare Android TV & Fire TV Icons, Splash and Manifest
+        run: |
+          python3 - << 'PYEOF'
+          import os, re
+          from PIL import Image
+
+          src_path = "public/icons/icon-512.png"
+          res_base = "android/app/src/main/res"
+
+          if os.path.exists(src_path):
+              print(f"Generando iconos y splash desde {src_path}...")
+              src = Image.open(src_path).convert("RGBA")
+
+              sizes = {
+                  "mipmap-mdpi": 48,
+                  "mipmap-hdpi": 72,
+                  "mipmap-xhdpi": 96,
+                  "mipmap-xxhdpi": 144,
+                  "mipmap-xxxhdpi": 192,
+              }
+
+              for folder, size in sizes.items():
+                  folder_path = os.path.join(res_base, folder)
+                  os.makedirs(folder_path, exist_ok=True)
+                  resized = src.resize((size, size), Image.Resampling.LANCZOS)
+                  for name in ["ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png"]:
+                      resized.save(os.path.join(folder_path, name))
+
+              drawable_path = os.path.join(res_base, "drawable")
+              os.makedirs(drawable_path, exist_ok=True)
+
+              # Banner Android TV / Fire TV (320x180)
+              banner = Image.new("RGBA", (320, 180), (20, 20, 20, 255))
+              icon_tv = src.resize((140, 140), Image.Resampling.LANCZOS)
+              offset = ((320 - 140) // 2, (180 - 140) // 2)
+              banner.paste(icon_tv, offset, icon_tv)
+              banner.save(os.path.join(drawable_path, "banner.png"))
+
+              # Reemplazar todos los splash.png de Capacitor para que nunca salga el logo de Capacitor
+              for root, dirs, files in os.walk(res_base):
+                  for file in files:
+                      if file.lower() == "splash.png":
+                          target_splash = os.path.join(root, file)
+                          try:
+                              with Image.open(target_splash) as existing:
+                                  w, h = existing.size
+                              splash_bg = Image.new("RGBA", (w, h), (20, 20, 20, 255))
+                              icon_size = min(w, h) // 3
+                              icon_splash = src.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+                              sp_offset = ((w - icon_size) // 2, (h - icon_size) // 2)
+                              splash_bg.paste(icon_splash, sp_offset, icon_splash)
+                              splash_bg.save(target_splash)
+                          except Exception as e:
+                              print(f"Error actualizando splash en {target_splash}: {e}")
+
+              print("Iconos, banner y splash screens actualizados.")
+
+          manifest_path = "android/app/src/main/AndroidManifest.xml"
+          if os.path.exists(manifest_path):
+              with open(manifest_path, "r", encoding="utf-8") as f:
+                  m = f.read()
+
+              if "android.software.leanback" not in m:
+                  m = re.sub(
+                      r'(<manifest[^>]*>)',
+                      r'\1\n    <uses-feature android:name="android.software.leanback" android:required="false" />\n    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />',
+                      m,
+                      count=1
+                  )
+
+              if 'android:banner=' not in m:
+                  m = re.sub(r'<application\b', '<application android:banner="@drawable/banner" android:isGame="false"', m, count=1)
+
+              if "LEANBACK_LAUNCHER" not in m:
+                  m = re.sub(
+                      r'(<category\s+android:name="android\.intent\.category\.LAUNCHER"\s*/>)',
+                      r'\1\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />',
+                      m,
+                      count=1
+                  )
+
+              with open(manifest_path, "w", encoding="utf-8") as f:
+                  f.write(m)
+              print("AndroidManifest.xml configurado para Leanback / Android TV.")
+          PYEOF
+
       - name: Setup Signing Key and Version
         env:
           RUN_NUMBER: ${{ github.run_number }}
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
+          mkdir -p android/app
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
-            echo "Keystore permanente cargado desde GitHub Secrets."
+            echo "Keystore cargado desde GitHub Secrets."
+          elif [ -f android/app/release.keystore ]; then
+            echo "Keystore existente encontrado en android/app/release.keystore."
           else
-            echo "Aviso: KEYSTORE_BASE64 no configurado en Secrets. Generando clave temporal."
-            keytool -genkeypair -v -keystore android/app/release.keystore -alias tgvideo -keyalg RSA -keysize 2048 -validity 10000 -storepass tgvideo1234 -keypass tgvideo1234 -dname "CN=TGVideo"
+            echo "Generando almacén de claves permanente..."
+            keytool -genkeypair -v -keystore android/app/release.keystore -alias tgvideo -keyalg RSA -keysize 2048 -validity 10000 -storepass tgvideo1234 -keypass tgvideo1234 -dname "CN=TGVideo, O=TGVideo, C=ES"
           fi
 
           python3 - << 'PYEOF'
           import os, re
           gradle_file = "android/app/build.gradle"
-          with open(gradle_file, "r", encoding="utf-8") as f:
-              content = f.read()
+          if os.path.exists(gradle_file):
+              with open(gradle_file, "r", encoding="utf-8") as f:
+                  content = f.read()
 
-          signing_block = """
+              signing_block = """
               signingConfigs {
                   release {
                       storeFile file('release.keystore')
@@ -101,35 +191,33 @@ jobs:
                       keyPassword 'tgvideo1234'
                   }
               }
-          """
-          if "signingConfigs {" not in content:
-              content = content.replace("buildTypes {", signing_block + "\n    buildTypes {")
+              """
+              if "signingConfigs {" not in content:
+                  content = content.replace("buildTypes {", signing_block + "\n    buildTypes {")
 
-          content = re.sub(r'buildTypes\s*\{\s*release\s*\{', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release', content)
-          content = re.sub(r'buildTypes\s*\{\s*debug\s*\{', 'buildTypes {\n        debug {\n            signingConfig signingConfigs.debug', content)
+              content = re.sub(r'buildTypes\s*\{\s*release\s*\{', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release', content)
+              content = re.sub(r'buildTypes\s*\{\s*debug\s*\{', 'buildTypes {\n        debug {\n            signingConfig signingConfigs.debug', content)
 
-          run_number = os.environ.get("RUN_NUMBER", "1")
-          content = re.sub(r'versionCode\s+\d+', f'versionCode {run_number}', content)
-          content = re.sub(r'versionName\s+"[^"]+"', f'versionName "1.0.{run_number}"', content)
+              run_number = os.environ.get("RUN_NUMBER", "1")
+              content = re.sub(r'versionCode\s+\d+', f'versionCode {run_number}', content)
+              content = re.sub(r'versionName\s+"[^"]+"', f'versionName "1.0.{run_number}"', content)
 
-          with open(gradle_file, "w", encoding="utf-8") as f:
-              f.write(content)
-          print(f"build.gradle actualizado: firma persistente aplicada y versionCode={run_number}")
+              with open(gradle_file, "w", encoding="utf-8") as f:
+                  f.write(content)
+              print(f"build.gradle actualizado: firma unificada aplicada y versionCode={run_number}")
           PYEOF
 
-      - name: Build APKs
+      - name: Build APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
           cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TGVideo.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tgvideo-apks
-          path: |
-            android/app/build/outputs/apk/release/TGVideo.apk
-            android/app/build/outputs/apk/debug/app-debug.apk
+          name: TGVideo-apk
+          path: android/app/build/outputs/apk/release/TGVideo.apk
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -141,5 +229,5 @@ jobs:
           gh release create "$TAG_NAME" \
             android/app/build/outputs/apk/release/TGVideo.apk \
             --title "TGVideo $TAG_NAME" \
-            --notes "Nueva versión automática de TGVideo. Firma fija para actualizar sin desinstalar." \
+            --notes "Versión oficial de TGVideo con firma fija y soporte Android TV." \
             --latest
