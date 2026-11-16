@@ -198,7 +198,7 @@ function cardHtml(t, progress) {
 
   return `
     <div class="lib-card" tabindex="0" data-focusable data-title="${esc(t.id)}">
-      <div class="lib-card-poster" style="--pc:${posterColor(t.grupo + t.nombre)}">
+      <div class="lib-card-poster ${posterUrl ? 'has-poster' : ''}" style="--pc:${posterColor(t.grupo + t.nombre)}">
         ${posterUrl ? `<img class="poster-image" src="${esc(localPoster)}" data-poster-url="${esc(posterUrl)}" alt="${esc(displayName)}" loading="lazy" onerror="this.onerror=null;this.remove();">` : ''}
         <span class="poster-group">${esc(t.grupo)}</span>
         <span class="poster-name">${esc(displayName)}</span>
