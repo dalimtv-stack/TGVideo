@@ -3,7 +3,7 @@ import './style.css';
 import { createTelegramClient } from './core/telegram.js';
 import { createTelegramSync } from './sync/telegramSync.js';
 import { loadLibrary } from './library/channels.js';
-import { buildTitles } from './library/titles.js';
+import { buildTitles, mergeMoviesByTmdb } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
 import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
 import { loadProgress, writeFullProgress, titleState } from './player/progress.js';
@@ -232,14 +232,103 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   return { titles, sig };
 }
 
+
+function showUpdateDialog({ onQuick, onFull }) {
+  const overlay = document.createElement("div");
+  overlay.className = "settings-overlay";
+  overlay.innerHTML = `
+    <div class="settings-modal update-modal" role="dialog" aria-label="Actualizar biblioteca">
+      <div class="settings-modal-header">
+        <h2 style="margin:0;font-size:1.3rem;">Actualizar biblioteca</h2>
+        <button class="settings-close-btn" data-focusable aria-label="Cerrar">✕</button>
+      </div>
+      <p style="color:#aaa;font-size:0.95rem;margin:0.5rem 0 1.2rem;">Selecciona el modo de actualización de canales y vídeos:</p>
+      <div class="update-options-list" style="display:flex;flex-direction:column;gap:0.8rem;">
+        <button class="btn btn-update-option" id="btn-update-quick" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
+          <div style="font-weight:700;font-size:1.05rem;color:#fff;">⚡ Actualización rápida</div>
+          <div style="font-size:0.85rem;color:#bbb;margin-top:0.25rem;">Comprueba únicamente canales con nuevos mensajes o vídeos desde la última lectura.</div>
+        </button>
+        <button class="btn btn-secondary btn-update-option" id="btn-update-full" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
+          <div style="font-weight:700;font-size:1.05rem;color:#fff;">🔄 Forzar actualización completa</div>
+          <div style="font-size:0.85rem;color:#bbb;margin-top:0.25rem;">Reescanea todos los canales desde cero y regenera la biblioteca entera.</div>
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector(".settings-close-btn").onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+  document.getElementById("btn-update-quick").onclick = () => { close(); onQuick(); };
+  document.getElementById("btn-update-full").onclick = () => { close(); onFull(); };
+
+  setTimeout(() => {
+    document.getElementById("btn-update-quick")?.focus();
+  }, 50);
+}
+
+function showGroupGrid(tg, sync, profile, row, { focusTitleId = null } = {}) {
+  applyProfileScale(profile);
+  const back = () => showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
+  setBackHandler(back);
+
+  const titles = TITLES_CACHE || [];
+  const progress = loadProgress(profile.id);
+  const currentItems = row.items.map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+
+  showScreen(`
+    <div class="screen grid-screen" data-grid-id="${esc(row.id)}">
+      <header class="grid-header">
+        <button class="btn-icon" data-focusable id="grid-btn-back" title="Volver al inicio" aria-label="Volver">←</button>
+        <div class="grid-header-info">
+          <h1>${esc(row.title)}</h1>
+          <span class="grid-count">${currentItems.length} ${currentItems.length === 1 ? "título" : "títulos"}</span>
+        </div>
+      </header>
+      <main class="grid-cards">
+        ${currentItems.map(t => cardHtml(t, progress)).join("")}
+      </main>
+    </div>`);
+
+  document.getElementById("grid-btn-back").onclick = back;
+
+  document.querySelectorAll("#app .grid-cards .lib-card").forEach(card => {
+    card.onclick = () => {
+      const t = currentItems.find(x => String(x.id) === String(card.dataset.title));
+      if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
+    };
+  });
+
+  document.querySelectorAll("#app .grid-cards .lib-card-poster img.poster-image").forEach(img => {
+    const url = img.getAttribute("data-poster-url") || img.src;
+    if (url) loadPoster(img, url);
+  });
+
+  setTimeout(() => {
+    let el = null;
+    if (focusTitleId) {
+      el = document.querySelector(`.grid-cards .lib-card[data-title="${focusTitleId}"]`);
+    }
+    if (!el) {
+      el = document.querySelector(".grid-cards .lib-card[data-focusable]") || document.getElementById("grid-btn-back");
+    }
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    }
+  }, 80);
+}
+
 let CHECKED = false;
-async function showHome(tg, sync, profile, { reload = false, focusTitleId = null } = {}) {
+async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false } = {}) {
   applyProfileScale(profile);
   setBackHandler(() => showProfileSelector(tg, sync));
   const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
   if (reload) {
-    showLoading('Actualizando biblioteca…');
-    try { TITLES_CACHE = (await refreshLibrary(tg, { force: true, onProgress })).titles; CHECKED = true; }
+    showLoading(force ? 'Reescaneando toda la biblioteca…' : 'Buscando nuevos vídeos…');
+    try { TITLES_CACHE = (await refreshLibrary(tg, { force, onProgress })).titles; CHECKED = true; }
     catch (err) { console.error('Error cargando biblioteca', err); TITLES_CACHE = TITLES_CACHE || []; }
   } else if (!TITLES_CACHE) {
     const saved = await kv.get(LIB_KEY).catch(() => null);
@@ -284,8 +373,13 @@ async function showHome(tg, sync, profile, { reload = false, focusTitleId = null
         <p>No se han encontrado canales de vídeo.</p>
         <p style="opacity:.6;margin-top:.5rem">Los canales deben terminar en <code>::Series::tgstorage</code> o <code>::Películas::tgstorage</code></p></div>`
     : rows.map(r => `
-      <section class="row"><h2 class="row-title">${esc(r.title)}</h2>
-        <div class="row-track">${r.items.map(t => cardHtml(t, progress)).join('')}</div></section>`).join('');
+      <section class="row" data-row-id="${esc(r.id)}">
+        <div class="row-header">
+          <button class="row-expand-btn btn-icon" data-focusable data-row-id="${esc(r.id)}" title="Ver todos en cuadrícula" aria-label="Ver todos ${esc(r.title)}">+</button>
+          <h2 class="row-title">${esc(r.title)}</h2>
+        </div>
+        <div class="row-track">${r.items.map(t => cardHtml(t, progress)).join('')}</div>
+      </section>`).join('');
 
   showScreen(`
     <div class="screen home-screen">
@@ -304,9 +398,28 @@ async function showHome(tg, sync, profile, { reload = false, focusTitleId = null
   document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
     onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
     onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
-  document.getElementById('btn-reload').onclick = () => showHome(tg, sync, profile, { reload: true });
-  document.querySelectorAll('.lib-card').forEach(card => {
-    card.onclick = () => { const t = titles.find(x => x.id === card.dataset.title); if (t) showDetail(tg, sync, profile, t); };
+  document.getElementById('btn-reload').onclick = () => {
+    showUpdateDialog({
+      onQuick: () => showHome(tg, sync, profile, { reload: true, force: false }),
+      onFull: () => showHome(tg, sync, profile, { reload: true, force: true }),
+    });
+  };
+
+  document.querySelectorAll('#app .row-expand-btn').forEach(btn => {
+    btn.onclick = () => {
+      const rowId = btn.dataset.rowId;
+      const r = rows.find(x => x.id === rowId);
+      if (r) showGroupGrid(tg, sync, profile, r);
+    };
+  });
+  document.querySelectorAll('#app .row').forEach(rowEl => {
+    const rowId = rowEl.dataset.rowId;
+    rowEl.querySelectorAll('.lib-card').forEach((card, idx) => {
+      card.onclick = () => {
+        const t = titles.find(x => String(x.id) === String(card.dataset.title));
+        if (t) showDetail(tg, sync, profile, t, { fromRowId: rowId, fromCardIndex: idx });
+      };
+    });
   });
   document.querySelectorAll('.lib-card-poster img.poster-image').forEach(img => {
     const url = img.getAttribute('data-poster-url') || img.src;
@@ -316,7 +429,16 @@ async function showHome(tg, sync, profile, { reload = false, focusTitleId = null
 
   setTimeout(() => {
     let el = null;
-    if (focusTitleId) {
+    if (focusRowId && focusExpandBtn) {
+      el = document.querySelector(`.row[data-row-id="${focusRowId}"] .row-expand-btn`);
+    } else if (focusRowId && focusTitleId) {
+      el = document.querySelector(`.row[data-row-id="${focusRowId}"] .lib-card[data-title="${focusTitleId}"]`);
+    }
+    if (!el && focusRowId && typeof focusCardIndex === "number") {
+      const row = document.querySelector(`.row[data-row-id="${focusRowId}"]`);
+      el = row?.querySelectorAll(".lib-card")?.[focusCardIndex];
+    }
+    if (!el && focusTitleId) {
       el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
     }
     if (!el) {
@@ -477,9 +599,15 @@ function applyDetailMetadata(t, profile) {
   }
 }
 
-function showDetail(tg, sync, profile, t) {
+function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = null, fromGrid = null } = {}) {
   LAST_OPENED_TITLE_ID = t.id;
-  const back = () => showHome(tg, sync, profile, { focusTitleId: t.id });
+  const back = () => {
+    if (fromGrid) {
+      showGroupGrid(tg, sync, profile, fromGrid, { focusTitleId: t.id });
+    } else {
+      showHome(tg, sync, profile, { focusTitleId: t.id, focusRowId: fromRowId, focusCardIndex: fromCardIndex });
+    }
+  };
   setBackHandler(back);
   const progress = loadProgress(profile.id);
   const st = titleState(t, progress);
@@ -547,8 +675,11 @@ function showDetail(tg, sync, profile, t) {
           f.metadata = updatedMeta;
         }
       }
+      if (TITLES_CACHE) {
+        TITLES_CACHE = mergeMoviesByTmdb(TITLES_CACHE);
+      }
       applyDetailMetadata(t, profile);
-      showDetail(tg, sync, profile, t);
+      showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid });
     }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
   };
 
@@ -557,7 +688,7 @@ function showDetail(tg, sync, profile, t) {
     setBackHandler(null);
     playFile({ client: tg.getClient(), peerOf: tg.peerOf, file: f, title: t, profile,
       resumeAt: p && !p.is_completed ? p.current_time : 0, mount: app,
-      onClose: () => showDetail(tg, sync, profile, t), sync });
+      onClose: () => showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid }), sync });
   };
 
   const renderEpisodes = (seasonNum) => {
@@ -577,7 +708,7 @@ function showDetail(tg, sync, profile, t) {
         ? (f.metadata?.name || f.sagaName || f.label)
         : t.tipo === 'serie'
           ? (f.metadata?.name || prettyEpisodeName(f.fileName || f.label, normalizedMovieName))
-          : (f.metadata?.name || normalizedMovieName || f.sagaName || f.label);
+          : (t.archivos.length > 1 ? (f.label || `Versión ${files.indexOf(f) + 1}`) : (f.metadata?.name || normalizedMovieName || f.sagaName || f.label));
       const sentAt = Number(f.date);
       const episodeDate = Number.isFinite(sentAt) && sentAt > 0
         ? new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(sentAt * 1000))
