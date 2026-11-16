@@ -837,9 +837,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
-    const isMkv = (doc?.mimeType || file.mimeType || file.mime || '').toLowerCase().includes('matroska')
-      || (file.fileName || file.label || '').toLowerCase().endsWith('.mkv');
-    const mime = isMkv ? 'video/webm' : (doc?.mimeType || file.mimeType || file.mime || 'video/mp4');
+    const mime = doc?.mimeType || file.mimeType || file.mime || 'video/mp4';
     if (size > 0 && await streamingAvailable()) {
       status.textContent = 'Abriendo túnel de streaming…';
       stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
@@ -1429,9 +1427,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
-    const isMkv = (doc?.mimeType || file.mimeType || file.mime || '').toLowerCase().includes('matroska')
-      || (file.fileName || file.label || '').toLowerCase().endsWith('.mkv');
-    const mime = isMkv ? 'video/webm' : (doc?.mimeType || file.mimeType || file.mime || 'video/mp4');
+    const mime = doc?.mimeType || file.mimeType || file.mime || 'video/mp4';
     if (size > 0 && await streamingAvailable()) {
       status.textContent = 'Abriendo túnel de streaming…';
       stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
