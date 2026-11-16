@@ -30,7 +30,9 @@ async function scanFiles(client, peer, ch) {
 }
 
 function sortFiles(files, tipo) {
-  if (tipo === 'pelicula') return files.sort((a, b) => b.date - a.date);
+  if (tipo === 'pelicula') {
+    return files.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
+  }
   return files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
 }
 
