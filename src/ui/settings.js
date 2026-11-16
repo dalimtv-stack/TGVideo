@@ -1,3 +1,4 @@
+// src/ui/settings.js
 import { getGlobalConfig, getTmdbKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
 import { loadProgress } from '../player/progress.js';
 import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../metadata/posterCache.js';
@@ -5,19 +6,21 @@ import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../m
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const UI_SCALE_LEVELS = [
+  { id: 'diminuto', label: 'Diminuto', scale: 0.72 },
   { id: 'muy-pequeno', label: 'Muy pequeño', scale: 0.82 },
   { id: 'pequeno', label: 'Pequeño', scale: 0.92 },
   { id: 'normal', label: 'Normal', scale: 1.0 },
   { id: 'grande', label: 'Grande (predeterminado)', scale: 1.12 },
   { id: 'muy-grande', label: 'Muy Grande', scale: 1.25 },
+  { id: 'gigante', label: 'Gigante', scale: 1.40 },
 ];
 
 export function applyProfileScale(profile) {
   const localScale = typeof localStorage !== 'undefined' && profile?.id
     ? localStorage.getItem(`tgvideo_scale_${profile.id}`)
     : null;
-  const rawIdx = Number(profile?.ui_scale ?? localScale ?? 3);
-  const validIdx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, isNaN(rawIdx) ? 3 : rawIdx));
+  const rawIdx = Number(profile?.ui_scale ?? localScale ?? 4);
+  const validIdx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, isNaN(rawIdx) ? 4 : rawIdx));
   const conf = UI_SCALE_LEVELS[validIdx];
   if (typeof document !== 'undefined') {
     document.documentElement.style.setProperty('--ui-scale', String(conf.scale));
@@ -153,13 +156,15 @@ function profileSettings(profile, sync, onChanged) {
               <span>Tamaño de portadas y letras:</span>
               <strong class="ui-scale-value" id="ui-scale-label">${currentScaleLabel}</strong>
             </div>
-            <input type="range" name="uiScale" class="settings-slider" min="0" max="4" step="1" value="${currentScaleIndex}" data-focusable>
+            <input type="range" name="uiScale" class="settings-slider" min="0" max="6" step="1" value="${currentScaleIndex}" data-focusable>
             <div class="ui-scale-ticks">
+              <span>Diminuto</span>
               <span>Muy pequeño</span>
               <span>Pequeño</span>
               <span>Normal</span>
               <span>Grande</span>
               <span>Muy Grande</span>
+              <span>Gigante</span>
             </div>
           </label>
         </div>
@@ -213,7 +218,7 @@ function profileSettings(profile, sync, onChanged) {
     if (!name) return;
     const player = form.elements.player?.value || 'artplayer';
     const skipSeconds = Number(form.elements.skipSeconds?.value) || 10;
-    const scaleIndex = Number(form.elements.uiScale?.value ?? 3);
+    const scaleIndex = Number(form.elements.uiScale?.value ?? 4);
 
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(`tgvideo_player_${profile.id}`, player);
