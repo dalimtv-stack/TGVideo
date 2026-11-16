@@ -19,6 +19,7 @@ html, body {
   --sab: env(safe-area-inset-bottom, 0px);
   --sal: env(safe-area-inset-left, 0px);
   --sar: env(safe-area-inset-right, 0px);
+  --ui-scale: 1.12;
 }
 
 html, body {
@@ -317,16 +318,18 @@ html, body {
 }
 
 .lib-card {
-  width: 140px;
+  width: calc(140px * var(--ui-scale, 1.12));
   cursor: pointer;
   outline: none;
   transition: transform 0.15s;
+  scroll-margin-left: 40px;
+  scroll-margin-right: 40px;
 }
 
 .lib-card-poster {
   position: relative;
-  width: 140px;
-  height: 200px;
+  width: calc(140px * var(--ui-scale, 1.12));
+  height: calc(200px * var(--ui-scale, 1.12));
   border-radius: 6px;
   display: flex;
   flex-direction: column;
@@ -451,20 +454,25 @@ html, body {
   transform: scale(1.15);
 }
 
-.ep:focus {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: #fff;
-  border-radius: 8px;
-  box-shadow: 0 0 16px rgba(255, 255, 255, 0.3);
-  outline: none;
+.ep:focus,
+.ep:focus-visible {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border-color: #fff !important;
+  border-radius: 8px !important;
+  outline: 3px solid #fff !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.6) !important;
 }
 
-.season-btn:focus {
-  background: rgba(255, 255, 255, 0.25);
-  border-color: #fff;
-  color: #fff;
-  border-radius: 6px;
-  outline: 2px solid #fff;
+.season-btn:focus,
+.season-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.3) !important;
+  border-color: #fff !important;
+  color: #fff !important;
+  border-radius: 6px !important;
+  outline: 3px solid #fff !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.6) !important;
 }
 
 .settings-dialog input:focus,
@@ -595,10 +603,13 @@ html, body {
   transition: background 0.15s, border-color 0.15s;
 }
 
-.ep:focus {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: #fff;
-  outline: none;
+.ep:focus,
+.ep:focus-visible {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border-color: #fff !important;
+  outline: 3px solid #fff !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.6) !important;
 }
 @media (hover: hover) and (pointer: fine) {
   .ep:hover {
@@ -828,11 +839,11 @@ html, body {
 
   .lib-card,
   .lib-card-poster {
-    width: 110px;
+    width: calc(110px * var(--ui-scale, 1.12));
   }
 
   .lib-card-poster {
-    height: 160px;
+    height: calc(160px * var(--ui-scale, 1.12));
   }
 
   .detail {
@@ -1741,4 +1752,47 @@ html, body {
   font-size: 0.9rem;
   text-align: center;
   font-style: italic;
+}
+
+/* ===== Selector de tamaño de portadas y fuentes por perfil ===== */
+.ui-scale-setting {
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ui-scale-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+  font-size: 0.95rem;
+}
+.ui-scale-value {
+  color: #e50914;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.settings-slider {
+  width: 100%;
+  accent-color: #e50914;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  outline: none;
+  margin: 0.4rem 0;
+}
+.settings-slider:focus,
+.settings-slider:focus-visible {
+  outline: 3px solid #fff !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.8);
+}
+.ui-scale-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: #888;
+  margin-top: 0.35rem;
+  user-select: none;
 }
