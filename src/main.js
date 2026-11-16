@@ -459,7 +459,12 @@ function applyDetailMetadata(t, profile) {
     }
   }
   const info = detail.querySelector('.detail-metadata');
-  if (info) info.textContent = [metadata.date?.slice(0, 4), metadata.rating ? `★ ${metadata.rating.toFixed(1)}` : ''].filter(Boolean).join(' · ');
+  if (info) {
+    const numRating = Number(metadata.rating);
+    const ratingStr = Number.isFinite(numRating) && numRating > 0 ? `★ ${numRating.toFixed(1)}` : '';
+    info.textContent = [metadata.date?.slice(0, 4), ratingStr].filter(Boolean).join(' · ');
+  }
+
 
   // Actualizar botón de reproducir con el nombre TMDB si está disponible
   const playBtn = detail.querySelector('#d-play');
