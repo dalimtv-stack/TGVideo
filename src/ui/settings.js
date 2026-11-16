@@ -3,6 +3,29 @@ import { loadProgress } from '../player/progress.js';
 import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../metadata/posterCache.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+export const UI_SCALE_LEVELS = [
+  { id: 'muy-pequeno', label: 'Muy pequeño', scale: 0.82 },
+  { id: 'pequeno', label: 'Pequeño', scale: 0.92 },
+  { id: 'normal', label: 'Normal', scale: 1.0 },
+  { id: 'grande', label: 'Grande (predeterminado)', scale: 1.12 },
+  { id: 'muy-grande', label: 'Muy Grande', scale: 1.25 },
+];
+
+export function applyProfileScale(profile) {
+  const localScale = typeof localStorage !== 'undefined' && profile?.id
+    ? localStorage.getItem(`tgvideo_scale_${profile.id}`)
+    : null;
+  const rawIdx = Number(profile?.ui_scale ?? localScale ?? 3);
+  const validIdx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, isNaN(rawIdx) ? 3 : rawIdx));
+  const conf = UI_SCALE_LEVELS[validIdx];
+  if (typeof document !== 'undefined') {
+    document.documentElement.style.setProperty('--ui-scale', String(conf.scale));
+    document.documentElement.setAttribute('data-ui-scale', conf.id);
+  }
+  return validIdx;
+}
+
 export function profileAvatar(profile) { return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(profile.avatar) ? profile.avatar : esc((profile.name || '?')[0].toUpperCase()); }
 
 export function modal(title, body, subtitle = '') {
@@ -43,6 +66,10 @@ export function modal(title, body, subtitle = '') {
         next.focus(); next.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
     } else if (['ArrowLeft', 'ArrowRight'].includes(e.key) && !isTextInput) {
+      if (document.activeElement?.type === 'range') {
+        // En sliders permitir que las flechas izquierda/derecha muevan el nivel sin saltar de input
+        return;
+      }
       const items = [...overlay.querySelectorAll('[data-focusable]')].filter(el => !el.disabled && el.offsetParent);
       const index = items.indexOf(document.activeElement);
       const delta = e.key === 'ArrowLeft' ? -1 : 1;
@@ -73,6 +100,8 @@ function profileSettings(profile, sync, onChanged) {
   const currentPlayer = profile.player || localPlayer || 'artplayer';
   const localSkip = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_skip_${profile.id}`) : null;
   const currentSkip = Number(profile.skip_seconds || localSkip || 10);
+  const currentScaleIndex = applyProfileScale(profile);
+  const currentScaleLabel = UI_SCALE_LEVELS[currentScaleIndex]?.label || 'Grande (predeterminado)';
 
   const { overlay, close } = modal('Ajustes de perfil', `
     <form class="profile-settings-form">
@@ -117,12 +146,43 @@ function profileSettings(profile, sync, onChanged) {
             </select>
           </label>
         </div>
+
+        <div class="settings-field-row ui-scale-setting">
+          <label class="settings-label-block">
+            <div class="ui-scale-header">
+              <span>Tamaño de portadas y letras:</span>
+              <strong class="ui-scale-value" id="ui-scale-label">${currentScaleLabel}</strong>
+            </div>
+            <input type="range" name="uiScale" class="settings-slider" min="0" max="4" step="1" value="${currentScaleIndex}" data-focusable>
+            <div class="ui-scale-ticks">
+              <span>Muy pequeño</span>
+              <span>Pequeño</span>
+              <span>Normal</span>
+              <span>Grande</span>
+              <span>Muy Grande</span>
+            </div>
+          </label>
+        </div>
       </fieldset>
 
       <p class="settings-status" role="status"></p>
       <button class="btn" data-focusable type="submit">Guardar</button>
     </form>
   `);
+
+  const scaleSlider = overlay.querySelector('input[name="uiScale"]');
+  const scaleLabel = overlay.querySelector('#ui-scale-label');
+  if (scaleSlider && scaleLabel) {
+    const updateScaleDisplay = () => {
+      const idx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, Number(scaleSlider.value)));
+      const conf = UI_SCALE_LEVELS[idx];
+      scaleLabel.textContent = conf.label;
+      document.documentElement.style.setProperty('--ui-scale', String(conf.scale));
+      document.documentElement.setAttribute('data-ui-scale', conf.id);
+    };
+    scaleSlider.addEventListener('input', updateScaleDisplay);
+    scaleSlider.addEventListener('change', updateScaleDisplay);
+  }
 
   overlay.querySelectorAll('.settings-radio-label').forEach(label => {
     const radio = label.querySelector('input[type="radio"]');
@@ -153,19 +213,22 @@ function profileSettings(profile, sync, onChanged) {
     if (!name) return;
     const player = form.elements.player?.value || 'artplayer';
     const skipSeconds = Number(form.elements.skipSeconds?.value) || 10;
+    const scaleIndex = Number(form.elements.uiScale?.value ?? 3);
 
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(`tgvideo_player_${profile.id}`, player);
       localStorage.setItem(`tgvideo_skip_${profile.id}`, String(skipSeconds));
+      localStorage.setItem(`tgvideo_scale_${profile.id}`, String(scaleIndex));
     }
     profile.player = player;
     profile.skip_seconds = skipSeconds;
+    profile.ui_scale = scaleIndex;
 
     button.disabled = true;
     try {
       const remote = await sync.pullProfile(profile.id);
       if (!remote) throw new Error('No se pudo leer el perfil. Inténtalo de nuevo.');
-      const changed = { ...remote.profile, name, avatar: form.elements.avatar.value, player, skip_seconds: skipSeconds };
+      const changed = { ...remote.profile, name, avatar: form.elements.avatar.value, player, skip_seconds: skipSeconds, ui_scale: scaleIndex };
       await sync.pushProfile({ ...remote, profile: changed, progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {}) });
       Object.assign(profile, changed);
       close(); onChanged();
