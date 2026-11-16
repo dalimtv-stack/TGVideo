@@ -1,3 +1,4 @@
+// src/ui/dpad.js
 // Navegación espacial D-Pad (Android TV / Fire TV / teclado)
 import { App } from '@capacitor/app';
 
@@ -52,7 +53,8 @@ export function handleBack() {
 
 function move(dir) {
   // Si hay un modal abierto, limitar la navegación a los elementos dentro del modal
-  const scope = document.querySelector('.settings-overlay') || document;
+  const modalEl = document.querySelector('.settings-overlay');
+  const scope = modalEl || document;
   const items = [...scope.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
   if (!items.length) return;
 
@@ -163,7 +165,7 @@ function move(dir) {
 
   // 3. Si está dentro de la ficha de detalle (.detail)
   const detailScreen = cur.closest('.detail');
-  if (detailScreen && !scope.matches('.settings-overlay')) {
+  if (detailScreen && !modalEl) {
     const backBtn = detailScreen.querySelector('#d-back');
     const fixMetaBtn = detailScreen.querySelector('#d-fix-meta');
     const synToggle = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
