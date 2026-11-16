@@ -1821,10 +1821,11 @@ html, body {
   width: calc(42px * var(--ui-scale, 1.12)) !important;
   cursor: pointer;
   outline: none;
-  scroll-margin-left: 20px;
-  scroll-margin-right: 20px;
+  scroll-margin-left: 0;
+  scroll-margin-right: 12px;
   display: flex;
   flex-direction: column;
+  margin-left: calc(-0.4rem * var(--ui-scale, 1.12));
 }
 
 .row-expand-card-inner {
@@ -1834,8 +1835,8 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid transparent;
+  background: transparent;
   transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 
