@@ -66,15 +66,55 @@ function showToast(container, text) {
   toast._timer = setTimeout(() => toast.classList.remove('show'), 2400);
 }
 
+const LANG_NAMES = {
+  es: "Español", spa: "Español", "es-es": "Español (España)", "es-419": "Español (Latino)",
+  lat: "Latino", en: "Inglés", eng: "Inglés", fr: "Francés", fra: "Francés", fre: "Francés",
+  de: "Alemán", deu: "Alemán", ger: "Alemán", it: "Italiano", ita: "Italiano",
+  pt: "Portugués", por: "Portugués", ja: "Japonés", jpn: "Japonés",
+  ru: "Ruso", rus: "Ruso", zh: "Chino", zho: "Chino", chi: "Chino",
+  ko: "Coreano", kor: "Coreano", ca: "Catalán", cat: "Catalán", gl: "Gallego",
+  eu: "Euskera", eus: "Euskera", und: "Indeterminado"
+};
+
+function formatTrackName(track, i, fallbackPrefix) {
+  const langKey = String(track.language || "").toLowerCase().trim();
+  const langName = LANG_NAMES[langKey] || "";
+  const label = track.label ? String(track.label).trim() : "";
+
+  if (label && langName && !label.toLowerCase().includes(langName.toLowerCase())) {
+    return `${label} (${langName})`;
+  }
+  return label || langName || `${fallbackPrefix} ${i + 1}`;
+}
+
+function getAudioTracks(video) {
+  if (!video) return [];
+  if (video.audioTracks && video.audioTracks.length > 0) {
+    return Array.from(video.audioTracks);
+  }
+  if (video.webkitAudioTracks && video.webkitAudioTracks.length > 0) {
+    return Array.from(video.webkitAudioTracks);
+  }
+  return [];
+}
+
+function getTextTracks(video) {
+  if (!video) return [];
+  if (video.textTracks && video.textTracks.length > 0) {
+    return Array.from(video.textTracks).filter(t => t.kind !== "chapters");
+  }
+  return [];
+}
+
 function openAudioSelector(video, playerEl, returnFocusEl) {
-  playerEl.querySelector('.player-tracks-overlay')?.remove();
+  playerEl.querySelector(".player-tracks-overlay")?.remove();
 
-  const rawTracks = video?.audioTracks ? Array.from(video.audioTracks) : [];
-  const overlay = document.createElement('div');
-  overlay.className = 'player-tracks-overlay';
-  overlay.id = 'pl-tracks-modal';
+  const rawTracks = getAudioTracks(video);
+  const overlay = document.createElement("div");
+  overlay.className = "player-tracks-overlay";
+  overlay.id = "pl-tracks-modal";
 
-  let listHtml = '';
+  let listHtml = "";
   if (rawTracks.length === 0) {
     listHtml = `
       <div class="player-track-empty">Pista de audio estándar en reproducción</div>
@@ -82,18 +122,23 @@ function openAudioSelector(video, playerEl, returnFocusEl) {
         <span>Audio principal (predeterminado)</span>
         <span class="player-track-check">✓</span>
       </button>
+      ${video?.webkitSupportsFullscreen ? `
+        <button class="player-track-option" data-focusable data-action="ios-fs" style="margin-top:0.5rem;border:1px solid rgba(229,9,20,0.6);background:rgba(229,9,20,0.15);">
+          <span>📺 Abrir pantalla completa iOS (menú nativo de audios)</span>
+        </button>
+      ` : ""}
     `;
   } else {
     listHtml = rawTracks.map((track, i) => {
       const isSelected = !!track.enabled;
-      const label = track.label || track.language || `Pista de audio ${i + 1}`;
+      const label = formatTrackName(track, i, "Pista de audio");
       return `
-        <button class="player-track-option ${isSelected ? 'is-selected' : ''}" data-focusable data-index="${i}">
+        <button class="player-track-option ${isSelected ? "is-selected" : ""}" data-focusable data-index="${i}">
           <span>${escapeHtml(label)}</span>
-          ${isSelected ? '<span class="player-track-check">✓</span>' : ''}
+          ${isSelected ? '<span class="player-track-check">✓</span>' : ""}
         </button>
       `;
-    }).join('');
+    }).join("");
   }
 
   overlay.innerHTML = `
@@ -115,80 +160,92 @@ function openAudioSelector(video, playerEl, returnFocusEl) {
     returnFocusEl?.focus();
   };
 
-  overlay.querySelector('.player-tracks-close')?.addEventListener('click', closeMenu);
-  overlay.addEventListener('click', (e) => {
+  overlay.querySelector(".player-tracks-close")?.addEventListener("click", closeMenu);
+  overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closeMenu();
   });
 
-  const buttons = overlay.querySelectorAll('.player-track-option');
+  const buttons = overlay.querySelectorAll(".player-track-option");
   buttons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = Number(btn.getAttribute('data-index'));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.action === "ios-fs") {
+        try { video.webkitEnterFullscreen(); } catch (err) { console.warn(err); }
+        closeMenu();
+        return;
+      }
+      const idx = Number(btn.getAttribute("data-index"));
       if (rawTracks.length > 0 && rawTracks[idx]) {
         rawTracks.forEach((t, i) => { t.enabled = (i === idx); });
-        const label = rawTracks[idx].label || rawTracks[idx].language || `Pista ${idx + 1}`;
+        const label = formatTrackName(rawTracks[idx], idx, "Pista");
         showToast(playerEl, `✓ Audio: ${label}`);
       } else {
-        showToast(playerEl, 'Audio: Principal');
+        showToast(playerEl, "Audio: Principal");
       }
       closeMenu();
     });
   });
 
-  overlay.addEventListener('keydown', (e) => {
-    const isBackKey = ['Escape', 'GoBack', 'Back'].includes(e.key) || e.keyCode === 4 ||
-      (e.key === 'Backspace' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName));
+  overlay.addEventListener("keydown", (e) => {
+    const isBackKey = ["Escape", "GoBack", "Back"].includes(e.key) || e.keyCode === 4 ||
+      (e.key === "Backspace" && !["INPUT", "TEXTAREA"].includes(e.target.tagName));
     if (isBackKey) {
       e.preventDefault();
       e.stopPropagation();
       closeMenu();
       return;
     }
-    if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
+    if (["ArrowUp", "ArrowDown"].includes(e.key)) {
       e.preventDefault();
       e.stopPropagation();
-      const opts = [...overlay.querySelectorAll('.player-track-option, .player-tracks-close')].filter(el => el.offsetParent && !el.disabled);
+      const opts = [...overlay.querySelectorAll(".player-track-option, .player-tracks-close")].filter(el => el.offsetParent && !el.disabled);
       const idx = opts.indexOf(document.activeElement);
-      const delta = e.key === 'ArrowUp' ? -1 : 1;
+      const delta = e.key === "ArrowUp" ? -1 : 1;
       const next = opts[Math.max(0, Math.min(opts.length - 1, idx + delta))];
       next?.focus();
     }
   });
 
-  const activeBtn = overlay.querySelector('.player-track-option.is-selected') || buttons[0] || overlay.querySelector('.player-tracks-close');
+  const activeBtn = overlay.querySelector(".player-track-option.is-selected") || buttons[0] || overlay.querySelector(".player-tracks-close");
   activeBtn?.focus();
 }
 
 function openSubtitlesSelector(video, playerEl, returnFocusEl) {
-  playerEl.querySelector('.player-tracks-overlay')?.remove();
+  playerEl.querySelector(".player-tracks-overlay")?.remove();
 
-  const rawTracks = video?.textTracks ? Array.from(video.textTracks) : [];
-  const isNoneSelected = rawTracks.every(t => t.mode !== 'showing');
+  const rawTracks = getTextTracks(video);
+  const isNoneSelected = rawTracks.every(t => t.mode !== "showing");
 
-  const overlay = document.createElement('div');
-  overlay.className = 'player-tracks-overlay';
-  overlay.id = 'pl-tracks-modal';
+  const overlay = document.createElement("div");
+  overlay.className = "player-tracks-overlay";
+  overlay.id = "pl-tracks-modal";
 
   let listHtml = `
-    <button class="player-track-option ${isNoneSelected ? 'is-selected' : ''}" data-focusable data-index="-1">
+    <button class="player-track-option ${isNoneSelected ? "is-selected" : ""}" data-focusable data-index="-1">
       <span>Desactivados</span>
-      ${isNoneSelected ? '<span class="player-track-check">✓</span>' : ''}
+      ${isNoneSelected ? '<span class="player-track-check">✓</span>' : ""}
     </button>
   `;
 
   if (rawTracks.length === 0) {
-    listHtml += `<div class="player-track-empty">No se detectaron pistas de subtítulos incrustadas</div>`;
+    listHtml += `
+      <div class="player-track-empty">No se detectaron pistas de subtítulos incrustadas</div>
+      ${video?.webkitSupportsFullscreen ? `
+        <button class="player-track-option" data-focusable data-action="ios-fs" style="margin-top:0.5rem;border:1px solid rgba(229,9,20,0.6);background:rgba(229,9,20,0.15);">
+          <span>📺 Abrir pantalla completa iOS (menú nativo de subtítulos)</span>
+        </button>
+      ` : ""}
+    `;
   } else {
     listHtml += rawTracks.map((track, i) => {
-      const isSelected = track.mode === 'showing';
-      const label = track.label || track.language || `Subtítulo ${i + 1}`;
+      const isSelected = track.mode === "showing";
+      const label = formatTrackName(track, i, "Subtítulo");
       return `
-        <button class="player-track-option ${isSelected ? 'is-selected' : ''}" data-focusable data-index="${i}">
+        <button class="player-track-option ${isSelected ? "is-selected" : ""}" data-focusable data-index="${i}">
           <span>${escapeHtml(label)}</span>
-          ${isSelected ? '<span class="player-track-check">✓</span>' : ''}
+          ${isSelected ? '<span class="player-track-check">✓</span>' : ""}
         </button>
       `;
-    }).join('');
+    }).join("");
   }
 
   overlay.innerHTML = `
@@ -210,49 +267,54 @@ function openSubtitlesSelector(video, playerEl, returnFocusEl) {
     returnFocusEl?.focus();
   };
 
-  overlay.querySelector('.player-tracks-close')?.addEventListener('click', closeMenu);
-  overlay.addEventListener('click', (e) => {
+  overlay.querySelector(".player-tracks-close")?.addEventListener("click", closeMenu);
+  overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closeMenu();
   });
 
-  const buttons = overlay.querySelectorAll('.player-track-option');
+  const buttons = overlay.querySelectorAll(".player-track-option");
   buttons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = Number(btn.getAttribute('data-index'));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.action === "ios-fs") {
+        try { video.webkitEnterFullscreen(); } catch (err) { console.warn(err); }
+        closeMenu();
+        return;
+      }
+      const idx = Number(btn.getAttribute("data-index"));
       rawTracks.forEach((t, i) => {
-        t.mode = (i === idx) ? 'showing' : 'disabled';
+        t.mode = (i === idx) ? "showing" : "disabled";
       });
       if (idx === -1) {
-        showToast(playerEl, 'Subtítulos desactivados');
+        showToast(playerEl, "Subtítulos desactivados");
       } else if (rawTracks[idx]) {
-        const label = rawTracks[idx].label || rawTracks[idx].language || `Subtítulo ${idx + 1}`;
+        const label = formatTrackName(rawTracks[idx], idx, "Subtítulo");
         showToast(playerEl, `✓ Subtítulos: ${label}`);
       }
       closeMenu();
     });
   });
 
-  overlay.addEventListener('keydown', (e) => {
-    const isBackKey = ['Escape', 'GoBack', 'Back'].includes(e.key) || e.keyCode === 4 ||
-      (e.key === 'Backspace' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName));
+  overlay.addEventListener("keydown", (e) => {
+    const isBackKey = ["Escape", "GoBack", "Back"].includes(e.key) || e.keyCode === 4 ||
+      (e.key === "Backspace" && !["INPUT", "TEXTAREA"].includes(e.target.tagName));
     if (isBackKey) {
       e.preventDefault();
       e.stopPropagation();
       closeMenu();
       return;
     }
-    if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
+    if (["ArrowUp", "ArrowDown"].includes(e.key)) {
       e.preventDefault();
       e.stopPropagation();
-      const opts = [...overlay.querySelectorAll('.player-track-option, .player-tracks-close')].filter(el => el.offsetParent && !el.disabled);
+      const opts = [...overlay.querySelectorAll(".player-track-option, .player-tracks-close")].filter(el => el.offsetParent && !el.disabled);
       const idx = opts.indexOf(document.activeElement);
-      const delta = e.key === 'ArrowUp' ? -1 : 1;
+      const delta = e.key === "ArrowUp" ? -1 : 1;
       const next = opts[Math.max(0, Math.min(opts.length - 1, idx + delta))];
       next?.focus();
     }
   });
 
-  const activeBtn = overlay.querySelector('.player-track-option.is-selected') || buttons[0] || overlay.querySelector('.player-tracks-close');
+  const activeBtn = overlay.querySelector(".player-track-option.is-selected") || buttons[0] || overlay.querySelector(".player-tracks-close");
   activeBtn?.focus();
 }
 
@@ -387,6 +449,9 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
             <button class="player-ctrl-btn" id="pl-btn-subs" data-focusable title="Subtítulos">
               <svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
             </button>
+            <button class="player-ctrl-btn" id="pl-btn-fs" data-focusable title="Pantalla completa">
+              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+            </button>
             <button class="player-ctrl-btn" id="pl-btn-vlc" data-focusable title="Abrir en VLC">
               <svg viewBox="0 0 24 24"><path d="M12 2L9.5 9h5L12 2zm-4 8L6 16h12l-2-6H8zm-3 7L3 21h18l-2-4H5z"/></svg>
             </button>
@@ -402,7 +467,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
         <div class="loader"></div>
         <p id="pl-status">Conectando con Telegram…</p>
       </div>
-      <video class="native-video" playsinline webkit-playsinline autoplay preload="auto"></video>
+      <video class="native-video" playsinline webkit-playsinline crossorigin="anonymous" autoplay preload="auto"></video>
     </div>`;
 
   const playerEl = mount.querySelector('.player');
@@ -580,6 +645,39 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     openSubtitlesSelector(video, playerEl, mount.querySelector('#pl-btn-subs'));
     showOsd();
   };
+
+  mount.querySelector('#pl-btn-fs').onclick = () => {
+    if (video.webkitSupportsFullscreen) {
+      try { video.webkitEnterFullscreen(); } catch (_) { goFullscreen(); }
+    } else {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        exitFullscreen();
+      } else {
+        goFullscreen();
+      }
+    }
+  };
+
+  const updateNativeTrackLabels = () => {
+    const audios = getAudioTracks(video);
+    const subs = getTextTracks(video);
+    const btnAudio = mount.querySelector('#pl-btn-audio');
+    const btnSubs = mount.querySelector('#pl-btn-subs');
+    if (btnAudio) btnAudio.title = audios.length > 1 ? `Pistas de Audio (${audios.length})` : 'Pistas de Audio';
+    if (btnSubs) btnSubs.title = subs.length > 0 ? `Subtítulos (${subs.length})` : 'Subtítulos';
+  };
+  video.addEventListener('loadedmetadata', updateNativeTrackLabels);
+  video.addEventListener('canplay', updateNativeTrackLabels);
+  if (video.textTracks) {
+    video.textTracks.addEventListener('addtrack', updateNativeTrackLabels);
+    video.textTracks.addEventListener('removetrack', updateNativeTrackLabels);
+    video.textTracks.addEventListener('change', updateNativeTrackLabels);
+  }
+  if (video.audioTracks) {
+    video.audioTracks.addEventListener('addtrack', updateNativeTrackLabels);
+    video.audioTracks.addEventListener('removetrack', updateNativeTrackLabels);
+    video.audioTracks.addEventListener('change', updateNativeTrackLabels);
+  }
 
   mount.querySelector('#pl-btn-vlc').onclick = () => {
     tryOpenVlc(url, playerEl);
@@ -972,6 +1070,9 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
             <button class="player-ctrl-btn" id="pl-btn-subs" data-focusable title="Subtítulos">
               <svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
             </button>
+            <button class="player-ctrl-btn" id="pl-btn-fs" data-focusable title="Pantalla completa">
+              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+            </button>
             <button class="player-ctrl-btn" id="pl-btn-vlc" data-focusable title="Abrir en VLC">
               <svg viewBox="0 0 24 24"><path d="M12 2L9.5 9h5L12 2zm-4 8L6 16h12l-2-6H8zm-3 7L3 21h18l-2-4H5z"/></svg>
             </button>
@@ -1156,6 +1257,15 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     if (vid) {
       openSubtitlesSelector(vid, playerEl, mount.querySelector('#pl-btn-subs'));
       showOsd();
+    }
+  };
+
+  mount.querySelector('#pl-btn-fs').onclick = () => {
+    const v = art?.template?.$video;
+    if (v?.webkitSupportsFullscreen) {
+      try { v.webkitEnterFullscreen(); } catch (_) { if (art) art.fullscreen = !art.fullscreen; }
+    } else if (art) {
+      art.fullscreen = !art.fullscreen;
     }
   };
 
@@ -1512,7 +1622,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
               tooltip: 'Audio',
               selector: Array.from(video.audioTracks).map((track, i) => ({
                 default: track.enabled,
-                html: track.label || track.language || `Audio ${i + 1}`,
+                html: formatTrackName(track, i, "Audio"),
                 value: i,
               })),
               onSelect(item) {
@@ -1530,7 +1640,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       if (video.textTracks && video.textTracks.length > 0) {
         try {
           if (!art.setting.find('nativeSubtitles')) {
-            const tracks = Array.from(video.textTracks).filter(t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind);
+            const tracks = getTextTracks(video);
             if (tracks.length > 0) {
               art.setting.add({
                 name: 'nativeSubtitles',
@@ -1541,7 +1651,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
                   { default: tracks.every(t => t.mode !== 'showing'), html: 'Desactivados', value: -1 },
                   ...tracks.map((track, i) => ({
                     default: track.mode === 'showing',
-                    html: track.label || track.language || `Subtítulo ${i + 1}`,
+                    html: formatTrackName(track, i, "Subtítulo"),
                     value: i,
                   }))
                 ],
