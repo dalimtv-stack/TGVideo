@@ -708,9 +708,23 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   const play = (f) => {
     const p = loadProgress(profile.id)[f.key];
     setBackHandler(null);
-    playFile({ client: tg.getClient(), peerOf: tg.peerOf, file: f, title: t, profile,
+    // Siguiente archivo en la lista (episodio / saga / versiones)
+    let list = t.archivos || [];
+    if (t.tipo === 'serie' && f.season != null) {
+      list = list.filter(x => Number(x.season) === Number(f.season));
+      list = [...list].sort((a, b) => (a.episode || 0) - (b.episode || 0));
+    }
+    const idx = list.findIndex(x => String(x.key) === String(f.key));
+    const nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+
+    playFile({
+      client: tg.getClient(), peerOf: tg.peerOf, file: f, title: t, profile,
       resumeAt: p && !p.is_completed ? p.current_time : 0, mount: app,
-      onClose: () => showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid }), sync });
+      onClose: () => showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid }),
+      sync,
+      nextFile,
+      onNext: (nf) => play(nf),
+    });
   };
 
   const renderEpisodes = (seasonNum) => {

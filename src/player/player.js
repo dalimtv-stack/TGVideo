@@ -89,6 +89,7 @@ function formatTrackName(track, i, fallbackPrefix) {
 
 function getAudioTracks(video) {
   if (!video) return [];
+  const out = [];
   try {
     if (video.audioTracks && video.audioTracks.length > 0) {
       return Array.from(video.audioTracks);
@@ -99,29 +100,67 @@ function getAudioTracks(video) {
       return Array.from(video.webkitAudioTracks);
     }
   } catch (_) {}
-  // ArtPlayer / algunos motores exponen pistas en el propio player
   try {
-    if (video._artplayer?.audioTracks?.length) {
-      return Array.from(video._artplayer.audioTracks);
+    // Algunos WebViews / ArtPlayer
+    const art = video._artplayer || video.art;
+    if (art?.quality?.length) {
+      // no son audios, ignorar
     }
+    if (art?.option?.layers) { /* noop */ }
   } catch (_) {}
-  return [];
+  return out;
 }
 
 function getTextTracks(video) {
   if (!video) return [];
   try {
     if (video.textTracks && video.textTracks.length > 0) {
-      return Array.from(video.textTracks).filter(t => t.kind !== "chapters" && t.kind !== "metadata");
+      return Array.from(video.textTracks).filter(t => {
+        const k = String(t.kind || '').toLowerCase();
+        return k === 'subtitles' || k === 'captions' || k === '';
+      });
     }
   } catch (_) {}
   return [];
 }
 
-function openAudioSelector(video, playerEl, returnFocusEl) {
+/** Espera a que el navegador publique pistas (Chrome a menudo las añade tarde o nunca en MKV). */
+function waitForTracks(video, { timeoutMs = 4000 } = {}) {
+  return new Promise((resolve) => {
+    if (!video) return resolve({ audio: [], text: [] });
+    const done = () => resolve({ audio: getAudioTracks(video), text: getTextTracks(video) });
+    const hasAny = () => getAudioTracks(video).length > 0 || getTextTracks(video).length > 0;
+    if (hasAny()) return done();
+
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      try { video.audioTracks?.removeEventListener?.('addtrack', onAdd); } catch (_) {}
+      try { video.textTracks?.removeEventListener?.('addtrack', onAdd); } catch (_) {}
+      clearTimeout(timer);
+      clearInterval(poll);
+      done();
+    };
+    const onAdd = () => { if (hasAny()) finish(); };
+
+    try { video.audioTracks?.addEventListener?.('addtrack', onAdd); } catch (_) {}
+    try { video.textTracks?.addEventListener?.('addtrack', onAdd); } catch (_) {}
+
+    const poll = setInterval(() => { if (hasAny()) finish(); }, 300);
+    const timer = setTimeout(finish, timeoutMs);
+  });
+}
+
+async function openAudioSelector(video, playerEl, returnFocusEl) {
   playerEl.querySelector(".player-tracks-overlay")?.remove();
 
-  const rawTracks = getAudioTracks(video);
+  // Dar tiempo al demuxer (sobre todo Chrome / Android TV)
+  let rawTracks = getAudioTracks(video);
+  if (rawTracks.length === 0) {
+    const waited = await waitForTracks(video, { timeoutMs: 2500 });
+    rawTracks = waited.audio;
+  }
   const overlay = document.createElement("div");
   overlay.className = "player-tracks-overlay";
   overlay.id = "pl-tracks-modal";
@@ -221,10 +260,21 @@ function openAudioSelector(video, playerEl, returnFocusEl) {
   activeBtn?.focus();
 }
 
-function openSubtitlesSelector(video, playerEl, returnFocusEl) {
+async function openSubtitlesSelector(video, playerEl, returnFocusEl) {
   playerEl.querySelector(".player-tracks-overlay")?.remove();
 
-  const rawTracks = getTextTracks(video);
+  let rawTracks = getTextTracks(video);
+  if (rawTracks.length === 0) {
+    const waited = await waitForTracks(video, { timeoutMs: 2500 });
+    rawTracks = waited.text;
+  }
+  // Forzar modos legibles: algunos motores no listan pistas en mode "disabled"
+  try {
+    for (const t of Array.from(video.textTracks || [])) {
+      if (t.mode === 'disabled') t.mode = 'hidden';
+    }
+    rawTracks = getTextTracks(video);
+  } catch (_) {}
   const isNoneSelected = rawTracks.every(t => t.mode !== "showing");
 
   const overlay = document.createElement("div");
@@ -388,7 +438,7 @@ function setupDoubleTapSkip({ container, video, skipSeconds = 10 }) {
   };
 }
 
-export async function playFile({ client, peerOf, file, title, profile, resumeAt = 0, onClose, mount, sync }) {
+export async function playFile({ client, peerOf, file, title, profile, resumeAt = 0, onClose, mount, sync, nextFile = null, onNext = null }) {
   const localPref = typeof localStorage !== 'undefined' && profile?.id
     ? localStorage.getItem(`tgvideo_player_${profile.id}`)
     : null;
@@ -399,16 +449,94 @@ export async function playFile({ client, peerOf, file, title, profile, resumeAt 
     : null;
   const skipSeconds = Number(profile?.skip_seconds || localSkip || 10);
 
+  const opts = { client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync, nextFile, onNext };
   if (playerType === 'native') {
-    return playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync });
+    return playNative(opts);
   }
-  return playArtplayer({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync });
+  return playArtplayer(opts);
 }
+
+
+function formatNextLabel(title, nextFile) {
+  if (!nextFile) return '';
+  if (title?.tipo === 'serie') {
+    const epNum = (nextFile.season || nextFile.episode)
+      ? `T${nextFile.season || 1}·E${String(nextFile.episode || 1).padStart(2, '0')}`
+      : '';
+    const epName = nextFile.metadata?.name || prettyEpisodeName(nextFile.fileName || nextFile.label, title.metadata?.name || title.nombre);
+    return `${epNum ? epNum + ' · ' : ''}${epName}`;
+  }
+  return nextFile.metadata?.name || nextFile.sagaName || nextFile.label || 'Siguiente';
+}
+
+/**
+ * Cuenta atrás del siguiente episodio (esquina inferior izquierda).
+ * Aparece en los últimos `windowSec` segundos.
+ */
+function bindNextUp({ getTime, getDuration, playerEl, nextFile, title, onNext, onCancel }) {
+  if (!nextFile || typeof onNext !== 'function') return () => {};
+  const COUNT = 12; // segundos de cuenta atrás visibles
+  const windowSec = 25; // empezar a mostrar cuando queden estos segundos
+  let shown = false;
+  let done = false;
+  let tickTimer = null;
+  let el = null;
+
+  const remove = () => {
+    clearInterval(tickTimer);
+    el?.remove();
+    el = null;
+    shown = false;
+  };
+
+  const startCountdown = () => {
+    if (done || shown) return;
+    shown = true;
+    el = document.createElement('div');
+    el.className = 'player-next-up';
+    el.innerHTML = `
+      <div class="player-next-up-inner">
+        <div class="player-next-up-label">Siguiente en <span class="player-next-up-count">${COUNT}</span>s</div>
+        <div class="player-next-up-title">${formatNextLabel(title, nextFile).replace(/</g,'&lt;')}</div>
+        <button type="button" class="player-next-up-cancel" data-focusable>Cancelar</button>
+      </div>
+    `;
+    playerEl.appendChild(el);
+    let left = COUNT;
+    const countEl = el.querySelector('.player-next-up-count');
+    el.querySelector('.player-next-up-cancel')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      done = true;
+      remove();
+      onCancel?.();
+    });
+    tickTimer = setInterval(() => {
+      left -= 1;
+      if (countEl) countEl.textContent = String(Math.max(0, left));
+      if (left <= 0) {
+        clearInterval(tickTimer);
+        done = true;
+        remove();
+        onNext(nextFile);
+      }
+    }, 1000);
+  };
+
+  const check = () => {
+    if (done) return;
+    const dur = Number(getDuration()) || 0;
+    const cur = Number(getTime()) || 0;
+    if (dur > 30 && cur >= dur - windowSec) startCountdown();
+  };
+
+  return { check, remove };
+}
+
 
 // -------------------------------------------------------------
 // REPRODUCTOR NATIVO (HTML5 / WebView) - Con OSD Stremio
 // -------------------------------------------------------------
-async function playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync }) {
+async function playNative({ client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync, nextFile = null, onNext = null }) {
   const displayTitle = formatPlayerTitle(title, file);
 
   mount.innerHTML = `
@@ -481,6 +609,20 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   let url = null;
   let osdTimer = null;
 
+  const nextUp = bindNextUp({
+    getTime: () => video?.currentTime || 0,
+    getDuration: () => video?.duration || 0,
+    playerEl,
+    nextFile,
+    title,
+    onNext: (nf) => {
+      cancelled = true;
+      try { video.pause(); } catch (_) {}
+      try { nextUp.remove(); } catch (_) {}
+      onNext?.(nf);
+    },
+  });
+
   const updatePlayIcons = () => {
     if (video.paused) {
       if (iconPlay) iconPlay.style.display = 'block';
@@ -491,7 +633,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     }
   };
 
-  const OSD_TIMEOUT_MS = 1500;
+  const OSD_TIMEOUT_MS = 3500;
 
   const showOsd = () => {
     osd.classList.remove('is-hidden');
@@ -512,11 +654,16 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 
   playerEl.addEventListener('mousemove', showOsd);
   playerEl.addEventListener('keydown', showOsd, true);
+  // iOS: un solo toque muestra el OSD de forma fiable
+  playerEl.addEventListener('touchend', (e) => {
+    if (e.target.closest('.player-osd-bottom, .player-osd-top, .player-tracks-overlay, .player-next-up, button')) return;
+    e.preventDefault();
+    showOsd();
+  }, { passive: false });
   playerEl.addEventListener('click', (e) => {
-    if (!e.target.closest('.player-osd-bottom, .player-osd-top, button')) {
-      if (osd.classList.contains('is-hidden')) showOsd();
-      else hideOsd();
-    }
+    if (e.target.closest('.player-osd-bottom, .player-osd-top, .player-tracks-overlay, .player-next-up, button')) return;
+    if (osd.classList.contains('is-hidden')) showOsd();
+    else hideOsd();
   });
 
   video.addEventListener('play', () => {
@@ -608,7 +755,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       localStorage.setItem(`tgvideo_player_${profile.id}`, 'artplayer');
       profile.player = 'artplayer';
     }
-    playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync });
+    playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync, nextFile, onNext });
   });
 
   mount.querySelector('#pl-btn-playpause').onclick = () => {
@@ -961,6 +1108,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 
     video.addEventListener('timeupdate', () => {
       if (pendingSeekTime !== null) return;
+      try { nextUp?.check(); } catch (_) {}
       timeCur.textContent = formatTime(video.currentTime);
       if (video.duration) {
         scrubberFill.style.width = `${Math.min(100, (video.currentTime / video.duration) * 100)}%`;
@@ -1008,7 +1156,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 // -------------------------------------------------------------
 // REPRODUCTOR ARTPLAYER - Con OSD Stremio unificado
 // -------------------------------------------------------------
-async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 0, skipSeconds, onClose, mount, sync }) {
+async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 0, skipSeconds, onClose, mount, sync, nextFile = null, onNext = null }) {
   const displayTitle = formatPlayerTitle(title, file);
 
   mount.innerHTML = `
@@ -1093,7 +1241,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     }
   };
 
-  const OSD_TIMEOUT_MS = 1500;
+  const OSD_TIMEOUT_MS = 3500;
 
   const showOsd = () => {
     osd.classList.remove('is-hidden');
@@ -1114,11 +1262,16 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
   playerEl.addEventListener('mousemove', showOsd);
   playerEl.addEventListener('keydown', showOsd, true);
+  // iOS: un solo toque muestra el OSD de forma fiable
+  playerEl.addEventListener('touchend', (e) => {
+    if (e.target.closest('.player-osd-bottom, .player-osd-top, .player-tracks-overlay, .player-next-up, button')) return;
+    e.preventDefault();
+    showOsd();
+  }, { passive: false });
   playerEl.addEventListener('click', (e) => {
-    if (!e.target.closest('.player-osd-bottom, .player-osd-top, button')) {
-      if (osd.classList.contains('is-hidden')) showOsd();
-      else hideOsd();
-    }
+    if (e.target.closest('.player-osd-bottom, .player-osd-top, .player-tracks-overlay, .player-next-up, button')) return;
+    if (osd.classList.contains('is-hidden')) showOsd();
+    else hideOsd();
   });
 
   const goFullscreen = () => {
@@ -1189,7 +1342,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       localStorage.setItem(`tgvideo_player_${profile.id}`, 'native');
       profile.player = 'native';
     }
-    playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync });
+    playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync, nextFile, onNext });
   });
 
   mount.querySelector('#pl-btn-playpause').onclick = () => {
@@ -1553,6 +1706,18 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     });
 
     const video = art.template.$video;
+    const nextUp = bindNextUp({
+      getTime: () => art?.currentTime || video?.currentTime || 0,
+      getDuration: () => art?.duration || video?.duration || 0,
+      playerEl,
+      nextFile,
+      title,
+      onNext: (nf) => {
+        cancelled = true;
+        try { art.destroy(false); } catch (_) {}
+        onNext?.(nf);
+      },
+    });
     let lastSaved = 0;
     let audioOnlyChecked = false;
 
@@ -1670,6 +1835,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
     art.on('video:timeupdate', () => {
       if (pendingSeekTime !== null) return;
+      try { nextUp?.check(); } catch (_) {}
       timeCur.textContent = formatTime(art.currentTime);
       if (art.duration) {
         scrubberFill.style.width = `${Math.min(100, (art.currentTime / art.duration) * 100)}%`;

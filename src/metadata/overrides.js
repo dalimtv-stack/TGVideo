@@ -74,3 +74,40 @@ export async function removeOverride(key, sync) {
   await kv.set(KV_KEY, state).catch(() => {});
   schedulePush();
 }
+
+/** Elimina overrides de títulos que ya no están en la videoteca. */
+export async function pruneOverrides(validKeys = [], sync) {
+  if (sync) syncRef = sync;
+  const valid = new Set((validKeys || []).map(String));
+  const before = Object.keys(state.overrides || {}).length;
+  if (!before) return { removed: 0, bytes: 0 };
+  const next = {};
+  for (const [k, v] of Object.entries(state.overrides)) {
+    if (valid.has(String(k))) next[k] = v;
+    // Conservar también por si la clave es canal:mensaje y valid tiene el title.id agrupado
+  }
+  // Si validKeys incluye tmdb ids como "tmdb:123", conservar overrides con ese id
+  const validTmdb = new Set();
+  for (const k of validKeys) {
+    if (String(k).startsWith('tmdb:')) validTmdb.add(String(k).slice(5));
+  }
+  for (const [k, v] of Object.entries(state.overrides)) {
+    if (next[k]) continue;
+    if (v?.id != null && validTmdb.has(String(v.id))) next[k] = v;
+  }
+  const removed = before - Object.keys(next).length;
+  state = { v: 1, updated_at: Date.now(), overrides: next };
+  await kv.set(KV_KEY, state).catch(() => {});
+  schedulePush();
+  let bytes = 0;
+  try { bytes = new Blob([JSON.stringify(state)]).size; } catch (_) {}
+  return { removed, bytes };
+}
+
+export function getOverridesSizeBytes() {
+  try { return new Blob([JSON.stringify(state)]).size; } catch { return 0; }
+}
+
+export function getAllOverrideKeys() {
+  return Object.keys(state.overrides || {});
+}

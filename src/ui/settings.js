@@ -2,6 +2,7 @@
 import { getGlobalConfig, getTmdbKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
 import { loadProgress } from '../player/progress.js';
 import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../metadata/posterCache.js';
+import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -296,23 +297,39 @@ function globalSettings(sync, onChanged, libraryTitles = []) {
     msg.textContent = 'Optimizando caché y eliminando portadas huérfanas…';
     try {
       const validUrls = [];
+      const validKeys = [];
       for (const t of libraryTitles) {
+        validKeys.push(String(t.id));
+        if (t.tmdbId) validKeys.push('tmdb:' + t.tmdbId);
+        if (t.metadata?.id) validKeys.push('tmdb:' + t.metadata.id);
         if (t.metadata?.poster) validUrls.push(t.metadata.poster);
         if (t.metadata?.backdrop) validUrls.push(t.metadata.backdrop);
         if (t.archivos) {
           for (const f of t.archivos) {
+            if (f.key) validKeys.push(String(f.key));
+            if (f.tmdbId) validKeys.push('tmdb:' + f.tmdbId);
             if (f.metadata?.poster) validUrls.push(f.metadata.poster);
           }
         }
       }
       const res = await optimizePosterCache(validUrls);
+
+      let pruneMsg = '';
+      const ovBytes = getOverridesSizeBytes();
+      if (ovBytes > 1024 * 1024) {
+        msg.textContent = 'Overrides > 1 MB: limpiando identificaciones de títulos que ya no están…';
+        const pr = await pruneOverrides(validKeys, sync);
+        pruneMsg = pr.removed
+          ? ` · Overrides: ${pr.removed} entradas eliminadas (${(pr.bytes / 1024).toFixed(0)} KB)`
+          : ' · Overrides: sin entradas huérfanas';
+      }
+
       await refreshStats();
-      msg.textContent = `✓ Caché optimizada: ${res.deleted} portadas obsoletas eliminadas (${res.freedMb} MB liberados).`;
+      msg.textContent = `✓ Caché optimizada: ${res.deleted} portadas obsoletas eliminadas (${res.freedMb} MB liberados).${pruneMsg}`;
     } catch (e) {
-      msg.textContent = 'Error al optimizar la caché: ' + e.message;
-    } finally {
-      btn.disabled = false;
+      msg.textContent = 'Error al optimizar: ' + (e?.message || e);
     }
+    btn.disabled = false;
   });
 
   overlay.querySelector('#btn-clear-cache')?.addEventListener('click', async () => {
