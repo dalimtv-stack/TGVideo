@@ -14,7 +14,7 @@ import { loadPoster, prewarmPosterCache, memoryCache } from './metadata/posterCa
 import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
 import { loadGlobalConfig } from './settings/global.js';
-import { loadOverrides } from './metadata/overrides.js';
+import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 
@@ -349,7 +349,24 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       if (document.querySelector('.home-screen')) showHome(tg, sync, profile);
     }).catch(e => console.warn('[library] comprobación fallida', e));
   }
-  const titles = TITLES_CACHE || [];
+  let titles = TITLES_CACHE || [];
+
+  // Aplicar overrides (incl. reenvíos por TMDB) y re-agrupar películas
+  for (const t of titles) {
+    let ov = getOverride(t.id);
+    if (!ov && t.tmdbId) ov = getOverrideByTmdbId(t.tmdbId);
+    if (!ov && t.archivos) {
+      for (const f of t.archivos) {
+        if (f.tmdbId) { ov = getOverrideByTmdbId(f.tmdbId); if (ov) break; }
+      }
+    }
+    if (ov) {
+      t.metadata = ov;
+      t.tmdbId = ov.id || t.tmdbId;
+    }
+  }
+  titles = mergeMoviesByTmdb(titles);
+  TITLES_CACHE = titles;
 
   // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
   await prewarmPosterCache(titles);
@@ -438,8 +455,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
     }
     if (!el) {
-      // Al cargar un perfil: enfocar primera cajetilla de Seguir viendo (o la primera de la siguiente fila si está vacía)
-      el = document.querySelector('.row-track .lib-card[data-focusable]');
+      // Primera tarjeta de vídeo, nunca el botón "+"
+      el = document.querySelector('.row-track .lib-card[data-focusable]:not(.row-expand-card)');
     }
     if (!el) {
       el = document.querySelector('[data-focusable]');
@@ -501,7 +518,16 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       applyDetailMetadata(title, profile);
       if (title.isSaga) applySagaFilmMetadata(title);
     }
-  } });
+  } }).then(() => {
+    // Tras enriquecer, re-agrupar películas con el mismo TMDB
+    if (!metadataController.signal.aborted && TITLES_CACHE) {
+      const before = TITLES_CACHE.length;
+      TITLES_CACHE = mergeMoviesByTmdb(TITLES_CACHE);
+      if (TITLES_CACHE.length !== before && document.querySelector('.home-screen')) {
+        showHome(tg, sync, profile);
+      }
+    }
+  }).catch(() => {});
 }
 
 function applySagaFilmMetadata(t) {
