@@ -14,7 +14,7 @@ import { loadPoster, prewarmPosterCache, memoryCache } from './metadata/posterCa
 import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
 import { loadGlobalConfig } from './settings/global.js';
-import { showProfileMenu, profileAvatar } from './ui/settings.js';
+import { showProfileMenu, profileAvatar, applyProfileScale } from './ui/settings.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 
 const kv = createKV();
@@ -233,6 +233,7 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
 
 let CHECKED = false;
 async function showHome(tg, sync, profile, { reload = false, focusTitleId = null } = {}) {
+  applyProfileScale(profile);
   setBackHandler(() => showProfileSelector(tg, sync));
   const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
   if (reload) {
@@ -312,18 +313,25 @@ async function showHome(tg, sync, profile, { reload = false, focusTitleId = null
   });
 
 
-  const toFocus = focusTitleId || LAST_OPENED_TITLE_ID;
   setTimeout(() => {
     let el = null;
-    if (toFocus) {
-      el = document.querySelector(`.lib-card[data-title="${toFocus}"]`);
+    if (focusTitleId) {
+      el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
     }
     if (!el) {
-      el = document.querySelector('.lib-card[data-title], [data-focusable]');
+      // Al cargar un perfil: enfocar primera cajetilla de Seguir viendo (o la primera de la siguiente fila si está vacía)
+      el = document.querySelector('.row-track .lib-card[data-focusable]');
+    }
+    if (!el) {
+      el = document.querySelector('[data-focusable]');
     }
     if (el) {
       el.focus();
-      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      const parentRow = el.closest('.row');
+      if (parentRow) {
+        parentRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+      }
+      el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
     }
   }, 80);
   metadataController?.abort();
