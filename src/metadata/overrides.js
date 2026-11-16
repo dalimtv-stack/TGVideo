@@ -16,6 +16,16 @@ export function getOverride(key) {
   return key != null ? state.overrides[String(key)] || null : null;
 }
 
+/** Busca un override por ID de TMDB (útil para reenvíos con otro messageId). */
+export function getOverrideByTmdbId(tmdbId) {
+  if (tmdbId == null || tmdbId === '') return null;
+  const want = String(tmdbId);
+  for (const v of Object.values(state.overrides || {})) {
+    if (v && String(v.id) === want) return v;
+  }
+  return null;
+}
+
 export async function loadOverrides(sync) {
   syncRef = sync || syncRef;
   const local = await kv.get(KV_KEY).catch(() => null);
