@@ -1,3 +1,4 @@
+// src/player/player.js
 // Reproductor TGVideo: Estilo Stremio con OSD inferior, controles TV D-Pad, pistas y soporte de motor
 import Artplayer from 'artplayer';
 import { saveProgress, loadProgress } from './progress.js';
@@ -432,6 +433,8 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
     }
   };
 
+  const OSD_TIMEOUT_MS = 1500;
+
   const showOsd = () => {
     osd.classList.remove('is-hidden');
     clearTimeout(osdTimer);
@@ -439,7 +442,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       osdTimer = setTimeout(() => {
         osd.classList.add('is-hidden');
         if (osd.contains(document.activeElement)) document.activeElement.blur();
-      }, 3500);
+      }, OSD_TIMEOUT_MS);
     }
   };
 
@@ -450,6 +453,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
   };
 
   playerEl.addEventListener('mousemove', showOsd);
+  playerEl.addEventListener('keydown', showOsd, true);
   playerEl.addEventListener('click', (e) => {
     if (!e.target.closest('.player-osd-bottom, .player-osd-top, button')) {
       if (osd.classList.contains('is-hidden')) showOsd();
@@ -459,11 +463,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 
   video.addEventListener('play', () => {
     updatePlayIcons();
-    clearTimeout(osdTimer);
-    osdTimer = setTimeout(() => {
-      osd.classList.add('is-hidden');
-      if (osd.contains(document.activeElement)) document.activeElement.blur();
-    }, 2800);
+    showOsd();
   });
 
   video.addEventListener('pause', () => {
@@ -788,7 +788,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
       } else if (cur === scrubber) {
         mount.querySelector('#pl-btn-playpause')?.focus();
       } else if (cur?.classList.contains('player-ctrl-btn')) {
-        hideOsd();
+        showOsd();
       } else {
         scrubber.focus();
       }
@@ -837,7 +837,9 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
-    const mime = doc?.mimeType || file.mimeType || file.mime || 'video/mp4';
+    const isMkv = (doc?.mimeType || file.mimeType || file.mime || '').toLowerCase().includes('matroska')
+      || (file.fileName || file.label || '').toLowerCase().endsWith('.mkv');
+    const mime = isMkv ? 'video/webm' : (doc?.mimeType || file.mimeType || file.mime || 'video/mp4');
     if (size > 0 && await streamingAvailable()) {
       status.textContent = 'Abriendo túnel de streaming…';
       stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
@@ -1020,6 +1022,8 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     }
   };
 
+  const OSD_TIMEOUT_MS = 1500;
+
   const showOsd = () => {
     osd.classList.remove('is-hidden');
     clearTimeout(osdTimer);
@@ -1027,7 +1031,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       osdTimer = setTimeout(() => {
         osd.classList.add('is-hidden');
         if (osd.contains(document.activeElement)) document.activeElement.blur();
-      }, 3500);
+      }, OSD_TIMEOUT_MS);
     }
   };
 
@@ -1038,6 +1042,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
   };
 
   playerEl.addEventListener('mousemove', showOsd);
+  playerEl.addEventListener('keydown', showOsd, true);
   playerEl.addEventListener('click', (e) => {
     if (!e.target.closest('.player-osd-bottom, .player-osd-top, button')) {
       if (osd.classList.contains('is-hidden')) showOsd();
@@ -1371,7 +1376,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       } else if (cur === scrubber) {
         mount.querySelector('#pl-btn-playpause')?.focus();
       } else if (cur?.classList.contains('player-ctrl-btn')) {
-        hideOsd();
+        showOsd();
       } else {
         scrubber.focus();
       }
@@ -1424,7 +1429,9 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
-    const mime = doc?.mimeType || file.mimeType || file.mime || 'video/mp4';
+    const isMkv = (doc?.mimeType || file.mimeType || file.mime || '').toLowerCase().includes('matroska')
+      || (file.fileName || file.label || '').toLowerCase().endsWith('.mkv');
+    const mime = isMkv ? 'video/webm' : (doc?.mimeType || file.mimeType || file.mime || 'video/mp4');
     if (size > 0 && await streamingAvailable()) {
       status.textContent = 'Abriendo túnel de streaming…';
       stream = openStream({ client, media: msg.media, size, mime, name: file.label || 'video' });
@@ -1573,14 +1580,16 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
     });
 
     art.on('video:canplay', checkTracks);
+    if (video.textTracks) {
+      video.textTracks.addEventListener('addtrack', checkTracks);
+    }
+    if (video.audioTracks) {
+      video.audioTracks.addEventListener('addtrack', checkTracks);
+    }
 
     art.on('video:play', () => {
       updatePlayIcons();
-      clearTimeout(osdTimer);
-      osdTimer = setTimeout(() => {
-        osd.classList.add('is-hidden');
-        if (osd.contains(document.activeElement)) document.activeElement.blur();
-      }, 2800);
+      showOsd();
     });
 
     art.on('video:pause', () => {
