@@ -34,3 +34,47 @@ export function titleState(title, progress) {
     || (title.tipo === 'serie' ? files.find(f => !progress[f.key]?.is_completed) : null);
   return { started, next: next || null, continueWatching: !!next && title.tipo === 'serie', updatedAt: lastAt };
 }
+
+// Funciones de Favoritos y Visto por perfil
+const favKey = (pid) => `tgv_favorites_${pid}`;
+
+export function loadFavorites(pid) {
+  try { return JSON.parse(localStorage.getItem(favKey(pid)) || '[]'); } catch { return []; }
+}
+
+export function isFavorite(pid, titleId) {
+  if (!pid || !titleId) return false;
+  return loadFavorites(pid).includes(String(titleId));
+}
+
+export function toggleFavorite(pid, titleId) {
+  if (!pid || !titleId) return false;
+  const list = loadFavorites(pid);
+  const idStr = String(titleId);
+  const idx = list.indexOf(idStr);
+  if (idx >= 0) list.splice(idx, 1);
+  else list.unshift(idStr);
+  try { localStorage.setItem(favKey(pid), JSON.stringify(list)); } catch (_) {}
+  return list.includes(idStr);
+}
+
+export function toggleAllWatched(pid, title) {
+  if (!pid || !title?.archivos?.length) return false;
+  const all = loadProgress(pid);
+  const files = title.archivos;
+  const isAllDone = files.every(f => all[f.key]?.is_completed);
+  const targetCompleted = !isAllDone;
+  const now = Date.now();
+
+  for (const f of files) {
+    const cur = all[f.key] || {};
+    all[f.key] = {
+      current_time: targetCompleted ? (f.duration || cur.duration || 1) : 0,
+      duration: f.duration || cur.duration || 0,
+      is_completed: targetCompleted,
+      updated_at: now
+    };
+  }
+  writeFullProgress(pid, all);
+  return targetCompleted;
+}
