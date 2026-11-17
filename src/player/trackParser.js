@@ -29,11 +29,20 @@ export async function detectTracksFromUrl(url) {
   if (TRACK_CACHE.has(url)) return TRACK_CACHE.get(url);
   const promise = (async () => {
     try {
-      const head = await fetchRange(url, 0, 1024 * 1024);
+      let head = await fetchRange(url, 0, 1024 * 1024);
       if (!head || head.length < 16) return { audio: [], text: [] };
       if (isMp4Header(head)) {
-        const r = parseMp4(head);
+        let r = parseMp4(head);
         if (r.audio.length || r.text.length) return r;
+
+        // Ampliar lectura hasta 4 MB antes de buscar al final
+        const extended = await fetchRange(url, 0, 4 * 1024 * 1024);
+        if (extended && extended.length > head.length) {
+          head = extended;
+          r = parseMp4(head);
+          if (r.audio.length || r.text.length) return r;
+        }
+
         const size = await fetchSize(url);
         if (size > head.length) {
           const tailLen = Math.min(size, 8 * 1024 * 1024);
@@ -46,9 +55,22 @@ export async function detectTracksFromUrl(url) {
         return r;
       }
       if (isMkvHeader(head)) {
-        const r = parseMkv(head);
+        let r = parseMkv(head);
         if (r.audio.length || r.text.length) return r;
-        return scanMkvTracks(head);
+        let s = scanMkvTracks(head);
+        if (s.audio.length || s.text.length) return s;
+
+        // En archivos MKV grandes con fuentes o metadatos extensos,
+        // el bloque Tracks puede encontrarse a partir del segundo megabyte.
+        // Ampliamos la ventana de lectura de cabecera hasta 4 MB.
+        const extended = await fetchRange(url, 0, 4 * 1024 * 1024);
+        if (extended && extended.length > head.length) {
+          head = extended;
+          r = parseMkv(head);
+          if (r.audio.length || r.text.length) return r;
+          return scanMkvTracks(head);
+        }
+        return { audio: [], text: [] };
       }
       return { audio: [], text: [] };
     } catch (e) {
