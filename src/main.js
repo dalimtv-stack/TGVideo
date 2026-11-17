@@ -6,7 +6,7 @@ import { loadLibrary } from './library/channels.js';
 import { buildTitles, mergeMoviesByTmdb } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
 import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
-import { loadProgress, writeFullProgress, titleState } from './player/progress.js';
+import { loadProgress, writeFullProgress, titleState, isFavorite, toggleFavorite, toggleAllWatched } from './player/progress.js';
 import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
 import { enrichTitles, enrichTitle, fetchSeasonEpisodes } from './metadata/tmdb.js';
@@ -589,18 +589,21 @@ function applyDetailMetadata(t, profile) {
     synopsis.textContent = metadata.overview;
     synopsis.hidden = false;
     if (toggle) {
-      if (metadata.overview.length > 120) {
-        toggle.hidden = false;
-        toggle.textContent = 'más';
-        synopsis.classList.remove('expanded');
-        toggle.onclick = (e) => {
-          e.preventDefault();
-          const exp = synopsis.classList.toggle('expanded');
-          toggle.textContent = exp ? 'menos' : 'más';
-        };
-      } else {
-        toggle.hidden = true;
-      }
+      synopsis.classList.remove('expanded');
+      requestAnimationFrame(() => {
+        const isClamped = synopsis.scrollHeight > synopsis.clientHeight + 4;
+        if (isClamped) {
+          toggle.hidden = false;
+          toggle.textContent = 'más';
+          toggle.onclick = (e) => {
+            e.preventDefault();
+            const exp = synopsis.classList.toggle('expanded');
+            toggle.textContent = exp ? 'menos' : 'más';
+          };
+        } else {
+          toggle.hidden = true;
+        }
+      });
     }
   }
   const info = detail.querySelector('.detail-metadata');
@@ -669,7 +672,17 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
             <p class="detail-syn" ${t.archivos[0]?.synopsis ? '' : 'hidden'}>${esc(t.archivos[0]?.synopsis || '')}</p>
             <button class="btn-syn-toggle" type="button" hidden data-focusable>más</button>
           </div>
-          ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
+          <div class="detail-actions-row">
+            ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
+            <button class="btn-icon-action" data-focusable id="d-fav" type="button" title="Añadir a favoritos" aria-label="Añadir a favoritos">
+              <span class="btn-action-icon" aria-hidden="true">★</span>
+              <span class="btn-action-tooltip">Añadir a favoritos</span>
+            </button>
+            <button class="btn-icon-action" data-focusable id="d-watched" type="button" title="Marcar como visto" aria-label="Marcar como visto">
+              <span class="btn-action-icon" aria-hidden="true">✓</span>
+              <span class="btn-action-tooltip">Marcar como visto</span>
+            </button>
+          </div>
         </div>
       </div>
       ${seasonsBarHtml}
@@ -829,6 +842,57 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   }
   document.getElementById('d-back').onclick = back;
   document.getElementById('d-play')?.addEventListener('click', () => play(st.next));
+
+  const favBtn = document.getElementById('d-fav');
+  const watchedBtn = document.getElementById('d-watched');
+
+  const updateActionButtons = () => {
+    if (favBtn && profile?.id) {
+      const fav = isFavorite(profile.id, t.id);
+      favBtn.classList.toggle('active', fav);
+      const tip = fav ? 'Quitar de favoritos' : 'Añadir a favoritos';
+      favBtn.title = tip;
+      favBtn.setAttribute('aria-label', tip);
+      const tipEl = favBtn.querySelector('.btn-action-tooltip');
+      if (tipEl) tipEl.textContent = tip;
+    }
+    if (watchedBtn && profile?.id) {
+      const prg = loadProgress(profile.id);
+      const allWatched = (t.archivos || []).length > 0 && (t.archivos || []).every(f => prg[f.key]?.is_completed);
+      watchedBtn.classList.toggle('active', allWatched);
+      const tip = allWatched ? 'Marcar como no visto' : 'Marcar como visto';
+      watchedBtn.title = tip;
+      watchedBtn.setAttribute('aria-label', tip);
+      const tipEl = watchedBtn.querySelector('.btn-action-tooltip');
+      if (tipEl) tipEl.textContent = tip;
+    }
+  };
+
+  updateActionButtons();
+
+  if (favBtn && profile?.id) {
+    favBtn.onclick = (e) => {
+      e.preventDefault();
+      toggleFavorite(profile.id, t.id);
+      updateActionButtons();
+    };
+  }
+
+  if (watchedBtn && profile?.id) {
+    watchedBtn.onclick = (e) => {
+      e.preventDefault();
+      toggleAllWatched(profile.id, t);
+      updateActionButtons();
+      const prg = loadProgress(profile.id);
+      const newSt = titleState(t, prg);
+      const playBtnEl = document.getElementById('d-play');
+      if (playBtnEl) {
+        const lbl = formatPlayButtonLabel(t, newSt, prg);
+        if (lbl) playBtnEl.textContent = lbl;
+      }
+      renderEpisodes(currentSeason);
+    };
+  }
   focusFirst('#d-play, .season-btn.active, .ep');
 }
 
