@@ -147,17 +147,25 @@ function ensureTracksDetected(video) {
 
   const promise = (async () => {
     const native = await waitForTracks(video, { timeoutMs: 800 });
-    const result = { audio: native.audio.slice(), text: native.text.slice() };
+    let audio = native.audio.slice();
+    let text = native.text.slice();
 
     const src = video.currentSrc || video.src;
-    if ((result.audio.length === 0 || result.text.length === 0) && src) {
+    if (src) {
       try {
         const parsed = await detectTracksFromUrl(src);
-        if (!result.audio.length) result.audio = parsed.audio;
-        if (!result.text.length) result.text = parsed.text;
-      } catch (_) {}
+        // Priorizar las pistas reales extraídas de la cabecera cuando superen a las nativas del navegador
+        if (parsed.audio && (parsed.audio.length > audio.length || audio.length === 0)) {
+          audio = parsed.audio;
+        }
+        if (parsed.text && (parsed.text.length > text.length || text.length === 0)) {
+          text = parsed.text;
+        }
+      } catch (e) {
+        console.warn('[player] Error al detectar pistas:', e);
+      }
     }
-    return result;
+    return { audio, text };
   })();
 
   TRACKS_BY_VIDEO.set(video, promise);
@@ -1640,18 +1648,88 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
       });
     }
 
-    const checkTracks = () => {
-      // No añadimos menús internos de ArtPlayer: usamos nuestro OSD.
-      // Aquí solo actualizamos títulos de botones si hace falta.
+    const checkTracks = async () => {
+      const tracksData = await ensureTracksDetected(video);
+      const audios = tracksData.audio;
+      const subs = tracksData.text;
+
+      // Actualizar títulos en botones del OSD
       const btnAudio = mount.querySelector('#pl-btn-audio');
       const btnSubs = mount.querySelector('#pl-btn-subs');
       if (btnAudio) {
-        const n = getAudioTracks(video).length;
-        btnAudio.title = n > 1 ? `Pistas de Audio (${n})` : 'Pistas de Audio';
+        btnAudio.title = audios.length > 1 ? `Pistas de Audio (${audios.length})` : 'Pistas de Audio';
       }
       if (btnSubs) {
-        const n = getTextTracks(video).length;
-        btnSubs.title = n > 0 ? `Subtítulos (${n})` : 'Subtítulos';
+        btnSubs.title = subs.length > 0 ? `Subtítulos (${subs.length})` : 'Subtítulos';
+      }
+
+      // Conectar selección de pistas tanto al menú OSD como al menú interno de ArtPlayer
+      if (audios.length > 1) {
+        try {
+          if (!art.setting.find('audioTracks')) {
+            art.setting.add({
+              name: 'audioTracks',
+              width: 220,
+              html: 'Pista de audio',
+              tooltip: 'Audio',
+              selector: audios.map((track, i) => {
+                const isNative = track.native !== false && typeof track.enabled === 'boolean';
+                return {
+                  default: isNative ? !!track.enabled : (i === 0),
+                  html: isNative ? formatTrackName(track, i, "Audio") : (track.label || langName(track.language) || `Audio ${i + 1}`),
+                  value: i,
+                };
+              }),
+              onSelect(item) {
+                const idx = Number(item.value);
+                const track = audios[idx];
+                if (track && track.native === false) {
+                  showToast(playerEl, "Esta pista no se puede cambiar en este dispositivo. Prueba en Safari/iOS.");
+                } else if (audios.length > 0 && audios[idx]) {
+                  audios.forEach((t, i) => { t.enabled = (i === idx); });
+                  showToast(playerEl, `✓ Audio: ${item.html}`);
+                }
+                return item.html;
+              },
+            });
+          }
+        } catch (_) {}
+      }
+
+      if (subs.length > 0) {
+        try {
+          if (!art.setting.find('nativeSubtitles')) {
+            art.setting.add({
+              name: 'nativeSubtitles',
+              width: 220,
+              html: 'Subtítulos',
+              tooltip: 'Subtítulos',
+              selector: [
+                { default: subs.every(t => t.mode !== 'showing'), html: 'Desactivados', value: -1 },
+                ...subs.map((track, i) => {
+                  const isNative = track.native !== false && typeof track.mode === 'string';
+                  return {
+                    default: isNative && track.mode === 'showing',
+                    html: isNative ? formatTrackName(track, i, "Subtítulo") : (track.label || langName(track.language) || `Subtítulo ${i + 1}`),
+                    value: i,
+                  };
+                }),
+              ],
+              onSelect(item) {
+                const idx = Number(item.value);
+                if (idx >= 0 && subs[idx]?.native === false) {
+                  showToast(playerEl, "Esta pista no se puede mostrar en este dispositivo. Prueba en Safari/iOS.");
+                  return item.html;
+                }
+                subs.forEach((t, i) => {
+                  if (typeof t.mode === 'string') t.mode = (i === idx) ? "showing" : "disabled";
+                });
+                showToast(playerEl, idx === -1 ? "Subtítulos desactivados" : `✓ Subtítulos: ${item.html}`);
+                return item.html;
+              },
+            });
+          }
+        } catch (_) {}
       }
     };
 
