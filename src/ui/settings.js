@@ -239,16 +239,24 @@ function profileSettings(profile, sync, onChanged) {
     profile.skip_seconds = skipSeconds;
     profile.ui_scale = scaleIndex;
 
-    button.disabled = true;
-    try {
-      const remote = await sync.pullProfile(profile.id);
-      if (!remote) throw new Error('No se pudo leer el perfil. Inténtalo de nuevo.');
-      const changed = { ...remote.profile, name, avatar: form.elements.avatar.value, player, skip_seconds: skipSeconds, ui_scale: scaleIndex };
-      await sync.pushProfile({ ...remote, profile: changed, progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {}) });
-      Object.assign(profile, changed);
-      close(); onChanged();
-    } catch (error) { form.querySelector('[role="status"]').textContent = error.message; }
-    finally { button.disabled = false; }
+    // Aplicar inmediatamente cambios locales y cerrar sin bloquear si falla la sincronización
+    profile.name = name;
+    profile.avatar = form.elements.avatar.value;
+    close();
+    onChanged();
+
+    // Sincronizar en segundo plano sin dejar la ventana bloqueada
+    (async () => {
+      try {
+        const remote = await sync.pullProfile(profile.id);
+        if (!remote) return;
+        const changed = { ...remote.profile, name, avatar: form.elements.avatar.value, player, skip_seconds: skipSeconds, ui_scale: scaleIndex };
+        await sync.pushProfile({ ...remote, profile: changed, progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {}) });
+        Object.assign(profile, changed);
+      } catch (err) {
+        console.warn('[settings] Error al sincronizar perfil en segundo plano:', err);
+      }
+    })();
   };
 }
 
