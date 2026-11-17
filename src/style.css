@@ -1957,7 +1957,7 @@ html, body {
 /* ===== Siguiente episodio (cuenta atrás) ===== */
 .player-next-up {
   position: absolute;
-  left: max(1rem, env(safe-area-inset-left, 0px));
+  right: max(1rem, env(safe-area-inset-left, 0px));
   bottom: max(5.5rem, calc(env(safe-area-inset-bottom, 0px) + 4.5rem));
   z-index: 40;
   pointer-events: auto;
