@@ -387,7 +387,7 @@ function move(dir) {
     if (isHoriz) {
       const sameRow = yOverlap > Math.min(curRect.height, r.height) * 0.25;
       const rowPenalty = sameRow ? 0 : 50000;
-      score = Math.abs(dx) + Math.abs(dy) * 6 + rowPenalty;
+      score = Math.abs(dx) + Math.abs(dy) * 2 + (sameRow ? 0 : 2000);
     } else {
       const sameCol = xOverlap > Math.min(curRect.width, r.width) * 0.25;
       const colPenalty = sameCol ? 0 : 50000;
