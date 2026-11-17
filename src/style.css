@@ -2110,3 +2110,84 @@ video::cue {
     align-items: start;
   }
 }
+
+/* Botonera de acciones en la ficha (Reproducir, Favoritos, Visto) */
+.detail-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+
+.btn-icon-action {
+  position: relative;
+  width: calc(44px * var(--ui-scale, 1.12));
+  height: calc(44px * var(--ui-scale, 1.12));
+  min-width: calc(44px * var(--ui-scale, 1.12));
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  outline: none;
+  transition: transform 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-icon-action .btn-action-icon {
+  font-size: calc(1.3rem * var(--ui-font-scale, 1));
+  line-height: 1;
+}
+
+.btn-icon-action:hover,
+.btn-icon-action:focus,
+.btn-icon-action.dpad-focused {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: #fff;
+  transform: scale(1.08);
+}
+
+.btn-icon-action.active {
+  color: #e50914;
+  border-color: #e50914;
+  background: rgba(229, 9, 20, 0.15);
+}
+
+/* Tooltip emergente que se muestra sólo con foco o hover */
+.btn-icon-action .btn-action-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #111;
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s, visibility 0.15s;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  border: 1px solid #444;
+  z-index: 10;
+}
+
+.btn-icon-action:hover .btn-action-tooltip,
+.btn-icon-action:focus .btn-action-tooltip,
+.btn-icon-action.dpad-focused .btn-action-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Forzar line-clamp a 3 líneas en sinopsis para evitar botón "más" innecesario */
+.detail-syn:not(.expanded) {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
