@@ -2024,3 +2024,22 @@ video::cue {
   padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
   padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
 }
+
+/* ===== Ajustes nov-2026 ===== */
+/* Foco de temporadas sin recorte */
+.seasons-track { padding-top: 10px; margin-top: -10px; padding-left: 6px; padding-right: 6px; }
+/* "+" pegado a la primera tarjeta y filas alineadas */
+.row-expand-card { margin-left: 0 !important; margin-right: calc(-0.7rem * var(--ui-scale, 1.12)); }
+.row-track { align-items: flex-start; overflow-y: hidden; min-height: calc(260px * var(--ui-scale, 1.12)); }
+.row-track .lib-card-name { min-height: 2.6em; }
+/* Subtítulos iPhone: vídeo a pantalla completa sin desplazar la caja de subtítulos */
+.player-native, .player { padding-bottom: 0; }
+.player video { position: absolute; inset: 0; width: 100%; height: 100%; }
+.player-next-up-cancel:focus { outline: 3px solid #fff; outline-offset: 2px; }
+/* Ajustes de perfil en TV: dos columnas sin scroll */
+@media (min-width: 900px) and (orientation: landscape) and (max-height: 1100px) {
+  .settings-dialog:has(form) { width: min(980px, 94vw); max-height: 94vh; }
+  .settings-dialog form { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem 1.5rem; align-items: start; }
+  .settings-dialog form > :last-child { grid-column: 2; }
+  .settings-dialog header { margin-bottom: .8rem; }
+}

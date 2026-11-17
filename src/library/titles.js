@@ -51,6 +51,14 @@ function makeTitle({ id, ch, name, origen, seccion, files }) {
 const YEAR_RE = /\b((?:19|20)\d{2})\b/;
 const YEAR_GROUP_RE = /^(?:por\s+año|por\s+ano|años|anos|décadas|decadas|por\s+década|por\s+decada)$/i;
 
+// Nombre de la serie a partir del archivo: texto anterior a S01E02 / 1x02 / T1E02
+export function seriesNameFromFile(fileName = '') {
+  const base = String(fileName).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '').replace(/[._]+/g, ' ');
+  const m = base.match(/^(.*?)[\s\-–—\[(]*(?:[ST]\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|temp(?:orada)?\s*\d)/i);
+  const name = (m ? m[1] : base).replace(/[\s\-–—:]+$/, '').replace(/\s+/g, ' ').trim();
+  return name || '(Sin sección)';
+}
+
 function movieName(file) {
   return String(file.fileName || file.label || `video_${file.messageId}`)
     .replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '')
@@ -186,7 +194,9 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
         tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
       });
     } else if (ch.macro) {
-      for (const [sec, fs] of splitBySection(files)) {
+      const isSeries = ch.category === 'Series';
+      const keyed = files.map(f => (f.section || !isSeries) ? f : { ...f, section: seriesNameFromFile(f.fileName) });
+      for (const [sec, fs] of splitBySection(keyed)) {
         if (fs && fs.length > 0) {
           titles.push(makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs }));
         }

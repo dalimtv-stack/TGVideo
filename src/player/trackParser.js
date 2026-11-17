@@ -31,8 +31,25 @@ export async function detectTracksFromUrl(url) {
     try {
       const head = await fetchRange(url, 0, 1024 * 1024);
       if (!head || head.length < 16) return { audio: [], text: [] };
-      if (isMp4Header(head)) return parseMp4(head);
-      if (isMkvHeader(head)) return parseMkv(head);
+      if (isMp4Header(head)) {
+        const r = parseMp4(head);
+        if (r.audio.length || r.text.length) return r;
+        const size = await fetchSize(url);
+        if (size > head.length) {
+          const tailLen = Math.min(size, 8 * 1024 * 1024);
+          const tail = await fetchRange(url, size - tailLen, size);
+          if (tail) {
+            const off = findBox(tail, 'moov');
+            if (off >= 0) return parseMp4(tail.subarray(off));
+          }
+        }
+        return r;
+      }
+      if (isMkvHeader(head)) {
+        const r = parseMkv(head);
+        if (r.audio.length || r.text.length) return r;
+        return scanMkvTracks(head);
+      }
       return { audio: [], text: [] };
     } catch (e) {
       console.warn('[trackParser] fallo', e);
@@ -80,6 +97,42 @@ async function fetchRange(url, start, end) {
   } catch {
     return null;
   }
+}
+
+async function fetchSize(url) {
+  try {
+    const res = await fetch(url, { headers: { Range: 'bytes=0-1' } });
+    const cr = res.headers.get('Content-Range') || '';
+    const m = /\/(\d+)$/.exec(cr);
+    try { res.body?.cancel?.(); } catch (_) {}
+    return m ? Number(m[1]) : 0;
+  } catch { return 0; }
+}
+
+function findBox(buf, type) {
+  const a = type.charCodeAt(0), b = type.charCodeAt(1), c = type.charCodeAt(2), d = type.charCodeAt(3);
+  for (let i = 4; i + 4 <= buf.length; i++) {
+    if (buf[i] === a && buf[i + 1] === b && buf[i + 2] === c && buf[i + 3] === d) return i - 4;
+  }
+  return -1;
+}
+
+// Busca directamente el elemento Tracks (1654AE6B) cuando el recorrido secuencial falla
+function scanMkvTracks(buf) {
+  for (let i = 0; i + 4 < buf.length; i++) {
+    if (buf[i] === 0x16 && buf[i + 1] === 0x54 && buf[i + 2] === 0xAE && buf[i + 3] === 0x6B) {
+      return parseMkvFromTracks(buf.subarray(i));
+    }
+  }
+  return { audio: [], text: [] };
+}
+
+function parseMkvFromTracks(sub) {
+  const head = new Uint8Array(5 + 12 + sub.length);
+  head.set([0x1A, 0x45, 0xDF, 0xA3, 0x80], 0); // EBML vacío
+  head.set([0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF], 5); // Segment desconocido
+  head.set(sub, 17);
+  return parseMkv(head);
 }
 
 function isMp4Header(buf) {
@@ -189,7 +242,9 @@ function parseMkv(buf) {
     while (length <= 8 && !(first & mask)) { mask >>= 1; length++; }
     if (length > 8 || pos + length > buf.length) return null;
     let value = isId ? first : (first & (mask - 1));
-    for (let i = 1; i < length; i++) value = value * 256 + buf[pos + i];
+    let allOnes = !isId && (first & (mask - 1)) === (mask - 1);
+    for (let i = 1; i < length; i++) { value = value * 256 + buf[pos + i]; if (buf[pos + i] !== 0xFF) allOnes = false; }
+    if (allOnes) value = buf.length; // tamaño desconocido: hasta el final del búfer
     return { value, length };
   };
 

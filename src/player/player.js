@@ -472,15 +472,29 @@ function formatNextLabel(title, nextFile) {
 
 function bindNextUp({ getTime, getDuration, playerEl, nextFile, title, onNext, onCancel }) {
   if (!nextFile || typeof onNext !== 'function') return { check: () => {}, remove: () => {} };
-  const COUNT = 12;
-  const windowSec = 25;
+  const COUNT = 10;
+  const windowSec = 45;
   let shown = false;
   let done = false;
   let tickTimer = null;
   let el = null;
 
+  const onKey = (e) => {
+    if (!el) return;
+    const ok = e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 23;
+    if (!ok) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    cancel();
+  };
+  const cancel = () => {
+    done = true;
+    remove();
+    onCancel?.();
+  };
   const remove = () => {
     clearInterval(tickTimer);
+    document.removeEventListener('keydown', onKey, true);
     el?.remove();
     el = null;
     shown = false;
@@ -501,12 +515,10 @@ function bindNextUp({ getTime, getDuration, playerEl, nextFile, title, onNext, o
     playerEl.appendChild(el);
     let left = COUNT;
     const countEl = el.querySelector('.player-next-up-count');
-    el.querySelector('.player-next-up-cancel')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      done = true;
-      remove();
-      onCancel?.();
-    });
+    const cancelBtn = el.querySelector('.player-next-up-cancel');
+    cancelBtn?.addEventListener('click', (e) => { e.stopPropagation(); cancel(); });
+    document.addEventListener('keydown', onKey, true);
+    setTimeout(() => cancelBtn?.focus({ preventScroll: true }), 30);
     tickTimer = setInterval(() => {
       left -= 1;
       if (countEl) countEl.textContent = String(Math.max(0, left));
@@ -1082,6 +1094,7 @@ async function playNative({ client, peerOf, file, title, profile, resumeAt, skip
           sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
         }
       }
+      if (!nextFile || typeof onNext !== 'function') close();
     });
 
     video.addEventListener('error', () => {
@@ -1704,6 +1717,7 @@ async function playArtplayer({ client, peerOf, file, title, profile, resumeAt = 
           sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
         }
       }
+      if (!nextFile || typeof onNext !== 'function') close();
     });
 
     art.on('video:error', () => {
