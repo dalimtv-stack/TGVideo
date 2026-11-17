@@ -109,67 +109,76 @@ function profileSettings(profile, sync, onChanged) {
 
   const { overlay, close } = modal('Ajustes de perfil', `
     <form class="profile-settings-form">
-      <div class="settings-fields">
-        <label>Nombre
-          <input name="name" value="${esc(profile.name)}" required maxlength="60" data-focusable>
-        </label>
-        <label>Avatar
-          <select name="avatar" data-focusable>
-            ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
-          </select>
-        </label>
+      <div class="profile-settings-cols">
+        <div class="profile-settings-col">
+          <div class="settings-fields">
+            <label>Nombre
+              <input name="name" value="${esc(profile.name)}" required maxlength="60" data-focusable>
+            </label>
+            <label>Avatar
+              <select name="avatar" data-focusable>
+                ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
+              </select>
+            </label>
+          </div>
+
+          <fieldset class="settings-section">
+            <legend class="settings-legend">Reproductor</legend>
+            <div class="settings-radios">
+              <label class="settings-radio-label ${currentPlayer !== 'native' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer !== 'native'}">
+                <input type="radio" name="player" value="artplayer" ${currentPlayer !== 'native' ? 'checked' : ''}>
+                <div class="settings-radio-info">
+                  <strong>ArtPlayer</strong>
+                  <small>Diseño cinemático, gestos táctiles, subtítulos y velocidad.</small>
+                </div>
+              </label>
+              <label class="settings-radio-label ${currentPlayer === 'native' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'native'}">
+                <input type="radio" name="player" value="native" ${currentPlayer === 'native' ? 'checked' : ''}>
+                <div class="settings-radio-info">
+                  <strong>Reproductor nativo</strong>
+                  <small>Recomendado en iPhone para seleccionar audios, subtítulos y AirPlay.</small>
+                </div>
+              </label>
+            </div>
+          </fieldset>
+        </div>
+
+        <div class="profile-settings-col">
+          <fieldset class="settings-section">
+            <legend class="settings-legend">Reproducción e Interfaz</legend>
+            <div class="settings-field-row">
+              <label class="settings-label-inline">
+                <span>Salto por doble toque / clic:</span>
+                <select name="skipSeconds" class="settings-select" data-focusable>
+                  <option value="5" ${currentSkip === 5 ? 'selected' : ''}>5 segundos</option>
+                  <option value="10" ${currentSkip === 10 ? 'selected' : ''}>10 segundos (por defecto)</option>
+                  <option value="15" ${currentSkip === 15 ? 'selected' : ''}>15 segundos</option>
+                  <option value="30" ${currentSkip === 30 ? 'selected' : ''}>30 segundos</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="settings-field-row ui-scale-setting">
+              <label class="settings-label-block">
+                <div class="ui-scale-header">
+                  <span>Tamaño de portadas y letras:</span>
+                  <strong class="ui-scale-value" id="ui-scale-label">${currentScaleLabel}</strong>
+                </div>
+                <input type="range" name="uiScale" class="settings-slider" min="0" max="6" step="1" value="${currentScaleIndex}" data-focusable>
+                <div class="ui-scale-ticks">
+                  <span>Diminuto</span>
+                  <span>Muy pequeño</span>
+                  <span>Pequeño</span>
+                  <span>Normal</span>
+                  <span>Grande</span>
+                  <span>Muy Grande</span>
+                  <span>Gigante</span>
+                </div>
+              </label>
+            </div>
+          </fieldset>
+        </div>
       </div>
-
-      <fieldset class="settings-section">
-        <legend class="settings-legend">Reproductor</legend>
-        <div class="settings-radios">
-          <label class="settings-radio-label ${currentPlayer !== 'native' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer !== 'native'}">
-            <input type="radio" name="player" value="artplayer" ${currentPlayer !== 'native' ? 'checked' : ''}>
-            <div class="settings-radio-info">
-              <strong>ArtPlayer</strong>
-              <small>Diseño cinemático, gestos táctiles, proporción, subtítulos y velocidad.</small>
-            </div>
-          </label>
-          <label class="settings-radio-label ${currentPlayer === 'native' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'native'}">
-            <input type="radio" name="player" value="native" ${currentPlayer === 'native' ? 'checked' : ''}>
-            <div class="settings-radio-info">
-              <strong>Reproductor nativo</strong>
-              <small>El que estaba antes. Recomendado en iPhone para seleccionar audios, subtítulos y AirPlay.</small>
-            </div>
-          </label>
-        </div>
-
-        <div class="settings-field-row">
-          <label class="settings-label-inline">
-            <span>Salto por doble toque / doble clic:</span>
-            <select name="skipSeconds" class="settings-select" data-focusable>
-              <option value="5" ${currentSkip === 5 ? 'selected' : ''}>5 segundos</option>
-              <option value="10" ${currentSkip === 10 ? 'selected' : ''}>10 segundos (por defecto)</option>
-              <option value="15" ${currentSkip === 15 ? 'selected' : ''}>15 segundos</option>
-              <option value="30" ${currentSkip === 30 ? 'selected' : ''}>30 segundos</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="settings-field-row ui-scale-setting">
-          <label class="settings-label-block">
-            <div class="ui-scale-header">
-              <span>Tamaño de portadas y letras:</span>
-              <strong class="ui-scale-value" id="ui-scale-label">${currentScaleLabel}</strong>
-            </div>
-            <input type="range" name="uiScale" class="settings-slider" min="0" max="6" step="1" value="${currentScaleIndex}" data-focusable>
-            <div class="ui-scale-ticks">
-              <span>Diminuto</span>
-              <span>Muy pequeño</span>
-              <span>Pequeño</span>
-              <span>Normal</span>
-              <span>Grande</span>
-              <span>Muy Grande</span>
-              <span>Gigante</span>
-            </div>
-          </label>
-        </div>
-      </fieldset>
 
       <p class="settings-status" role="status"></p>
       <button class="btn" data-focusable type="submit">Guardar</button>
