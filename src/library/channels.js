@@ -5,9 +5,9 @@
 
 import { Api } from 'telegram';
 
-const SEP = '::';
+const SEP_RE = /\s*::\s*/;
 const TSEP = ':';
-const POST = '::tgstorage';
+const TGSTORAGE_SUFFIX_RE = /\s*::\s*tgstorage\s*$/i;
 const VALID_CATEGORIES = ['series', 'películas', 'peliculas', 'movies', 'tv'];
 
 function normalizeCategory(cat) {
@@ -19,6 +19,7 @@ function normalizeCategory(cat) {
 
 /**
  * Parsea el título de un canal Telegram según la convención tgstorage.
+ * Soporta espacios variables, mayúsculas/minúsculas y chats/canales.
  * Ejemplos:
  *   1988:Por año::Películas::tgstorage
  *   Puñales por la espalda:Sagas::Películas::tgstorage
@@ -27,10 +28,12 @@ function normalizeCategory(cat) {
  *   2000-2010::Películas::tgstorage
  */
 export function parseChannelTitle(title) {
-  if (!title || !String(title).endsWith(POST)) return null;
+  if (!title) return null;
+  const rawTitle = String(title).trim();
+  if (!TGSTORAGE_SUFFIX_RE.test(rawTitle)) return null;
 
-  const body = title.slice(0, -POST.length); // quita ::tgstorage
-  const parts = body.split(SEP);
+  const body = rawTitle.replace(TGSTORAGE_SUFFIX_RE, '').trim();
+  const parts = body.split(SEP_RE);
   if (parts.length < 2) return null;
 
   const category = normalizeCategory(parts[parts.length - 1]);
@@ -39,9 +42,9 @@ export function parseChannelTitle(title) {
     return null;
   }
 
-  const head = parts.slice(0, -1).join(SEP);
+  const head = parts.slice(0, -1).join('::');
 
-  // Macro o Contenedor directo sin TSEP: Grupo::Categoría::tgstorage
+  // Macro o Contenedor directo sin TSEP: Grupo::Categoría::tgstorage (ej. HBO::Series::tgstorage)
   if (!head.includes(TSEP)) {
     const trimmedHead = head.trim();
     const isYear = /^(por a[ñn]o|a[ñn]os|d[ée]cadas|por d[ée]cada)s?$/i.test(trimmedHead) ||
@@ -57,9 +60,11 @@ export function parseChannelTitle(title) {
   }
 
   // Dedicado o clasificado: Nombre:Grupo::Categoría::tgstorage
-  const [name, group = ''] = head.split(TSEP);
-  const trimmedName = (name || '').trim();
-  const trimmedGroup = (group || 'Sin grupo').trim();
+  const colonIdx = head.indexOf(TSEP);
+  const name = head.slice(0, colonIdx).trim();
+  const group = head.slice(colonIdx + 1).trim();
+  const trimmedName = name || '';
+  const trimmedGroup = group || 'Sin grupo';
 
   // Contenedores por año (ej: 1988:Por año::Películas::tgstorage)
   const isYearContainer = category === 'Películas' && (
@@ -89,13 +94,15 @@ export async function loadLibrary(client) {
   const found = new Map();
 
   const add = (entity, top = 0) => {
-    if (!entity || entity.className !== 'Channel') return;
+    if (!entity) return;
+    // Soporte tanto para canales broadcast ('Channel') como grupos privados ('Chat' o supergrupos)
+    if (entity.className !== 'Channel' && entity.className !== 'Chat') return;
     const info = parseChannelTitle(entity.title || '');
     if (!info) return;
 
     found.set(String(entity.id), {
       id: String(entity.id),
-      hash: String(entity.accessHash),
+      hash: String(entity.accessHash || ''),
       name: info.name,
       group: info.group,
       category: info.category,
@@ -118,9 +125,22 @@ export async function loadLibrary(client) {
     console.warn('[library] search failed', e);
   }
 
-  // Recorrer diálogos
-  for await (const dialog of client.iterDialogs({})) {
-    add(dialog.entity, dialog.message?.id || 0);
+  // Recorrer diálogos activos
+  try {
+    for await (const dialog of client.iterDialogs({})) {
+      add(dialog.entity, dialog.message?.id || 0);
+    }
+  } catch (e) {
+    console.warn('[library] active dialogs scan failed', e);
+  }
+
+  // Recorrer diálogos archivados para no ignorar canales organizados en carpetas archivadas
+  try {
+    for await (const dialog of client.iterDialogs({ archived: true })) {
+      add(dialog.entity, dialog.message?.id || 0);
+    }
+  } catch (e) {
+    console.warn('[library] archived dialogs scan failed', e);
   }
 
   const list = [...found.values()];
