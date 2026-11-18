@@ -1,3 +1,4 @@
+
 name: Build Android APK
 
 on:
@@ -364,12 +365,12 @@ jobs:
                       String uri = parts[1];
 
                       if ("OPTIONS".equalsIgnoreCase(method)) {
-                          String resp = "HTTP/1.1 204 No Content\r\n" +
-                                  "Access-Control-Allow-Origin: *\r\n" +
-                                  "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
-                                  "Access-Control-Allow-Headers: Content-Type, Range\r\n" +
-                                  "Access-Control-Max-Age: 600\r\n" +
-                                  "Content-Length: 0\r\nConnection: close\r\n\r\n";
+                          String resp = "HTTP/1.1 204 No Content\\r\\n" +
+                                  "Access-Control-Allow-Origin: *\\r\\n" +
+                                  "Access-Control-Allow-Methods: GET, POST, OPTIONS\\r\\n" +
+                                  "Access-Control-Allow-Headers: Content-Type, Range\\r\\n" +
+                                  "Access-Control-Max-Age: 600\\r\\n" +
+                                  "Content-Length: 0\\r\\nConnection: close\\r\\n\\r\\n";
                           out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
                           out.flush();
                           socket.close();
@@ -959,3 +960,4 @@ jobs:
             --title "TGVideo $TAG_NAME" \
             --notes "Versión oficial de TGVideo con ExoPlayer y soporte Android TV." \
             --latest
+
