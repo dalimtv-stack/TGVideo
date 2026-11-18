@@ -4,6 +4,7 @@ import { getStream, readRange, openStream } from './stream.js';
 import { formatTime, showToast } from './ui-helpers.js';
 import { saveProgress } from './progress.js';
 import { getDeviceSettings } from '../ui/settings.js';
+import { registerPlayerController, unregisterPlayerController } from '../ui/dpad.js';
 
 function escapeHtml(str) {
   return String(str || '')
@@ -46,7 +47,7 @@ export async function playExoPlayer(opts) {
         <div class="player-osd-top">
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title" id="pl-title">Cargando…</div>
-          <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>ExoPlayer ⇄</button>
+          <button class="player-osd-badge" id="pl-badge-toggle" title="Ahora: ExoPlayer · cambiar a ArtPlayer" data-focusable>ExoPlayer · Cambiar</button>
         </div>
 
         <div class="player-osd-bottom">
@@ -71,9 +72,8 @@ export async function playExoPlayer(opts) {
             <button class="player-ctrl-btn" id="pl-btn-ff" data-focusable title="Adelantar ${skipSeconds}s">
               <svg viewBox="0 0 24 24"><path d="M5.54 7.16 10.53 11.23a.996.996 0 0 1 0 1.54l-4.99 4.07c-.63.51-1.54.04-1.54-.77V7.93c0-.81.91-1.28 1.54-.77zm8 0 4.99 4.07a.996.996 0 0 1 0 1.54l-4.99 4.07c-.63.51-1.54.04-1.54-.77V7.93c0-.81.91-1.28 1.54-.77z"/></svg>
             </button>
-            <button class="player-ctrl-btn" id="pl-btn-fullscreen" data-focusable title="Pantalla completa">
-              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-            </button>
+            <button class="player-ctrl-btn" id="pl-btn-audio" data-focusable title="Pistas de audio">🔊</button>
+            <button class="player-ctrl-btn" id="pl-btn-subs" data-focusable title="Subtítulos">CC</button>
           </div>
         </div>
       </div>
@@ -86,6 +86,7 @@ export async function playExoPlayer(opts) {
   `;
 
   const playerEl = mount.querySelector('.player');
+  playerEl?.classList.add('native-android-app');
   const osd = mount.querySelector('#pl-osd');
   const loading = mount.querySelector('#pl-loading');
   const statusEl = mount.querySelector('#pl-status');
@@ -96,6 +97,27 @@ export async function playExoPlayer(opts) {
   const timeDur = mount.querySelector('#pl-time-dur');
   const iconPlay = mount.querySelector('#pl-icon-play');
   const iconPause = mount.querySelector('#pl-icon-pause');
+
+  const seekBy = (delta) => {
+    const target = Math.max(0, Math.min(currentDuration || Infinity, from + delta));
+    ExoPlayerPlugin.seekTo({ position: target });
+    showToast(playerEl, `${delta < 0 ? '⏪' : '⏩'} ${delta > 0 ? '+' : ''}${delta}s`);
+    showOsd();
+  };
+  registerPlayerController({
+    close: () => closePlayer(),
+    onLeft: () => seekBy(-(document.activeElement === scrubber ? 30 : skipSeconds)),
+    onRight: () => seekBy(document.activeElement === scrubber ? 30 : skipSeconds),
+    onUp: () => { showOsd(); scrubber.focus(); },
+    onDown: () => { showOsd(); mount.querySelector('#pl-btn-playpause')?.focus(); },
+    onSelect: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      if (osd.classList.contains('is-hidden')) { showOsd(); scrubber.focus(); return; }
+      const focused = document.activeElement;
+      if (focused?.closest('.player-osd')) focused.click();
+      else mount.querySelector('#pl-btn-playpause')?.click();
+    },
+  });
 
   const showOsd = () => {
     if (destroyed) return;
@@ -122,6 +144,7 @@ export async function playExoPlayer(opts) {
     if (destroyed) return;
     destroyed = true;
     document.body.classList.remove('exoplayer-active');
+    unregisterPlayerController();
     clearTimeout(osdTimer);
     try {
       rangeListener?.remove?.();
@@ -270,13 +293,6 @@ export async function playExoPlayer(opts) {
       showOsd();
     };
 
-    mount.querySelector('#pl-btn-fullscreen').onclick = () => {
-      if (!document.fullscreenElement) {
-        playerEl.requestFullscreen?.().catch(() => {});
-      } else {
-        document.exitFullscreen?.().catch(() => {});
-      }
-    };
 
     mount.querySelector('#pl-badge-toggle').onclick = () => {
       closePlayer();
@@ -284,6 +300,52 @@ export async function playExoPlayer(opts) {
     };
 
     mount.querySelector('#pl-btn-back').onclick = closePlayer;
+
+    const openNativeTrackMenu = async (kind) => {
+      let result;
+      try {
+        result = await ExoPlayerPlugin.getTracks();
+      } catch (error) {
+        showToast(playerEl, `No se pudieron leer las pistas: ${error?.message || 'error'}`);
+        return;
+      }
+      const tracks = Array.from(result?.[kind] || []);
+      const overlay = document.createElement('div');
+      overlay.className = 'player-tracks-overlay';
+      const titleText = kind === 'audio' ? 'Pistas de audio' : 'Subtítulos';
+      const labelFor = (track, index) => track.label || track.language || `${titleText} ${index + 1}`;
+      const noneButton = kind === 'text' ? `<button class="player-track-option" data-disabled="true" data-focusable>Desactivados</button>` : '';
+      overlay.innerHTML = `<div class="player-tracks-menu" role="dialog" aria-label="${titleText}"><div class="player-tracks-title"><span>${titleText}</span><button class="player-tracks-close" data-focusable aria-label="Cerrar">✕</button></div><div class="player-tracks-list">${noneButton}${tracks.map((track, index) => `<button class="player-track-option ${track.selected ? 'is-selected' : ''}" data-index="${index}" data-focusable>${escapeHtml(labelFor(track, index))}${track.selected ? ' ✓' : ''}</button>`).join('') || '<div class="player-track-empty">No hay pistas disponibles.</div>'}</div></div>`;
+      playerEl.appendChild(overlay);
+      const closeMenu = () => { overlay.remove(); (kind === 'audio' ? mount.querySelector('#pl-btn-audio') : mount.querySelector('#pl-btn-subs'))?.focus(); };
+      overlay.querySelector('.player-tracks-close')?.addEventListener('click', closeMenu);
+      overlay.querySelectorAll('.player-track-option').forEach((button) => button.addEventListener('click', async () => {
+        try {
+          if (button.dataset.disabled === 'true') await ExoPlayerPlugin.selectTrack({ type: 'text', enabled: false });
+          else {
+            const track = tracks[Number(button.dataset.index)];
+            if (track) await ExoPlayerPlugin.selectTrack({ type: kind, group: track.group, track: track.track, enabled: true });
+          }
+          showToast(playerEl, `${titleText}: ${button.textContent.trim()}`);
+          closeMenu();
+        } catch (error) {
+          showToast(playerEl, `No se pudo cambiar la pista: ${error?.message || 'error'}`);
+        }
+      }));
+      overlay.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' || e.key === 'Back' || e.keyCode === 4) { e.preventDefault(); e.stopPropagation(); closeMenu(); return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault(); e.stopPropagation();
+          const options = [...overlay.querySelectorAll('[data-focusable]')].filter(el => !el.disabled);
+          const current = options.indexOf(document.activeElement);
+          const delta = e.key === 'ArrowUp' ? -1 : 1;
+          options[Math.max(0, Math.min(options.length - 1, current + delta))]?.focus();
+        }
+      });
+      overlay.querySelector('.player-track-option')?.focus();
+    };
+    mount.querySelector('#pl-btn-audio').onclick = () => openNativeTrackMenu('audio');
+    mount.querySelector('#pl-btn-subs').onclick = () => openNativeTrackMenu('text');
 
     scrubber.onclick = (e) => {
       const rect = scrubber.getBoundingClientRect();
@@ -336,6 +398,8 @@ export async function playExoPlayer(opts) {
   } catch (err) {
     console.error('[exoplayer] Fallo al inicializar ExoPlayer:', err);
     document.body.classList.remove('exoplayer-active');
+    statusEl.textContent = `No se pudo abrir ExoPlayer: ${err?.message || 'error desconocido'}.`;
+    loading.style.display = 'flex';
     showToast(playerEl, 'Error con ExoPlayer. Cambiando a ArtPlayer…');
     if (typeof fallbackToArt === 'function') return fallbackToArt();
     onClose?.();

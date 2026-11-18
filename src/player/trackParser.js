@@ -29,17 +29,27 @@ export async function detectTracksFromUrl(url) {
   if (TRACK_CACHE.has(url)) return TRACK_CACHE.get(url);
   const promise = (async () => {
     try {
-      // Leer solo la cabecera inicial (512 KiB = primera parte ya presente en caché)
-      // para no saturar el canal de streaming ni causar congelamientos en la reproducción
-      let head = await fetchRange(url, 0, 512 * 1024 - 1);
+      // Muchas cabeceras Matroska/MP4 sitúan Tracks/moov después del primer MiB.
+      // Mantener la ventana histórica de 4 MiB y buscar moov al final en MP4.
+      let head = await fetchRange(url, 0, 1024 * 1024);
       if (!head || head.length < 16) return { audio: [], text: [] };
       if (isMp4Header(head)) {
         let r = parseMp4(head);
         if (r.audio.length || r.text.length) return r;
-        // Si no se encuentra en 512 KiB, probar hasta 1 MiB como máximo
-        const extended = await fetchRange(url, 0, 1024 * 1024 - 1);
+        const extended = await fetchRange(url, 0, 4 * 1024 * 1024);
         if (extended && extended.length > head.length) {
-          return parseMp4(extended);
+          head = extended;
+          r = parseMp4(head);
+          if (r.audio.length || r.text.length) return r;
+        }
+        const size = await fetchSize(url);
+        if (size > head.length) {
+          const tailLength = Math.min(size, 8 * 1024 * 1024);
+          const tail = await fetchRange(url, size - tailLength, size);
+          if (tail) {
+            const moovOffset = findBox(tail, 'moov');
+            if (moovOffset >= 0) return parseMp4(tail.subarray(moovOffset));
+          }
         }
         return r;
       }
@@ -48,13 +58,12 @@ export async function detectTracksFromUrl(url) {
         if (r.audio.length || r.text.length) return r;
         let s = scanMkvTracks(head);
         if (s.audio.length || s.text.length) return s;
-
-        // Probar hasta 1 MiB si no se encontró en la primera parte
-        const extended = await fetchRange(url, 0, 1024 * 1024 - 1);
+        const extended = await fetchRange(url, 0, 4 * 1024 * 1024);
         if (extended && extended.length > head.length) {
-          r = parseMkv(extended);
+          head = extended;
+          r = parseMkv(head);
           if (r.audio.length || r.text.length) return r;
-          return scanMkvTracks(extended);
+          return scanMkvTracks(head);
         }
         return { audio: [], text: [] };
       }

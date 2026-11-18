@@ -455,8 +455,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
     }
     if (!el) {
-      // Primera tarjeta de vídeo, nunca el botón "+"
-      el = document.querySelector('.row-track .lib-card[data-focusable]:not(.row-expand-card)');
+      // Primera carátula de Seguir viendo; si no existe, primera fila disponible.
+      el = document.querySelector('.row[data-row-id="continue"] .row-track .lib-card[data-title]')
+        || document.querySelector('.row-track .lib-card[data-title]');
     }
     if (!el) {
       el = document.querySelector('[data-focusable]');
@@ -905,7 +906,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       renderEpisodes(currentSeason);
     };
   }
-  focusFirst('#d-play, .season-btn.active, .ep');
+  focusFirst('#d-play, .season-btn.active, #ep-list .ep[data-focusable]');
 }
 
 // ---------- Selector de perfiles ----------

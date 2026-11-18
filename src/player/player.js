@@ -151,6 +151,8 @@ export async function playNative({
     </div>`;
 
   const playerEl = mount.querySelector('.player');
+  const isAndroidNative = typeof window !== 'undefined' && (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
+  if (isAndroidNative) playerEl?.classList.add('native-android-app');
   const video = mount.querySelector('video');
   const loading = mount.querySelector('#pl-loading');
   const status = mount.querySelector('#pl-status');
@@ -561,7 +563,7 @@ export async function playNative({
     let audioOnlyChecked = false;
 
     const checkTracks = async () => {
-      const tracksData = await ensureTracksDetected(video);
+      const tracksData = await ensureTracksDetected(video, { deep: true });
       const audios = tracksData.audio;
       const subs = tracksData.text;
 
@@ -1178,7 +1180,7 @@ export async function playArtplayer({
     });
 
     const video = art.template.$video;
-    ensureTracksDetected(video).catch(() => {});
+    ensureTracksDetected(video, { deep: true }).catch(() => {});
 
     const nextUp = bindNextUp({
       getTime: () => art?.currentTime || video?.currentTime || 0,
@@ -1212,7 +1214,7 @@ export async function playArtplayer({
     }
 
     const checkTracks = async () => {
-      const tracksData = await ensureTracksDetected(video);
+      const tracksData = await ensureTracksDetected(video, { deep: true });
       const audios = tracksData.audio;
       const subs = tracksData.text;
 

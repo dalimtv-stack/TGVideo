@@ -20,6 +20,13 @@ export function unregisterPlayerController() {
 
 export function handleBack() {
   // 1. Cerrar diálogo modal si está abierto
+  const tracksOverlay = document.querySelector('.player-tracks-overlay');
+  if (tracksOverlay) {
+    const closeBtn = tracksOverlay.querySelector('.player-tracks-close');
+    if (closeBtn) closeBtn.click();
+    else tracksOverlay.remove();
+    return true;
+  }
   const overlay = document.querySelector('.settings-overlay');
   if (overlay) {
     const closeBtn = overlay.querySelector('[aria-label="Cerrar"]');
@@ -53,15 +60,19 @@ export function handleBack() {
 
 function move(dir) {
   // Si hay un modal abierto, limitar la navegación a los elementos dentro del modal
-  const modalEl = document.querySelector('.settings-overlay');
+  const modalEl = document.querySelector('.settings-overlay, .player-tracks-overlay');
   const scope = modalEl || document;
   const items = [...scope.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
   if (!items.length) return;
 
   const cur = document.activeElement && scope.contains(document.activeElement) ? document.activeElement : null;
   if (!cur) {
-    items[0].focus();
-    items[0].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    const detail = document.querySelector('.detail');
+    const first = detail
+      ? (detail.querySelector('#d-play') || detail.querySelector('.season-btn.active') || detail.querySelector('#ep-list .ep[data-focusable]'))
+      : items[0];
+    first?.focus({ preventScroll: true });
+    first?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
     return;
   }
 
@@ -98,8 +109,14 @@ function move(dir) {
         const prevTrack = prevRow.querySelector('.row-track');
         const prevItems = [...(prevTrack?.querySelectorAll('[data-focusable]') || [])].filter(e => e.offsetParent && !e.disabled);
         if (prevItems.length) {
-          const target = prevItems[Math.min(idx >= 0 ? idx : 0, prevItems.length - 1)];
-          target.focus();
+          const currentRect = cur.getBoundingClientRect();
+          const currentCenter = currentRect.left + currentRect.width / 2;
+          const target = prevItems.reduce((best, item) => {
+            const r = item.getBoundingClientRect();
+            const distance = Math.abs((r.left + r.width / 2) - currentCenter);
+            return !best || distance < best.distance ? { item, distance } : best;
+          }, null)?.item || prevItems[0];
+          target.focus({ preventScroll: true });
           prevRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
           return;
@@ -122,8 +139,14 @@ function move(dir) {
         const nextTrack = nextRow.querySelector('.row-track');
         const nextItems = [...(nextTrack?.querySelectorAll('[data-focusable]') || [])].filter(e => e.offsetParent && !e.disabled);
         if (nextItems.length) {
-          const target = nextItems[Math.min(idx >= 0 ? idx : 0, nextItems.length - 1)];
-          target.focus();
+          const currentRect = cur.getBoundingClientRect();
+          const currentCenter = currentRect.left + currentRect.width / 2;
+          const target = nextItems.reduce((best, item) => {
+            const r = item.getBoundingClientRect();
+            const distance = Math.abs((r.left + r.width / 2) - currentCenter);
+            return !best || distance < best.distance ? { item, distance } : best;
+          }, null)?.item || nextItems[0];
+          target.focus({ preventScroll: true });
           nextRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
           return;
@@ -152,7 +175,7 @@ function move(dir) {
     }
     if (dir === 'down') {
       const firstRow = document.querySelector('.row');
-      const firstCard = firstRow?.querySelector('.row-track [data-focusable]') || document.querySelector('.row-track [data-focusable]');
+      const firstCard = firstRow?.querySelector('.row-track .lib-card[data-title]') || document.querySelector('.row-track .lib-card[data-title]');
       if (firstCard) {
         firstCard.focus();
         firstRow?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -441,7 +464,7 @@ export function initDpad() {
     if (e.defaultPrevented) return;
 
     // Si el reproductor de vídeo está abierto y no hay un modal encima, delegar control al reproductor
-    if (activePlayerController && !document.querySelector('.settings-overlay')) {
+    if (activePlayerController && !document.querySelector('.settings-overlay, .player-tracks-overlay')) {
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         activePlayerController.onLeft?.();

@@ -109,9 +109,9 @@ export function ensureTracksDetected(video, { deep = false } = {}) {
     return { audio, text };
   })();
 
-  if (!deep || !TRACKS_BY_VIDEO.has(video)) {
-    TRACKS_BY_VIDEO.set(video, promise);
-  }
+  // Guardar también el resultado profundo para que la UI no vuelva a quedarse
+  // con el resultado superficial (solo la pista predeterminada).
+  TRACKS_BY_VIDEO.set(video, promise);
   return promise;
 }
 

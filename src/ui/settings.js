@@ -7,14 +7,24 @@ import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js'
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const UI_SCALE_LEVELS = [
-  { id: 'diminuto', label: 'Diminuto', scale: 0.72 },
   { id: 'muy-pequeno', label: 'Muy pequeño', scale: 0.82 },
   { id: 'pequeno', label: 'Pequeño', scale: 0.92 },
   { id: 'normal', label: 'Normal', scale: 1.0 },
   { id: 'grande', label: 'Grande (predeterminado)', scale: 1.12 },
   { id: 'muy-grande', label: 'Muy Grande', scale: 1.25 },
-  { id: 'gigante', label: 'Gigante', scale: 1.40 },
 ];
+
+function normalizeLegacyScaleIndex(value) {
+  const index = Number(value);
+  if (!Number.isFinite(index)) return 3;
+  // Migración de los siete niveles anteriores al control de cinco niveles.
+  if (index <= 1) return 0;
+  if (index === 2) return 1;
+  if (index === 3) return 2;
+  if (index === 4) return 3;
+  return 4;
+}
+
 
 export function getDeviceId() {
   if (typeof localStorage === 'undefined') return 'device_default';
@@ -47,14 +57,16 @@ export function getDeviceSettings(profile) {
     deviceId,
     player: chosenPlayer,
     skipSeconds: Number(devProfile.skip_seconds || localSkip || profile?.skip_seconds || legacyLocalSkip || 10),
-    uiScale: Number(devProfile.ui_scale ?? localScale ?? profile?.ui_scale ?? legacyLocalScale ?? 4),
+    uiScale: profile?.cover_scale != null
+      ? Math.max(0, Math.min(4, Number(profile.cover_scale) || 0))
+      : normalizeLegacyScaleIndex(devProfile.ui_scale ?? localScale ?? profile?.ui_scale ?? legacyLocalScale ?? 3),
   };
 }
 
 export function applyProfileScale(profile) {
   const dev = getDeviceSettings(profile);
   const rawIdx = dev.uiScale;
-  const validIdx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, isNaN(rawIdx) ? 4 : rawIdx));
+  const validIdx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, isNaN(rawIdx) ? 3 : rawIdx));
   const conf = UI_SCALE_LEVELS[validIdx];
   if (typeof document !== 'undefined') {
     document.documentElement.style.setProperty('--ui-scale', String(conf.scale));
@@ -67,14 +79,14 @@ export function profileAvatar(profile) {
   return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(profile.avatar) ? profile.avatar : esc((profile.name || '?')[0].toUpperCase());
 }
 
-export function modal(title, body, subtitle = '') {
+export function modal(title, body, subtitle = '', onClose = null) {
   const previousFocus = document.activeElement;
   const overlay = document.createElement('div');
   overlay.className = 'settings-overlay';
   const subtitleHtml = subtitle ? `<div class="modal-subtitle" style="font-size:0.85rem;color:#aaa;margin-top:0.35rem;font-weight:normal;word-break:break-word;">${subtitle}</div>` : '';
   overlay.innerHTML = `<section class="settings-dialog" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header style="align-items:flex-start;"><div><h2 style="font-size:1.15rem;word-break:break-all;line-height:1.35;">${esc(title)}</h2>${subtitleHtml}</div><button class="btn-icon" data-focusable aria-label="Cerrar">×</button></header>${body}</section>`;
   document.body.append(overlay);
-  const close = () => { overlay.remove(); previousFocus?.focus({ preventScroll: true }); };
+  const close = () => { overlay.remove(); previousFocus?.focus({ preventScroll: true }); onClose?.(); };
   overlay.querySelector('[aria-label="Cerrar"]').onclick = close;
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   overlay.addEventListener('keydown', e => {
@@ -141,8 +153,9 @@ export function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalCh
   overlay.querySelector('[data-action="global"]').onclick = () => { close(); globalSettings(sync, onGlobalChanged, libraryTitles); };
 }
 
-// 1. Ajustes de perfil: Únicamente Nombre y Avatar
+// 1. Ajustes de perfil: Nombre, Avatar y tamaño de interfaz
 function profileSettings(profile, sync, onChanged) {
+  let scaleSaved = false;
   const avatars = ['👤', '🙂', '🎬', '🌟', '🐱'];
 
   const { overlay, close } = modal('Ajustes de perfil', `
@@ -156,6 +169,11 @@ function profileSettings(profile, sync, onChanged) {
             ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
           </select>
         </label>
+        <label class="ui-scale-setting profile-scale-setting">
+          <span class="ui-scale-header"><span>Tamaño de portadas y letras</span><strong class="ui-scale-value" id="profile-scale-label"></strong></span>
+          <input name="coverScale" type="range" class="settings-slider" min="0" max="4" step="1" data-focusable>
+          <span class="ui-scale-ticks">${UI_SCALE_LEVELS.map(level => `<span>${esc(level.label.replace(' (predeterminado)', ''))}</span>`).join('')}</span>
+        </label>
       </div>
 
       <p class="settings-status" role="status"></p>
@@ -163,7 +181,22 @@ function profileSettings(profile, sync, onChanged) {
         <button class="btn" data-focusable type="submit">Guardar perfil</button>
       </div>
     </form>
-  `, 'Configura el nombre y el avatar personal de este perfil');
+  `, 'Configura el nombre, el avatar y el tamaño de interfaz de este perfil', () => {
+    if (!scaleSaved) applyProfileScale(profile);
+  });
+
+  const coverScale = overlay.querySelector('input[name="coverScale"]');
+  const coverScaleLabel = overlay.querySelector('#profile-scale-label');
+  const initialScale = getDeviceSettings(profile).uiScale;
+  if (coverScale) coverScale.value = String(initialScale);
+  const updateCoverScale = () => {
+    const index = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, Number(coverScale?.value ?? 3)));
+    if (coverScaleLabel) coverScaleLabel.textContent = UI_SCALE_LEVELS[index].label;
+    document.documentElement.style.setProperty('--ui-scale', String(UI_SCALE_LEVELS[index].scale));
+    document.documentElement.setAttribute('data-ui-scale', UI_SCALE_LEVELS[index].id);
+  };
+  coverScale?.addEventListener('input', updateCoverScale);
+  updateCoverScale();
 
   overlay.querySelector('form').onsubmit = async e => {
     e.preventDefault();
@@ -171,9 +204,12 @@ function profileSettings(profile, sync, onChanged) {
     const name = form.elements.name.value.trim();
     if (!name) return;
     const avatar = form.elements.avatar.value;
+    const coverScaleIndex = Math.max(0, Math.min(4, Number(form.elements.coverScale?.value ?? 3)));
 
     profile.name = name;
     profile.avatar = avatar;
+    profile.cover_scale = coverScaleIndex;
+    scaleSaved = true;
 
     close();
     onChanged();
@@ -183,7 +219,7 @@ function profileSettings(profile, sync, onChanged) {
       try {
         const remote = await sync.pullProfile(profile.id);
         if (!remote) return;
-        const changed = { ...remote.profile, name, avatar };
+        const changed = { ...remote.profile, name, avatar, cover_scale: coverScaleIndex };
         await sync.pushProfile({
           ...remote,
           profile: changed,
@@ -197,15 +233,13 @@ function profileSettings(profile, sync, onChanged) {
   };
 }
 
-// 2. Ajustes de dispositivo: Reproductor, Reproducción e Interfaz, Tamaño de portadas y letras
+// 2. Ajustes de dispositivo: Reproductor y salto de reproducción
 function deviceSettings(profile, sync, onChanged) {
   const devSettings = getDeviceSettings(profile);
   const isAndroidApp = typeof window !== 'undefined' &&
     (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
   const currentPlayer = (!isAndroidApp && devSettings.player === 'exoplayer') ? 'artplayer' : devSettings.player;
   const currentSkip = devSettings.skipSeconds;
-  const currentScaleIndex = applyProfileScale(profile);
-  const currentScaleLabel = UI_SCALE_LEVELS[currentScaleIndex]?.label || 'Grande (predeterminado)';
 
   const exoPlayerOption = isAndroidApp ? `
               <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
@@ -255,24 +289,7 @@ function deviceSettings(profile, sync, onChanged) {
               </label>
             </div>
 
-            <div class="settings-field-row ui-scale-setting" style="margin-top:1rem;">
-              <label class="settings-label-block">
-                <div class="ui-scale-header">
-                  <span>Tamaño de portadas y letras:</span>
-                  <strong class="ui-scale-value" id="ui-scale-label">${currentScaleLabel}</strong>
-                </div>
-                <input type="range" name="uiScale" class="settings-slider" min="0" max="6" step="1" value="${currentScaleIndex}" data-focusable>
-                <div class="ui-scale-ticks">
-                  <span>Diminuto</span>
-                  <span>Muy pequeño</span>
-                  <span>Pequeño</span>
-                  <span>Normal</span>
-                  <span>Grande</span>
-                  <span>Muy Grande</span>
-                  <span>Gigante</span>
-                </div>
-              </label>
-            </div>
+
           </fieldset>
 
       <p class="settings-status" role="status"></p>
@@ -281,20 +298,6 @@ function deviceSettings(profile, sync, onChanged) {
       </div>
     </form>
   `, 'Estas preferencias se guardan para este equipo sin alterar otros dispositivos');
-
-  const scaleSlider = overlay.querySelector('input[name="uiScale"]');
-  const scaleLabel = overlay.querySelector('#ui-scale-label');
-  if (scaleSlider && scaleLabel) {
-    const updateScaleDisplay = () => {
-      const idx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, Number(scaleSlider.value)));
-      const conf = UI_SCALE_LEVELS[idx];
-      scaleLabel.textContent = conf.label;
-      document.documentElement.style.setProperty('--ui-scale', String(conf.scale));
-      document.documentElement.setAttribute('data-ui-scale', conf.id);
-    };
-    scaleSlider.addEventListener('input', updateScaleDisplay);
-    scaleSlider.addEventListener('change', updateScaleDisplay);
-  }
 
   overlay.querySelectorAll('.settings-radio-label').forEach(label => {
     const radio = label.querySelector('input[type="radio"]');
@@ -323,7 +326,6 @@ function deviceSettings(profile, sync, onChanged) {
     const form = e.currentTarget;
     const player = form.elements.player?.value || 'artplayer';
     const skipSeconds = Number(form.elements.skipSeconds?.value) || 10;
-    const scaleIndex = Number(form.elements.uiScale?.value ?? 4);
 
     const deviceId = getDeviceId();
 
@@ -331,11 +333,9 @@ function deviceSettings(profile, sync, onChanged) {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('tgvideo_device_player', player);
       localStorage.setItem('tgvideo_device_skip', String(skipSeconds));
-      localStorage.setItem('tgvideo_device_scale', String(scaleIndex));
       // Compatibilidad retroactiva con claves por perfil
       localStorage.setItem(`tgvideo_player_${profile.id}`, player);
       localStorage.setItem(`tgvideo_skip_${profile.id}`, String(skipSeconds));
-      localStorage.setItem(`tgvideo_scale_${profile.id}`, String(scaleIndex));
     }
 
     // Guardado en memoria en el perfil bajo la clave de este dispositivo
@@ -343,12 +343,10 @@ function deviceSettings(profile, sync, onChanged) {
     profile.devices[deviceId] = {
       player,
       skip_seconds: skipSeconds,
-      ui_scale: scaleIndex,
       updated_at: Date.now()
     };
     profile.player = player;
     profile.skip_seconds = skipSeconds;
-    profile.ui_scale = scaleIndex;
 
     applyProfileScale(profile);
     close();
@@ -363,15 +361,13 @@ function deviceSettings(profile, sync, onChanged) {
         remoteDevices[deviceId] = {
           player,
           skip_seconds: skipSeconds,
-          ui_scale: scaleIndex,
           updated_at: Date.now()
         };
         const changed = {
           ...remote.profile,
           devices: remoteDevices,
           player,
-          skip_seconds: skipSeconds,
-          ui_scale: scaleIndex
+          skip_seconds: skipSeconds
         };
         await sync.pushProfile({
           ...remote,
