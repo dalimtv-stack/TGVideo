@@ -227,6 +227,22 @@ jobs:
                       f.write(g)
                   print("Dependencias de ExoPlayer Media3 agregadas a build.gradle.")
 
+          layout_dir = "android/app/src/main/res/layout"
+          os.makedirs(layout_dir, exist_ok=True)
+          layout_file = os.path.join(layout_dir, "exo_player_layout.xml")
+          with open(layout_file, "w", encoding="utf-8") as f:
+              f.write('''<?xml version="1.0" encoding="utf-8"?>
+<androidx.media3.ui.PlayerView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/exo_player_view"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="texture_view"
+    app:use_controller="false"
+    app:resize_mode="fit" />''')
+          print("exo_player_layout.xml inyectado con surface_type=texture_view.")
+
           # Inyectar servidor local y plugin nativo ExoPlayer en com.tgvideo.app
           java_pkg_dir = "android/app/src/main/java/com/tgvideo/app"
           os.makedirs(java_pkg_dir, exist_ok=True)
@@ -302,10 +318,10 @@ jobs:
                       if (serverSocket != null) serverSocket.close();
                   } catch (Exception ignored) {}
                   streams.clear();
-                  for (CompletableFuture<byte[]> f : pendingChunks.values()) {
-                      f.cancel(true);
-                  }
-                  pendingChunks.clear();
+                  cleanPending();
+                  try {
+                      workerPool.shutdownNow();
+                  } catch (Exception ignored) {}
               }
 
               public void registerStream(String id, long size, String mime, String name) {
@@ -326,11 +342,20 @@ jobs:
                   }
               }
 
+              private final java.util.concurrent.ExecutorService workerPool = java.util.concurrent.Executors.newFixedThreadPool(6);
+
+              public void cleanPending() {
+                  for (CompletableFuture<byte[]> f : pendingChunks.values()) {
+                      f.complete(new byte[0]);
+                  }
+                  pendingChunks.clear();
+              }
+
               private void listenLoop() {
                   while (running && serverSocket != null && !serverSocket.isClosed()) {
                       try {
                           Socket client = serverSocket.accept();
-                          new Thread(() -> handleConnection(client), "StreamClient-" + System.currentTimeMillis()).start();
+                          workerPool.execute(() -> handleConnection(client));
                       } catch (Exception e) {
                           if (!running) break;
                       }
@@ -638,9 +663,15 @@ jobs:
                                   }
                               });
 
-                              playerView = new PlayerView(getContext());
-                              playerView.setUseController(false);
-                              playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+                              android.view.LayoutInflater inflater = android.view.LayoutInflater.from(getContext());
+                              int layoutRes = getContext().getResources().getIdentifier("exo_player_layout", "layout", getContext().getPackageName());
+                              if (layoutRes != 0) {
+                                  playerView = (PlayerView) inflater.inflate(layoutRes, null);
+                              } else {
+                                  playerView = new PlayerView(getContext());
+                                  playerView.setUseController(false);
+                                  playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+                              }
                               playerView.setPlayer(player);
 
                               ViewGroup parent = (ViewGroup) getBridge().getWebView().getParent();
@@ -806,8 +837,12 @@ jobs:
 
               private void stopPlayback() {
                   stopProgressTimer();
+                  if (streamServer != null) {
+                      streamServer.cleanPending();
+                  }
                   if (player != null) {
                       player.stop();
+                      player.clearMediaItems();
                       player.release();
                       player = null;
                   }
@@ -817,7 +852,7 @@ jobs:
                       playerView = null;
                   }
                   try {
-                      getBridge().getWebView().setBackgroundColor(Color.BLACK);
+                      getBridge().getWebView().setBackgroundColor(Color.TRANSPARENT);
                   } catch (Exception ignored) {}
               }
 
