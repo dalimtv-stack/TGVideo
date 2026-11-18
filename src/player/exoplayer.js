@@ -47,7 +47,7 @@ export async function playExoPlayer(opts) {
         <div class="player-osd-top">
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title" id="pl-title">Cargando…</div>
-          <button class="player-osd-badge" id="pl-badge-toggle" title="Ahora: ExoPlayer · cambiar a ArtPlayer" data-focusable>ExoPlayer · Cambiar</button>
+          <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>ExoPlayer ⇄ ArtPlayer</button>
         </div>
 
         <div class="player-osd-bottom">
@@ -107,16 +107,114 @@ export async function playExoPlayer(opts) {
   };
   registerPlayerController({
     close: () => closePlayer(),
-    onLeft: () => seekBy(-(document.activeElement === scrubber ? 30 : skipSeconds)),
-    onRight: () => seekBy(document.activeElement === scrubber ? 30 : skipSeconds),
-    onUp: () => { showOsd(); scrubber.focus(); },
-    onDown: () => { showOsd(); mount.querySelector('#pl-btn-playpause')?.focus(); },
+    onLeft: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      if (osd.classList.contains('is-hidden')) {
+        seekBy(-skipSeconds);
+        return;
+      }
+      const cur = document.activeElement;
+      if (cur?.id === 'pl-badge-toggle') {
+        mount.querySelector('#pl-btn-back')?.focus();
+        showOsd();
+        return;
+      }
+      if (cur?.id === 'pl-btn-back') { showOsd(); return; }
+      if (cur?.classList.contains('player-ctrl-btn')) {
+        const btns = [...mount.querySelectorAll('.player-controls-row .player-ctrl-btn')].filter(b => b.offsetParent);
+        const idx = btns.indexOf(cur);
+        if (idx > 0) btns[idx - 1].focus();
+        showOsd();
+        return;
+      }
+      if (cur === scrubber) {
+        seekBy(-skipSeconds);
+        return;
+      }
+      seekBy(-skipSeconds);
+    },
+    onRight: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      if (osd.classList.contains('is-hidden')) {
+        seekBy(skipSeconds);
+        return;
+      }
+      const cur = document.activeElement;
+      if (cur?.id === 'pl-btn-back') {
+        mount.querySelector('#pl-badge-toggle')?.focus();
+        showOsd();
+        return;
+      }
+      if (cur?.id === 'pl-badge-toggle') { showOsd(); return; }
+      if (cur?.classList.contains('player-ctrl-btn')) {
+        const btns = [...mount.querySelectorAll('.player-controls-row .player-ctrl-btn')].filter(b => b.offsetParent);
+        const idx = btns.indexOf(cur);
+        if (idx !== -1 && idx < btns.length - 1) btns[idx + 1].focus();
+        showOsd();
+        return;
+      }
+      if (cur === scrubber) {
+        seekBy(skipSeconds);
+        return;
+      }
+      seekBy(skipSeconds);
+    },
+    onUp: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      if (osd.classList.contains('is-hidden')) {
+        showOsd();
+        scrubber.focus();
+        return;
+      }
+      const cur = document.activeElement;
+      if (cur?.classList.contains('player-ctrl-btn')) {
+        scrubber.focus();
+        showOsd();
+        return;
+      }
+      if (cur === scrubber) {
+        mount.querySelector('#pl-btn-back')?.focus();
+        showOsd();
+        return;
+      }
+      mount.querySelector('#pl-btn-back')?.focus();
+      showOsd();
+    },
+    onDown: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      if (osd.classList.contains('is-hidden')) {
+        showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
+        return;
+      }
+      const cur = document.activeElement;
+      if (cur?.id === 'pl-btn-back' || cur?.id === 'pl-badge-toggle') {
+        scrubber.focus();
+        showOsd();
+        return;
+      }
+      if (cur === scrubber) {
+        mount.querySelector('#pl-btn-playpause')?.focus();
+        showOsd();
+        return;
+      }
+      mount.querySelector('#pl-btn-playpause')?.focus();
+      showOsd();
+    },
     onSelect: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
-      if (osd.classList.contains('is-hidden')) { showOsd(); scrubber.focus(); return; }
+      if (osd.classList.contains('is-hidden')) {
+        showOsd();
+        mount.querySelector('#pl-btn-playpause')?.focus();
+        return;
+      }
       const focused = document.activeElement;
-      if (focused?.closest('.player-osd')) focused.click();
-      else mount.querySelector('#pl-btn-playpause')?.click();
+      if (focused && focused !== scrubber && (focused.matches('[data-focusable]') || focused.tagName === 'BUTTON')) {
+        focused.click();
+      } else {
+        ExoPlayerPlugin.togglePlay();
+        showOsd();
+      }
     },
   });
 
@@ -296,6 +394,17 @@ export async function playExoPlayer(opts) {
 
 
     mount.querySelector('#pl-badge-toggle').onclick = async () => {
+      const devId = devSettings?.deviceId || 'device_default';
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('tgvideo_device_player', 'artplayer');
+        if (profile?.id) localStorage.setItem(`tgvideo_player_${profile.id}`, 'artplayer');
+      }
+      if (!profile.devices) profile.devices = {};
+      if (!profile.devices[devId]) profile.devices[devId] = {};
+      profile.devices[devId].player = 'artplayer';
+      profile.devices[devId].updated_at = Date.now();
+      profile.player = 'artplayer';
+
       await closePlayer({ isSwitching: true });
       if (typeof fallbackToArt === 'function') fallbackToArt();
     };
@@ -358,7 +467,7 @@ export async function playExoPlayer(opts) {
       }
     };
 
-    // Navegación con teclado y mando Android TV
+    // Eventos directos sobre el contenedor del reproductor
     playerEl.addEventListener('keydown', (e) => {
       showOsd();
       if (['Escape', 'GoBack', 'Back'].includes(e.key) || e.keyCode === 4 ||
@@ -369,25 +478,21 @@ export async function playExoPlayer(opts) {
         return;
       }
 
-      if (e.key === ' ' || e.key === 'MediaPlayPause') {
+      if (e.key === 'MediaPlayPause') {
         e.preventDefault();
         ExoPlayerPlugin.togglePlay();
         return;
       }
 
-      if (e.key === 'MediaFastForward' || e.key === 'ArrowRight') {
+      if (e.key === 'MediaFastForward') {
         e.preventDefault();
-        const target = Math.min(currentDuration || currentPosition + skipSeconds, currentPosition + skipSeconds);
-        ExoPlayerPlugin.seekTo({ position: target });
-        showToast(playerEl, `+${skipSeconds}s ⏩`);
+        seekBy(skipSeconds);
         return;
       }
 
-      if (e.key === 'MediaRewind' || e.key === 'ArrowLeft') {
+      if (e.key === 'MediaRewind') {
         e.preventDefault();
-        const target = Math.max(0, currentPosition - skipSeconds);
-        ExoPlayerPlugin.seekTo({ position: target });
-        showToast(playerEl, `⏪ -${skipSeconds}s`);
+        seekBy(-skipSeconds);
         return;
       }
     });
@@ -409,4 +514,3 @@ export async function playExoPlayer(opts) {
     await closePlayer();
   }
 }
-
