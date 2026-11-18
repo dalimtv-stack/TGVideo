@@ -2107,17 +2107,73 @@ video::cue {
 }
 
 /* Ajustes de dispositivo: una sola columna, cabe en TV */
+/* Ajustes de dispositivo: diseño ultra-compacto para pantallas gigantes y TVs */
 .settings-dialog:has(.device-settings-form) {
-  width: min(560px, 94vw);
-  max-height: 92vh;
-  padding: 1rem 1.25rem;
+  width: min(500px, 92vw);
+  max-height: 85vh;
+  padding: 0.7rem 1rem;
+  overflow-y: auto;
 }
-.device-settings-form { gap: 0.75rem; font-size: 0.9rem; }
-.device-settings-form .settings-section { margin-top: 0; padding: 0.6rem 0.8rem; gap: 0.5rem; }
-.device-settings-form .settings-radio-label { padding: 0.45rem 0.65rem; }
-.device-settings-form .settings-radio-info small { font-size: 0.76rem; line-height: 1.25; }
-.device-settings-form .ui-scale-setting { margin-top: 0.5rem; padding-top: 0.5rem; }
-.device-settings-form .ui-scale-ticks { font-size: 0.68rem; }
+.device-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
+.device-settings-form .settings-section {
+  margin-top: 0;
+  padding: 0.45rem 0.65rem;
+  gap: 0.35rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.device-settings-form .settings-legend {
+  font-size: 0.78rem;
+  padding: 0 0.35rem;
+  margin-bottom: 0.15rem;
+}
+.device-settings-form .settings-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.device-settings-form .settings-radio-label {
+  padding: 0.35rem 0.55rem;
+  gap: 0.5rem;
+}
+.device-settings-form .settings-radio-info strong {
+  font-size: 0.82rem;
+}
+.device-settings-form .settings-radio-info small {
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+.device-settings-form .settings-field-row {
+  margin: 0;
+  padding: 0;
+}
+.device-settings-form .settings-label-inline {
+  font-size: 0.82rem;
+}
+.device-settings-form .ui-scale-setting {
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+}
+.device-settings-form .ui-scale-header {
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+}
+.device-settings-form .ui-scale-ticks {
+  font-size: 0.62rem;
+  margin-top: 0.2rem;
+}
+.device-settings-form .settings-actions {
+  margin-top: 0.6rem;
+}
+.device-settings-form .settings-actions .btn {
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+}
 
 /* Botonera de acciones en la ficha (Reproducir, Favoritos, Visto) */
 .detail-actions-row {
