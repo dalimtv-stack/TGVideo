@@ -104,8 +104,7 @@ export async function playNative({
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
           <div class="player-osd-engine-box">
-            <div class="player-engine-pill" title="Reproductor actualmente activo"><span class="engine-dot">●</span> Nativo HTML5</div>
-            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Cambiar ⇄</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Nativo ⇄</button>
           </div>
         </div>
 
@@ -691,8 +690,7 @@ export async function playArtplayer({
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
           <div class="player-osd-engine-box">
-            <div class="player-engine-pill" title="Reproductor actualmente activo"><span class="engine-dot">●</span> ArtPlayer</div>
-            <button class="player-osd-badge" id="pl-badge-toggle" title="${isAndroidApp ? 'Cambiar a ExoPlayer' : 'Cambiar a Nativo'}" data-focusable>Cambiar ⇄</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="${isAndroidApp ? 'Cambiar a ExoPlayer' : 'Cambiar a Nativo'}" data-focusable>ArtPlayer ⇄</button>
           </div>
         </div>
 

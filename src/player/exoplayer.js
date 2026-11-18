@@ -56,8 +56,7 @@ export async function playExoPlayer(opts) {
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title" id="pl-title">Cargando…</div>
           <div class="player-osd-engine-box">
-            <div class="player-engine-pill player-engine-pill-exo" title="Reproductor actualmente activo"><span class="engine-dot">●</span> ExoPlayer</div>
-            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Cambiar ⇄</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>ExoPlayer ⇄</button>
           </div>
         </div>
 
