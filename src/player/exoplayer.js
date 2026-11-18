@@ -99,7 +99,8 @@ export async function playExoPlayer(opts) {
   const iconPause = mount.querySelector('#pl-icon-pause');
 
   const seekBy = (delta) => {
-    const target = Math.max(0, Math.min(currentDuration || Infinity, from + delta));
+    const current = currentPosition || 0;
+    const target = Math.max(0, Math.min(currentDuration || Infinity, current + delta));
     ExoPlayerPlugin.seekTo({ position: target });
     showToast(playerEl, `${delta < 0 ? '⏪' : '⏩'} ${delta > 0 ? '+' : ''}${delta}s`);
     showOsd();
@@ -140,7 +141,7 @@ export async function playExoPlayer(opts) {
   let progressListener = null;
   let endedListener = null;
 
-  const closePlayer = () => {
+  const closePlayer = async ({ isSwitching = false } = {}) => {
     if (destroyed) return;
     destroyed = true;
     document.body.classList.remove('exoplayer-active');
@@ -154,7 +155,7 @@ export async function playExoPlayer(opts) {
       endedListener?.remove?.();
     } catch (_) {}
 
-    ExoPlayerPlugin.stop().catch(() => {});
+    await ExoPlayerPlugin.stop().catch(() => {});
     if (stream) stream.close();
 
     const fileKey = String(file?.id || file?.messageId || file?.key || '');
@@ -162,7 +163,7 @@ export async function playExoPlayer(opts) {
       saveProgress(profile.id, fileKey, Math.floor(currentPosition), Math.floor(currentDuration));
     }
     mount.innerHTML = '';
-    onClose?.();
+    if (!isSwitching) onClose?.();
   };
 
   try {
@@ -294,8 +295,8 @@ export async function playExoPlayer(opts) {
     };
 
 
-    mount.querySelector('#pl-badge-toggle').onclick = () => {
-      closePlayer();
+    mount.querySelector('#pl-badge-toggle').onclick = async () => {
+      await closePlayer({ isSwitching: true });
       if (typeof fallbackToArt === 'function') fallbackToArt();
     };
 
@@ -401,7 +402,10 @@ export async function playExoPlayer(opts) {
     statusEl.textContent = `No se pudo abrir ExoPlayer: ${err?.message || 'error desconocido'}.`;
     loading.style.display = 'flex';
     showToast(playerEl, 'Error con ExoPlayer. Cambiando a ArtPlayer…');
-    if (typeof fallbackToArt === 'function') return fallbackToArt();
-    onClose?.();
+    if (typeof fallbackToArt === 'function') {
+      await closePlayer({ isSwitching: true });
+      return fallbackToArt();
+    }
+    await closePlayer();
   }
 }
