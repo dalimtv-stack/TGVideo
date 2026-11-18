@@ -35,6 +35,14 @@ export async function playExoPlayer(opts) {
 
   let stream = null;
   let destroyed = false;
+
+  // Activar modo transparente en html y body para que el reproductor nativo sea visible inmediatamente
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.add('exoplayer-active');
+    document.body.classList.add('exoplayer-active');
+    document.documentElement.style.backgroundColor = 'transparent';
+    document.body.style.backgroundColor = 'transparent';
+  }
   let osdTimer = null;
   let currentDuration = 0;
   let currentPosition = resumeAt || 0;
@@ -47,7 +55,10 @@ export async function playExoPlayer(opts) {
         <div class="player-osd-top">
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title" id="pl-title">Cargando…</div>
-          <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>ExoPlayer ⇄ ArtPlayer</button>
+          <div class="player-osd-engine-box">
+            <div class="player-engine-pill player-engine-pill-exo" title="Reproductor actualmente activo"><span class="engine-dot">●</span> ExoPlayer</div>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Cambiar ⇄</button>
+          </div>
         </div>
 
         <div class="player-osd-bottom">
@@ -242,7 +253,12 @@ export async function playExoPlayer(opts) {
   const closePlayer = async ({ isSwitching = false } = {}) => {
     if (destroyed) return;
     destroyed = true;
-    document.body.classList.remove('exoplayer-active');
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.remove('exoplayer-active');
+      document.body.classList.remove('exoplayer-active');
+      document.documentElement.style.backgroundColor = '';
+      document.body.style.backgroundColor = '';
+    }
     unregisterPlayerController();
     clearTimeout(osdTimer);
     try {
@@ -290,12 +306,27 @@ export async function playExoPlayer(opts) {
     const streamUrl = `http://127.0.0.1:${port}/stream/${stream.id}/${encodeURIComponent(name)}`;
 
     rangeListener = await ExoPlayerPlugin.addListener('needRange', async (ev) => {
-      if (destroyed) return;
-      const { streamId, start, end, requestId } = ev;
+      const { streamId, start, end, requestId } = ev || {};
+      if (destroyed || !requestId) {
+        if (requestId) {
+          fetch(`http://127.0.0.1:${port}/error?requestId=${encodeURIComponent(requestId)}`, { method: 'POST' }).catch(() => {});
+        }
+        return;
+      }
       const s = getStream(streamId);
-      if (!s) return;
+      if (!s) {
+        // Desbloquear inmediatamente el servidor local si el stream ya no está disponible
+        await fetch(`http://127.0.0.1:${port}/error?requestId=${encodeURIComponent(requestId)}`, {
+          method: 'POST'
+        }).catch(() => {});
+        return;
+      }
       try {
         const chunk = await readRange(s, start, end);
+        if (destroyed) {
+          await fetch(`http://127.0.0.1:${port}/error?requestId=${encodeURIComponent(requestId)}`, { method: 'POST' }).catch(() => {});
+          return;
+        }
         await fetch(`http://127.0.0.1:${port}/chunk?requestId=${encodeURIComponent(requestId)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/octet-stream' },
@@ -311,7 +342,12 @@ export async function playExoPlayer(opts) {
 
     readyListener = await ExoPlayerPlugin.addListener('onReady', (ev) => {
       hideLoading();
-      document.body.classList.add('exoplayer-active');
+      if (typeof document !== 'undefined') {
+        document.documentElement.classList.add('exoplayer-active');
+        document.body.classList.add('exoplayer-active');
+        document.documentElement.style.backgroundColor = 'transparent';
+        document.body.style.backgroundColor = 'transparent';
+      }
       if (ev?.duration) {
         currentDuration = ev.duration;
         timeDur.textContent = formatTime(currentDuration);
@@ -405,6 +441,7 @@ export async function playExoPlayer(opts) {
       profile.devices[devId].updated_at = Date.now();
       profile.player = 'artplayer';
 
+      showToast(playerEl, 'Cambiando a ArtPlayer…');
       await closePlayer({ isSwitching: true });
       if (typeof fallbackToArt === 'function') fallbackToArt();
     };

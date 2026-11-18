@@ -103,7 +103,10 @@ export async function playNative({
         <div class="player-osd-top">
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
-          <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Nativo ⇄</button>
+          <div class="player-osd-engine-box">
+            <div class="player-engine-pill" title="Reproductor actualmente activo"><span class="engine-dot">●</span> Nativo HTML5</div>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Cambiar ⇄</button>
+          </div>
         </div>
 
         <div class="player-osd-bottom">
@@ -297,6 +300,7 @@ export async function playNative({
     profile.devices[devId].player = 'artplayer';
     profile.devices[devId].updated_at = Date.now();
     profile.player = 'artplayer';
+    showToast(playerEl, 'Cambiando a ArtPlayer…');
     playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync, nextFile, onNext });
   });
 
@@ -686,7 +690,10 @@ export async function playArtplayer({
         <div class="player-osd-top">
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
-          <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar reproductor" data-focusable>${isAndroidApp ? 'ArtPlayer ⇄ ExoPlayer' : 'ArtPlayer ⇄ Nativo'}</button>
+          <div class="player-osd-engine-box">
+            <div class="player-engine-pill" title="Reproductor actualmente activo"><span class="engine-dot">●</span> ArtPlayer</div>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="${isAndroidApp ? 'Cambiar a ExoPlayer' : 'Cambiar a Nativo'}" data-focusable>Cambiar ⇄</button>
+          </div>
         </div>
 
         <div class="player-osd-bottom">
@@ -871,6 +878,7 @@ export async function playArtplayer({
     profile.devices[devId].player = targetPlayer;
     profile.devices[devId].updated_at = Date.now();
     profile.player = targetPlayer;
+    showToast(playerEl, isAndroidNative ? 'Cambiando a ExoPlayer…' : 'Cambiando a Nativo…');
     playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync, nextFile, onNext });
   });
 
