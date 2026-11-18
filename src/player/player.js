@@ -9,7 +9,7 @@ import { registerPlayerController, unregisterPlayerController } from '../ui/dpad
 import { ensureTracksDetected, openAudioSelector, openSubtitlesSelector, formatTrackName } from './tracks.js';
 import { escapeHtml, formatTime, showToast, setupDoubleTapSkip, bindNextUp } from './ui-helpers.js';
 import { langName } from './trackParser.js';
-import { getDeviceSettings } from '../ui/settings.js';
+import { getDeviceSettings, getDeviceId } from '../ui/settings.js';
 import { playExoPlayer } from './exoplayer.js';
 
 export function formatPlayerTitle(title, file) {
@@ -94,6 +94,8 @@ export async function playNative({
   onNext = null,
 }) {
   const displayTitle = formatPlayerTitle(title, file);
+  const isAndroidApp = typeof window !== 'undefined' &&
+    (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
 
   mount.innerHTML = `
     <div class="player player-native">
@@ -285,10 +287,16 @@ export async function playNative({
     try { video.pause(); } catch (_) {}
     if (stream) stream.close();
     else if (url) URL.revokeObjectURL(url);
-    if (profile?.id) {
-      localStorage.setItem(`tgvideo_player_${profile.id}`, 'artplayer');
-      profile.player = 'artplayer';
+    const devId = getDeviceId();
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('tgvideo_device_player', 'artplayer');
+      if (profile?.id) localStorage.setItem(`tgvideo_player_${profile.id}`, 'artplayer');
     }
+    if (!profile.devices) profile.devices = {};
+    if (!profile.devices[devId]) profile.devices[devId] = {};
+    profile.devices[devId].player = 'artplayer';
+    profile.devices[devId].updated_at = Date.now();
+    profile.player = 'artplayer';
     playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync, nextFile, onNext });
   });
 
@@ -669,6 +677,8 @@ export async function playArtplayer({
   onNext = null,
 }) {
   const displayTitle = formatPlayerTitle(title, file);
+  const isAndroidApp = typeof window !== 'undefined' &&
+    (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
 
   mount.innerHTML = `
     <div class="player player-art">
@@ -676,7 +686,7 @@ export async function playArtplayer({
         <div class="player-osd-top">
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
-          <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a Nativo" data-focusable>ArtPlayer ⇄</button>
+          <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar reproductor" data-focusable>${isAndroidApp ? 'ArtPlayer ⇄ ExoPlayer' : 'ArtPlayer ⇄ Nativo'}</button>
         </div>
 
         <div class="player-osd-bottom">
@@ -848,10 +858,19 @@ export async function playArtplayer({
     }
     if (stream) stream.close();
     else if (url) URL.revokeObjectURL(url);
-    if (profile?.id) {
-      localStorage.setItem(`tgvideo_player_${profile.id}`, 'native');
-      profile.player = 'native';
+    const isAndroidNative = typeof window !== 'undefined' &&
+      (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
+    const targetPlayer = isAndroidNative ? 'exoplayer' : 'native';
+    const devId = getDeviceId();
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('tgvideo_device_player', targetPlayer);
+      if (profile?.id) localStorage.setItem(`tgvideo_player_${profile.id}`, targetPlayer);
     }
+    if (!profile.devices) profile.devices = {};
+    if (!profile.devices[devId]) profile.devices[devId] = {};
+    profile.devices[devId].player = targetPlayer;
+    profile.devices[devId].updated_at = Date.now();
+    profile.player = targetPlayer;
     playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync, nextFile, onNext });
   });
 
