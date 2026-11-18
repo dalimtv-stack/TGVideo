@@ -1,4 +1,3 @@
-
 name: Build Android APK
 
 on:
@@ -230,17 +229,18 @@ jobs:
           layout_dir = "android/app/src/main/res/layout"
           os.makedirs(layout_dir, exist_ok=True)
           layout_file = os.path.join(layout_dir, "exo_player_layout.xml")
+          layout_code = """<?xml version="1.0" encoding="utf-8"?>
+          <androidx.media3.ui.PlayerView
+              xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:app="http://schemas.android.com/apk/res-auto"
+              android:id="@+id/exo_player_view"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              app:surface_type="texture_view"
+              app:use_controller="false"
+              app:resize_mode="fit" />"""
           with open(layout_file, "w", encoding="utf-8") as f:
-              f.write('''<?xml version="1.0" encoding="utf-8"?>
-<androidx.media3.ui.PlayerView
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/exo_player_view"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    app:surface_type="texture_view"
-    app:use_controller="false"
-    app:resize_mode="fit" />''')
+              f.write(layout_code)
           print("exo_player_layout.xml inyectado con surface_type=texture_view.")
 
           # Inyectar servidor local y plugin nativo ExoPlayer en com.tgvideo.app
@@ -995,4 +995,3 @@ jobs:
             --title "TGVideo $TAG_NAME" \
             --notes "Versión oficial de TGVideo con ExoPlayer y soporte Android TV." \
             --latest
-
