@@ -7,36 +7,58 @@ const IMAGE = 'https://image.tmdb.org/t/p/';
 
 const VALID_YEAR_RE = /(?:19\d{2}|20[0-2]\d|2030)/;
 
-export function extractTitleAndYear(name = '') {
-  let str = String(name || '').trim();
+export function extractTitleAndYear(name = "") {
+  let str = String(name || "").trim();
   try { str = decodeURIComponent(str); } catch (_) {}
-  str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '')
-    .replace(/\b(2160p|1080p|720p|480p|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc)\b.*/i, '')
-    .replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, '')
-    .replace(/\d{1,2}x\d{1,3}.*/i, '')
-    .replace(/[._]/g, ' ').replace(/\s+/g, ' ').trim();
 
+  // 1. Quitar extensiones de vídeo
+  str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, "").trim();
+
+  // Reemplazar puntos y guiones bajos por espacios para aislar palabras
+  let strClean = str.replace(/[._]/g, " ");
+
+  // 2. Extraer año explícito entre paréntesis o corchetes: (2026), [1999]
   let year = null;
-  const parenMatch = str.match(/[\(\[]\s*((?:19\d{2}|20[0-2]\d|2030))\s*[\)\]]/);
-  if (parenMatch) {
-    const stripped = str.replace(/[\(\[]\s*(?:19\d{2}|20[0-2]\d|2030)\s*[\)\]]/g, '').trim();
-    if (stripped) {
-      year = parenMatch[1];
-      str = stripped;
-    }
-  } else {
-    const endYearMatch = str.match(/(?:^|[\s_-])\b((?:19\d{2}|20[0-2]\d|2030))\s*$/);
-    if (endYearMatch) {
-      const stripped = str.slice(0, endYearMatch.index).trim();
-      if (stripped) {
-        year = endYearMatch[1];
-        str = stripped;
+  const parenYearMatch = strClean.match(/[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/);
+  if (parenYearMatch) {
+    year = parenYearMatch[1];
+    strClean = strClean.slice(0, parenYearMatch.index) + " " + strClean.slice(parenYearMatch.index + parenYearMatch[0].length);
+  }
+
+  // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis: [BlurayRip], [480p], [Dual], etc.
+  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|2160p|1080p|720p|480p|4k|uhd|x26[45]|h26[45]|hevc|aac|ac3|dts|dts-hd|truehd|mp3|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack)";
+  const bracketQualityRe = new RegExp(`\\[[^\\]]*${qualityKw}[^\\]*\\]`, "gi");
+  const parenQualityRe = new RegExp(`\\([^\\)]*${qualityKw}[^\\)]*\\)`, "gi");
+  strClean = strClean.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
+
+  // 4. Eliminar códigos de episodios: S01E02, 1x02
+  strClean = strClean.replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, " ");
+  strClean = strClean.replace(/\d{1,2}x\d{1,3}.*/i, " ");
+
+  // 5. Eliminar desde la primera palabra clave suelta de calidad hasta el final
+  const bareQualityRe = new RegExp(`\\b${qualityKw}\\b.*`, "i");
+  strClean = strClean.replace(bareQualityRe, " ");
+
+  // 6. Si aún no hay año, buscar año suelto al final o en el texto
+  if (!year) {
+    const trailingYearMatch = strClean.match(/(?:^|\s)\b((?:19\d{2}|20[0-3]\d))\b\s*$/);
+    if (trailingYearMatch) {
+      year = trailingYearMatch[1];
+      strClean = strClean.slice(0, trailingYearMatch.index);
+    } else {
+      const midYearMatch = strClean.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
+      if (midYearMatch) {
+        year = midYearMatch[1];
+        strClean = strClean.slice(0, midYearMatch.index) + " " + strClean.slice(midYearMatch.index + midYearMatch[0].length);
       }
     }
   }
 
-  str = str.replace(/[-–—\s]+$/, '').trim();
-  return { title: str || String(name || '').trim(), year };
+  // 7. Limpiar corchetes o paréntesis residuales y espacios
+  strClean = strClean.replace(/[\[\]\(\)]/g, " ");
+  strClean = strClean.replace(/[-–—\s]+$/, "").replace(/^\s*[-–—]+/, "").replace(/\s+/g, " ").trim();
+
+  return { title: strClean || str, year };
 }
 
 export function cleanSearchName(name = '') {
