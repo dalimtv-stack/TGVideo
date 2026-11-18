@@ -53,7 +53,7 @@ function getPart(s, idx) {
   return p;
 }
 
-async function readRange(s, start, end) {
+export async function readRange(s, start, end) {
   const first = Math.floor(start / PART), lastP = Math.floor(end / PART);
   const parts = await Promise.all(Array.from({ length: lastP - first + 1 }, (_, i) => getPart(s, first + i)));
   // precarga el siguiente trozo para que no haya cortes
@@ -68,8 +68,13 @@ async function readRange(s, start, end) {
   return out.subarray(0, pos).slice();
 }
 
+export function getStream(id) {
+  return streams.get(id);
+}
+
 export function openStream({ client, media, size, mime, name = 'video' }) {
   const id = Math.random().toString(36).slice(2);
-  streams.set(id, { client, media, size, mime, cache: new Map() });
-  return { url: `/tgstream/${id}/${encodeURIComponent(name)}`, close: () => streams.delete(id) };
+  const streamData = { client, media, size, mime, name, cache: new Map() };
+  streams.set(id, streamData);
+  return { id, url: `/tgstream/${id}/${encodeURIComponent(name)}`, close: () => streams.delete(id) };
 }
