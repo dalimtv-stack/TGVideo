@@ -117,7 +117,13 @@ function move(dir) {
             return !best || distance < best.distance ? { item, distance } : best;
           }, null)?.item || prevItems[0];
           target.focus({ preventScroll: true });
-          prevRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          const isFirstRow = !prevRow.previousElementSibling?.matches('.row');
+          if (isFirstRow) {
+            const scroller = document.querySelector('.home-main') || window;
+            scroller.scrollTo({ top: 0, behavior: 'smooth' });
+          } else {
+            prevRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          }
           target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
           return;
         }
@@ -177,9 +183,10 @@ function move(dir) {
       const firstRow = document.querySelector('.row');
       const firstCard = firstRow?.querySelector('.row-track .lib-card[data-title]') || document.querySelector('.row-track .lib-card[data-title]');
       if (firstCard) {
-        firstCard.focus();
-        firstRow?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-        firstCard.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        firstCard.focus({ preventScroll: true });
+        const scroller = document.querySelector('.home-main') || window;
+        scroller.scrollTo({ top: 0, behavior: 'smooth' });
+        firstCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
       }
       return;
     }
