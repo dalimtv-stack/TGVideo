@@ -27,8 +27,8 @@ export function extractTitleAndYear(name = "") {
 
   // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis: [BlurayRip], [480p], [Dual], etc.
   const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|2160p|1080p|720p|480p|4k|uhd|x26[45]|h26[45]|hevc|aac|ac3|dts|dts-hd|truehd|mp3|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack)";
-  const bracketQualityRe = new RegExp(`\\[[^\\]]*${qualityKw}[^\\]*\\]`, "gi");
-  const parenQualityRe = new RegExp(`\\([^\\)]*${qualityKw}[^\\)]*\\)`, "gi");
+  const bracketQualityRe = new RegExp('\\[[^\\]]*' + qualityKw + '[^\\]]*\\]', 'gi');
+  const parenQualityRe = new RegExp('\\([^\\)]*' + qualityKw + '[^\\)]*\\)', 'gi');
   strClean = strClean.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
 
   // 4. Eliminar códigos de episodios: S01E02, 1x02
