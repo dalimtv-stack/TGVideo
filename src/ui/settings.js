@@ -203,9 +203,7 @@ function deviceSettings(profile, sync, onChanged) {
 
   const { overlay, close } = modal('Ajustes de dispositivo', `
     <form class="device-settings-form">
-      <div class="profile-settings-cols">
-        <div class="profile-settings-col">
-          <fieldset class="settings-section">
+      <fieldset class="settings-section">
             <legend class="settings-legend">Reproductor</legend>
             <div class="settings-radios">
               <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
@@ -233,9 +231,7 @@ function deviceSettings(profile, sync, onChanged) {
               </label>
             </div>
           </fieldset>
-        </div>
 
-        <div class="profile-settings-col">
           <fieldset class="settings-section">
             <legend class="settings-legend">Reproducción e Interfaz</legend>
             <div class="settings-field-row">
@@ -269,8 +265,6 @@ function deviceSettings(profile, sync, onChanged) {
               </label>
             </div>
           </fieldset>
-        </div>
-      </div>
 
       <p class="settings-status" role="status"></p>
       <div class="settings-actions" style="margin-top:1.25rem;">

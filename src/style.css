@@ -2100,23 +2100,24 @@ video::cue {
   min-width: 0;
 }
 
-/* Dos columnas en cualquier televisor o pantalla panorámica / apaisada sin importar resolución */
-@media (orientation: landscape), (min-aspect-ratio: 4/3), (min-width: 680px) {
-  .settings-dialog:has(.profile-settings-form) {
-    width: min(920px, 94vw);
-    max-height: 90vh;
-    padding: 1rem 1.25rem;
-  }
-  .settings-dialog header {
-    margin-bottom: 0.6rem;
-  }
-  .profile-settings-cols {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.15rem;
-    align-items: start;
-  }
+/* Ajustes de perfil: compacto, solo nombre y avatar */
+.settings-dialog:has(.profile-settings-form) {
+  width: min(380px, 94vw);
+  padding: 1rem 1.25rem;
 }
+
+/* Ajustes de dispositivo: una sola columna, cabe en TV */
+.settings-dialog:has(.device-settings-form) {
+  width: min(560px, 94vw);
+  max-height: 92vh;
+  padding: 1rem 1.25rem;
+}
+.device-settings-form { gap: 0.75rem; font-size: 0.9rem; }
+.device-settings-form .settings-section { margin-top: 0; padding: 0.6rem 0.8rem; gap: 0.5rem; }
+.device-settings-form .settings-radio-label { padding: 0.45rem 0.65rem; }
+.device-settings-form .settings-radio-info small { font-size: 0.76rem; line-height: 1.25; }
+.device-settings-form .ui-scale-setting { margin-top: 0.5rem; padding-top: 0.5rem; }
+.device-settings-form .ui-scale-ticks { font-size: 0.68rem; }
 
 /* Botonera de acciones en la ficha (Reproducir, Favoritos, Visto) */
 .detail-actions-row {
