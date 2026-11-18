@@ -193,26 +193,28 @@ function profileSettings(profile, sync, onChanged) {
 // 2. Ajustes de dispositivo: Reproductor, Reproducción e Interfaz, Tamaño de portadas y letras
 function deviceSettings(profile, sync, onChanged) {
   const devSettings = getDeviceSettings(profile);
-  const currentPlayer = devSettings.player;
+  const isAndroidApp = typeof window !== 'undefined' &&
+    (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
+  const currentPlayer = (!isAndroidApp && devSettings.player === 'exoplayer') ? 'artplayer' : devSettings.player;
   const currentSkip = devSettings.skipSeconds;
   const currentScaleIndex = applyProfileScale(profile);
   const currentScaleLabel = UI_SCALE_LEVELS[currentScaleIndex]?.label || 'Grande (predeterminado)';
 
-  const isAndroidApp = typeof window !== 'undefined' &&
-    (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
+  const exoPlayerOption = isAndroidApp ? `
+              <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
+                <input type="radio" name="player" value="exoplayer" ${currentPlayer === 'exoplayer' ? 'checked' : ''}>
+                <div class="settings-radio-info">
+                  <strong>ExoPlayer ★ Recomendado en Android TV</strong>
+                  <small>Decodificación por hardware de MKV/4K, múltiples audios y subtítulos en Android TV.</small>
+                </div>
+              </label>` : '';
 
   const { overlay, close } = modal('Ajustes de dispositivo', `
     <form class="device-settings-form">
       <fieldset class="settings-section">
             <legend class="settings-legend">Reproductor</legend>
             <div class="settings-radios">
-              <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
-                <input type="radio" name="player" value="exoplayer" ${currentPlayer === 'exoplayer' ? 'checked' : ''}>
-                <div class="settings-radio-info">
-                  <strong>ExoPlayer ${isAndroidApp ? '★ Recomendado en Android TV' : '(Android TV / APK)'}</strong>
-                  <small>Decodificación por hardware de MKV/4K, múltiples audios y subtítulos en Android TV.</small>
-                </div>
-              </label>
+              ${exoPlayerOption}
 
               <label class="settings-radio-label ${currentPlayer === 'artplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'artplayer'}">
                 <input type="radio" name="player" value="artplayer" ${currentPlayer === 'artplayer' ? 'checked' : ''}>
