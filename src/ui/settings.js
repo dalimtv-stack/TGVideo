@@ -16,11 +16,37 @@ export const UI_SCALE_LEVELS = [
   { id: 'gigante', label: 'Gigante', scale: 1.40 },
 ];
 
+export function getDeviceId() {
+  if (typeof localStorage === 'undefined') return 'device_default';
+  let devId = localStorage.getItem('tgvideo_device_id');
+  if (!devId) {
+    devId = 'dev_' + Math.random().toString(36).slice(2, 9) + '_' + Date.now().toString(36);
+    localStorage.setItem('tgvideo_device_id', devId);
+  }
+  return devId;
+}
+
+export function getDeviceSettings(profile) {
+  const deviceId = getDeviceId();
+  const devProfile = profile?.devices?.[deviceId] || {};
+  const localPlayer = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_player') : null;
+  const legacyLocalPlayer = typeof localStorage !== 'undefined' && profile?.id ? localStorage.getItem(`tgvideo_player_${profile.id}`) : null;
+  const localSkip = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_skip') : null;
+  const legacyLocalSkip = typeof localStorage !== 'undefined' && profile?.id ? localStorage.getItem(`tgvideo_skip_${profile.id}`) : null;
+  const localScale = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_scale') : null;
+  const legacyLocalScale = typeof localStorage !== 'undefined' && profile?.id ? localStorage.getItem(`tgvideo_scale_${profile.id}`) : null;
+
+  return {
+    deviceId,
+    player: devProfile.player || localPlayer || profile?.player || legacyLocalPlayer || 'artplayer',
+    skipSeconds: Number(devProfile.skip_seconds || localSkip || profile?.skip_seconds || legacyLocalSkip || 10),
+    uiScale: Number(devProfile.ui_scale ?? localScale ?? profile?.ui_scale ?? legacyLocalScale ?? 4),
+  };
+}
+
 export function applyProfileScale(profile) {
-  const localScale = typeof localStorage !== 'undefined' && profile?.id
-    ? localStorage.getItem(`tgvideo_scale_${profile.id}`)
-    : null;
-  const rawIdx = Number(profile?.ui_scale ?? localScale ?? 4);
+  const dev = getDeviceSettings(profile);
+  const rawIdx = dev.uiScale;
   const validIdx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, isNaN(rawIdx) ? 4 : rawIdx));
   const conf = UI_SCALE_LEVELS[validIdx];
   if (typeof document !== 'undefined') {
@@ -30,7 +56,9 @@ export function applyProfileScale(profile) {
   return validIdx;
 }
 
-export function profileAvatar(profile) { return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(profile.avatar) ? profile.avatar : esc((profile.name || '?')[0].toUpperCase()); }
+export function profileAvatar(profile) {
+  return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(profile.avatar) ? profile.avatar : esc((profile.name || '?')[0].toUpperCase());
+}
 
 export function modal(title, body, subtitle = '') {
   const previousFocus = document.activeElement;
@@ -92,51 +120,115 @@ export function modal(title, body, subtitle = '') {
 }
 
 export function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalChanged, libraryTitles = [] }) {
-  const { overlay, close } = modal(profile.name, `<nav class="profile-menu"><button class="btn-ghost" data-focusable data-action="switch">Cambiar de perfil</button><button class="btn-ghost" data-focusable data-action="profile">Ajustes de perfil</button><button class="btn-ghost" data-focusable data-action="global">Ajustes globales</button></nav>`);
+  const { overlay, close } = modal(profile.name, `
+    <nav class="profile-menu">
+      <button class="btn-ghost" data-focusable data-action="switch">Cambiar de perfil</button>
+      <button class="btn-ghost" data-focusable data-action="profile">Ajustes de perfil</button>
+      <button class="btn-ghost" data-focusable data-action="device">Ajustes de dispositivo</button>
+      <button class="btn-ghost" data-focusable data-action="global">Ajustes globales</button>
+    </nav>
+  `);
   overlay.querySelector('[data-action="switch"]').onclick = () => { close(); onSwitch(); };
   overlay.querySelector('[data-action="profile"]').onclick = () => { close(); profileSettings(profile, sync, onChanged); };
+  overlay.querySelector('[data-action="device"]').onclick = () => { close(); deviceSettings(profile, sync, onChanged); };
   overlay.querySelector('[data-action="global"]').onclick = () => { close(); globalSettings(sync, onGlobalChanged, libraryTitles); };
 }
 
+// 1. Ajustes de perfil: Únicamente Nombre y Avatar
 function profileSettings(profile, sync, onChanged) {
   const avatars = ['👤', '🙂', '🎬', '🌟', '🐱'];
-  const localPlayer = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${profile.id}`) : null;
-  const currentPlayer = profile.player || localPlayer || 'artplayer';
-  const localSkip = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_skip_${profile.id}`) : null;
-  const currentSkip = Number(profile.skip_seconds || localSkip || 10);
-  const currentScaleIndex = applyProfileScale(profile);
-  const currentScaleLabel = UI_SCALE_LEVELS[currentScaleIndex]?.label || 'Grande (predeterminado)';
 
   const { overlay, close } = modal('Ajustes de perfil', `
     <form class="profile-settings-form">
+      <div class="settings-fields">
+        <label>Nombre
+          <input name="name" value="${esc(profile.name)}" required maxlength="60" data-focusable autocomplete="off">
+        </label>
+        <label>Avatar
+          <select name="avatar" data-focusable>
+            ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+
+      <p class="settings-status" role="status"></p>
+      <div class="settings-actions" style="margin-top:1.5rem;">
+        <button class="btn" data-focusable type="submit">Guardar perfil</button>
+      </div>
+    </form>
+  `, 'Configura el nombre y el avatar personal de este perfil');
+
+  overlay.querySelector('form').onsubmit = async e => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const name = form.elements.name.value.trim();
+    if (!name) return;
+    const avatar = form.elements.avatar.value;
+
+    profile.name = name;
+    profile.avatar = avatar;
+
+    close();
+    onChanged();
+
+    // Sincronizar en segundo plano con Telegram sin bloquear la interfaz
+    (async () => {
+      try {
+        const remote = await sync.pullProfile(profile.id);
+        if (!remote) return;
+        const changed = { ...remote.profile, name, avatar };
+        await sync.pushProfile({
+          ...remote,
+          profile: changed,
+          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
+        });
+        Object.assign(profile, changed);
+      } catch (err) {
+        console.warn('[settings] Error al sincronizar nombre/avatar del perfil:', err);
+      }
+    })();
+  };
+}
+
+// 2. Ajustes de dispositivo: Reproductor, Reproducción e Interfaz, Tamaño de portadas y letras
+function deviceSettings(profile, sync, onChanged) {
+  const devSettings = getDeviceSettings(profile);
+  const currentPlayer = devSettings.player;
+  const currentSkip = devSettings.skipSeconds;
+  const currentScaleIndex = applyProfileScale(profile);
+  const currentScaleLabel = UI_SCALE_LEVELS[currentScaleIndex]?.label || 'Grande (predeterminado)';
+
+  const isAndroidApp = typeof window !== 'undefined' &&
+    (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
+
+  const { overlay, close } = modal('Ajustes de dispositivo', `
+    <form class="device-settings-form">
       <div class="profile-settings-cols">
         <div class="profile-settings-col">
-          <div class="settings-fields">
-            <label>Nombre
-              <input name="name" value="${esc(profile.name)}" required maxlength="60" data-focusable>
-            </label>
-            <label>Avatar
-              <select name="avatar" data-focusable>
-                ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
-              </select>
-            </label>
-          </div>
-
           <fieldset class="settings-section">
             <legend class="settings-legend">Reproductor</legend>
             <div class="settings-radios">
-              <label class="settings-radio-label ${currentPlayer !== 'native' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer !== 'native'}">
-                <input type="radio" name="player" value="artplayer" ${currentPlayer !== 'native' ? 'checked' : ''}>
+              <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
+                <input type="radio" name="player" value="exoplayer" ${currentPlayer === 'exoplayer' ? 'checked' : ''}>
                 <div class="settings-radio-info">
-                  <strong>ArtPlayer</strong>
-                  <small>Diseño cinemático, gestos táctiles, subtítulos y velocidad.</small>
+                  <strong>ExoPlayer ${isAndroidApp ? '★ Recomendado en Android TV' : '(Android TV / APK)'}</strong>
+                  <small>Decodificación por hardware de MKV/4K, múltiples audios y subtítulos en Android TV.</small>
                 </div>
               </label>
+
+              <label class="settings-radio-label ${currentPlayer === 'artplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'artplayer'}">
+                <input type="radio" name="player" value="artplayer" ${currentPlayer === 'artplayer' ? 'checked' : ''}>
+                <div class="settings-radio-info">
+                  <strong>ArtPlayer</strong>
+                  <small>Diseño cinemático, gestos táctiles, selector OSD y velocidad (Web y PC).</small>
+                </div>
+              </label>
+
               <label class="settings-radio-label ${currentPlayer === 'native' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'native'}">
                 <input type="radio" name="player" value="native" ${currentPlayer === 'native' ? 'checked' : ''}>
                 <div class="settings-radio-info">
                   <strong>Reproductor nativo</strong>
-                  <small>Recomendado en iPhone para seleccionar audios, subtítulos y AirPlay.</small>
+                  <small>Recomendado en iOS / Safari para AirPlay y audios nativos.</small>
                 </div>
               </label>
             </div>
@@ -158,7 +250,7 @@ function profileSettings(profile, sync, onChanged) {
               </label>
             </div>
 
-            <div class="settings-field-row ui-scale-setting">
+            <div class="settings-field-row ui-scale-setting" style="margin-top:1rem;">
               <label class="settings-label-block">
                 <div class="ui-scale-header">
                   <span>Tamaño de portadas y letras:</span>
@@ -181,9 +273,11 @@ function profileSettings(profile, sync, onChanged) {
       </div>
 
       <p class="settings-status" role="status"></p>
-      <button class="btn" data-focusable type="submit">Guardar</button>
+      <div class="settings-actions" style="margin-top:1.25rem;">
+        <button class="btn" data-focusable type="submit">Guardar en este dispositivo</button>
+      </div>
     </form>
-  `);
+  `, 'Estas preferencias se guardan para este equipo sin alterar otros dispositivos');
 
   const scaleSlider = overlay.querySelector('input[name="uiScale"]');
   const scaleLabel = overlay.querySelector('#ui-scale-label');
@@ -223,43 +317,73 @@ function profileSettings(profile, sync, onChanged) {
 
   overlay.querySelector('form').onsubmit = async e => {
     e.preventDefault();
-    const form = e.currentTarget, button = form.querySelector('[type="submit"]');
-    const name = form.elements.name.value.trim();
-    if (!name) return;
+    const form = e.currentTarget;
     const player = form.elements.player?.value || 'artplayer';
     const skipSeconds = Number(form.elements.skipSeconds?.value) || 10;
     const scaleIndex = Number(form.elements.uiScale?.value ?? 4);
 
+    const deviceId = getDeviceId();
+
+    // Guardado local inmediato para este dispositivo
     if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('tgvideo_device_player', player);
+      localStorage.setItem('tgvideo_device_skip', String(skipSeconds));
+      localStorage.setItem('tgvideo_device_scale', String(scaleIndex));
+      // Compatibilidad retroactiva con claves por perfil
       localStorage.setItem(`tgvideo_player_${profile.id}`, player);
       localStorage.setItem(`tgvideo_skip_${profile.id}`, String(skipSeconds));
       localStorage.setItem(`tgvideo_scale_${profile.id}`, String(scaleIndex));
     }
+
+    // Guardado en memoria en el perfil bajo la clave de este dispositivo
+    if (!profile.devices) profile.devices = {};
+    profile.devices[deviceId] = {
+      player,
+      skip_seconds: skipSeconds,
+      ui_scale: scaleIndex,
+      updated_at: Date.now()
+    };
     profile.player = player;
     profile.skip_seconds = skipSeconds;
     profile.ui_scale = scaleIndex;
 
-    // Aplicar inmediatamente cambios locales y cerrar sin bloquear si falla la sincronización
-    profile.name = name;
-    profile.avatar = form.elements.avatar.value;
+    applyProfileScale(profile);
     close();
     onChanged();
 
-    // Sincronizar en segundo plano sin dejar la ventana bloqueada
+    // Sincronizar en segundo plano dentro del JSON de perfil en Telegram
     (async () => {
       try {
         const remote = await sync.pullProfile(profile.id);
         if (!remote) return;
-        const changed = { ...remote.profile, name, avatar: form.elements.avatar.value, player, skip_seconds: skipSeconds, ui_scale: scaleIndex };
-        await sync.pushProfile({ ...remote, profile: changed, progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {}) });
+        const remoteDevices = remote.profile?.devices || {};
+        remoteDevices[deviceId] = {
+          player,
+          skip_seconds: skipSeconds,
+          ui_scale: scaleIndex,
+          updated_at: Date.now()
+        };
+        const changed = {
+          ...remote.profile,
+          devices: remoteDevices,
+          player,
+          skip_seconds: skipSeconds,
+          ui_scale: scaleIndex
+        };
+        await sync.pushProfile({
+          ...remote,
+          profile: changed,
+          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
+        });
         Object.assign(profile, changed);
       } catch (err) {
-        console.warn('[settings] Error al sincronizar perfil en segundo plano:', err);
+        console.warn('[settings] Error al sincronizar ajustes de dispositivo:', err);
       }
     })();
   };
 }
 
+// 3. Ajustes globales: TMDB y Caché de portadas
 function globalSettings(sync, onChanged, libraryTitles = []) {
   const ownKey = !!getGlobalConfig().tmdb?.apiKey;
   const demoAvailable = !!import.meta.env?.VITE_TMDB_DEMO_API_KEY;
