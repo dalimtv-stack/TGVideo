@@ -566,6 +566,39 @@ function applyDetailMetadata(t, profile) {
   const posterName = detail.querySelector('.detail-head .poster-name');
   if (posterName && displayName) posterName.textContent = displayName;
 
+  const detailHeadInfo = detail.querySelector('.detail-head > div:last-child');
+  if (detailHeadInfo) {
+    let logoBox = detailHeadInfo.querySelector('.detail-logo-container');
+    if (metadata.logo) {
+      if (!logoBox) {
+        logoBox = document.createElement('div');
+        logoBox.className = 'detail-logo-container';
+        const img = document.createElement('img');
+        img.className = 'detail-logo-img';
+        img.alt = displayName || '';
+        img.src = metadata.logo;
+        img.onerror = () => { logoBox.remove(); if (titleH1) titleH1.classList.remove('detail-title-hidden', 'sr-only'); };
+        logoBox.appendChild(img);
+        if (titleH1) {
+          titleH1.classList.add('detail-title-hidden', 'sr-only');
+          titleH1.parentNode.insertBefore(logoBox, titleH1);
+        } else {
+          detailHeadInfo.prepend(logoBox);
+        }
+      } else {
+        const img = logoBox.querySelector('.detail-logo-img');
+        if (img) {
+          img.src = metadata.logo;
+          img.alt = displayName || '';
+        }
+        if (titleH1) titleH1.classList.add('detail-title-hidden', 'sr-only');
+      }
+    } else {
+      if (logoBox) logoBox.remove();
+      if (titleH1) titleH1.classList.remove('detail-title-hidden', 'sr-only');
+    }
+  }
+
   if (metadata.backdrop) {
     detail.style.setProperty('--detail-backdrop', `url("${metadata.backdrop}")`);
     detail.classList.add('has-backdrop');
@@ -666,7 +699,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           <span class="poster-group">${esc(t.grupo)}</span><span class="poster-name">${esc(displayName)}</span></div>
         <div>
           <div class="detail-kicker">${t.tipo === 'serie' ? 'Serie' : 'Película'} · ${esc(t.grupo)}</div>
-          <h1>${esc(displayName)}</h1>
+          ${t.metadata?.logo ? `<div class="detail-logo-container"><img class="detail-logo-img" src="${esc(t.metadata.logo)}" alt="${esc(displayName)}"><h1 class="detail-title-hidden sr-only">${esc(displayName)}</h1></div>` : `<h1>${esc(displayName)}</h1>`}
           <p class="detail-sub">${t.isSaga ? `${t.archivos.length} películas de la saga` : t.tipo === 'serie' ? `${t.archivos.length} episodios` : t.archivos.length > 1 ? `${t.archivos.length} versiones disponibles` : (fmtDur(t.archivos[0]?.duration) || 'Película')}</p>
           <p class="detail-metadata"></p>
           <div class="detail-syn-container">
@@ -723,13 +756,33 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     const p = loadProgress(profile.id)[f.key];
     setBackHandler(null);
     // Siguiente archivo en la lista (episodio / saga / versiones)
-    let list = t.archivos || [];
-    if (t.tipo === 'serie' && f.season != null) {
-      list = list.filter(x => Number(x.season) === Number(f.season));
-      list = [...list].sort((a, b) => (a.episode || 0) - (b.episode || 0));
+    let nextFile = null;
+    if (t.isSaga) {
+      const yearOf = (x) => Number(x.metadata?.date?.slice(0, 4) || x.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
+      const sortedSaga = [...(t.archivos || [])].sort((a, b) => (
+        yearOf(a) - yearOf(b) ||
+        (Number(b.size) || 0) - (Number(a.size) || 0) ||
+        a.label.localeCompare(b.label, 'es', { numeric: true })
+      ));
+      const curFilmId = f.metadata?.id || f.tmdbId || f.sagaName || f.label;
+      nextFile = sortedSaga.find(x => {
+        const xFilmId = x.metadata?.id || x.tmdbId || x.sagaName || x.label;
+        if (xFilmId === curFilmId) return false;
+        return yearOf(x) > yearOf(f) || (yearOf(x) === yearOf(f) && sortedSaga.indexOf(x) > sortedSaga.indexOf(f));
+      }) || null;
+    } else if (t.tipo === 'serie') {
+      let list = t.archivos || [];
+      if (f.season != null) {
+        list = list.filter(x => Number(x.season) === Number(f.season));
+        list = [...list].sort((a, b) => (a.episode || 0) - (b.episode || 0));
+      }
+      const idx = list.findIndex(x => String(x.key) === String(f.key));
+      nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+    } else {
+      let list = t.archivos || [];
+      const idx = list.findIndex(x => String(x.key) === String(f.key));
+      nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
     }
-    const idx = list.findIndex(x => String(x.key) === String(f.key));
-    const nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
 
     playFile({
       client: tg.getClient(), peerOf: tg.peerOf, file: f, title: t, profile,
@@ -745,7 +798,11 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     let files = hasSeasons ? (seasonsMap.get(seasonNum) || []) : t.archivos;
     if (t.isSaga) {
       const yearOf = (f) => Number(f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
-      files = [...files].sort((a, b) => yearOf(a) - yearOf(b) || a.label.localeCompare(b.label, 'es', { numeric: true }));
+      files = [...files].sort((a, b) => (
+        yearOf(a) - yearOf(b) ||
+        (Number(b.size) || 0) - (Number(a.size) || 0) ||
+        a.label.localeCompare(b.label, 'es', { numeric: true })
+      ));
     } else if (t.tipo === 'pelicula') {
       // Ordenar las versiones de mayor a menor tamaño
       files = [...files].sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
