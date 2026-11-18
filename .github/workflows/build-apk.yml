@@ -67,7 +67,7 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Prepare Android TV Icons, Banner 16:9, Splash & Manifest
+      - name: Prepare Android TV Icons, Banner 16:9, Manifest & ExoPlayer Integration
         run: |
           pip install Pillow
           python3 - << 'PYEOF'
@@ -167,8 +167,11 @@ jobs:
                       count=1
                   )
 
+              # Configurar banner y permitir tráfico cleartext en localhost para streaming de ExoPlayer
               if 'android:banner=' not in m:
-                  m = re.sub(r'<application\b', '<application android:banner="@drawable/banner" android:logo="@drawable/banner" android:isGame="false"', m, count=1)
+                  m = re.sub(r'<application\b', '<application android:banner="@drawable/banner" android:logo="@drawable/banner" android:usesCleartextTraffic="true" android:isGame="false"', m, count=1)
+              elif 'android:usesCleartextTraffic=' not in m:
+                  m = re.sub(r'<application\b', '<application android:usesCleartextTraffic="true"', m, count=1)
 
               def inject_activity_banner(match):
                   tag = match.group(0)
@@ -188,7 +191,7 @@ jobs:
 
               with open(manifest_path, "w", encoding="utf-8") as f:
                   f.write(m)
-              print("AndroidManifest.xml configurado para Leanback / Android TV.")
+              print("AndroidManifest.xml configurado para Leanback / Android TV y cleartextTraffic.")
 
           # Fondo negro para estilos
           for styles_path in ["android/app/src/main/res/values/styles.xml", "android/app/src/main/res/values-night/styles.xml"]:
@@ -201,6 +204,565 @@ jobs:
                       st = st.replace("</style>", '    <item name="android:windowBackground">@android:color/black</item>\n    </style>')
                   with open(styles_path, "w", encoding="utf-8") as f:
                       f.write(st)
+
+          # Inyectar dependencias de ExoPlayer (Media3) en build.gradle
+          app_gradle = "android/app/build.gradle"
+          if os.path.exists(app_gradle):
+              with open(app_gradle, "r", encoding="utf-8") as f:
+                  g = f.read()
+              if "androidx.media3:media3-exoplayer" not in g:
+                  media3_deps = """
+              implementation 'androidx.media3:media3-exoplayer:1.5.1'
+              implementation 'androidx.media3:media3-ui:1.5.1'
+              implementation 'androidx.media3:media3-common:1.5.1'
+                  """
+                  g = re.sub(r'dependencies\s*\{', 'dependencies {' + media3_deps, g, count=1)
+                  with open(app_gradle, "w", encoding="utf-8") as f:
+                      f.write(g)
+                  print("Dependencias de ExoPlayer Media3 agregadas a build.gradle.")
+
+          # Inyectar servidor local y plugin nativo ExoPlayer en com.tgvideo.app
+          java_pkg_dir = "android/app/src/main/java/com/tgvideo/app"
+          os.makedirs(java_pkg_dir, exist_ok=True)
+
+          # 1. LocalStreamServer.java
+          server_file = os.path.join(java_pkg_dir, "LocalStreamServer.java")
+          server_code = """package com.tgvideo.app;
+
+          import java.io.ByteArrayOutputStream;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.net.InetAddress;
+          import java.net.ServerSocket;
+          import java.net.Socket;
+          import java.nio.charset.StandardCharsets;
+          import java.util.Map;
+          import java.util.UUID;
+          import java.util.concurrent.ConcurrentHashMap;
+          import java.util.concurrent.CompletableFuture;
+          import java.util.concurrent.TimeUnit;
+
+          public class LocalStreamServer {
+              public interface RangeListener {
+                  void onNeedRange(String streamId, long start, long end, String requestId);
+              }
+
+              public static class StreamMeta {
+                  public String id;
+                  public long size;
+                  public String mime;
+                  public String name;
+                  public StreamMeta(String id, long size, String mime, String name) {
+                      this.id = id;
+                      this.size = size;
+                      this.mime = mime != null ? mime : "video/mp4";
+                      this.name = name != null ? name : "video";
+                  }
+              }
+
+              private ServerSocket serverSocket;
+              private Thread serverThread;
+              private volatile boolean running = false;
+              private int port = 0;
+              private RangeListener listener;
+              private final Map<String, StreamMeta> streams = new ConcurrentHashMap<>();
+              private final Map<String, CompletableFuture<byte[]>> pendingChunks = new ConcurrentHashMap<>();
+
+              public LocalStreamServer(RangeListener listener) {
+                  this.listener = listener;
+              }
+
+              public synchronized int start() {
+                  if (running && serverSocket != null && !serverSocket.isClosed()) {
+                      return port;
+                  }
+                  try {
+                      serverSocket = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
+                      port = serverSocket.getLocalPort();
+                      running = true;
+                      serverThread = new Thread(this::listenLoop, "LocalStreamServer");
+                      serverThread.setDaemon(true);
+                      serverThread.start();
+                      return port;
+                  } catch (Exception e) {
+                      e.printStackTrace();
+                      return -1;
+                  }
+              }
+
+              public synchronized void stop() {
+                  running = false;
+                  try {
+                      if (serverSocket != null) serverSocket.close();
+                  } catch (Exception ignored) {}
+                  streams.clear();
+                  for (CompletableFuture<byte[]> f : pendingChunks.values()) {
+                      f.cancel(true);
+                  }
+                  pendingChunks.clear();
+              }
+
+              public void registerStream(String id, long size, String mime, String name) {
+                  streams.put(id, new StreamMeta(id, size, mime, name));
+              }
+
+              public void putChunk(String requestId, byte[] data) {
+                  CompletableFuture<byte[]> future = pendingChunks.remove(requestId);
+                  if (future != null) {
+                      future.complete(data);
+                  }
+              }
+
+              public void failChunk(String requestId) {
+                  CompletableFuture<byte[]> future = pendingChunks.remove(requestId);
+                  if (future != null) {
+                      future.complete(new byte[0]);
+                  }
+              }
+
+              private void listenLoop() {
+                  while (running && serverSocket != null && !serverSocket.isClosed()) {
+                      try {
+                          Socket client = serverSocket.accept();
+                          new Thread(() -> handleConnection(client), "StreamClient-" + System.currentTimeMillis()).start();
+                      } catch (Exception e) {
+                          if (!running) break;
+                      }
+                  }
+              }
+
+              private void handleConnection(Socket socket) {
+                  try {
+                      socket.setSoTimeout(30000);
+                      InputStream in = socket.getInputStream();
+                      OutputStream out = socket.getOutputStream();
+
+                      ByteArrayOutputStream headerBuf = new ByteArrayOutputStream();
+                      int b;
+                      int matches = 0;
+                      while ((b = in.read()) != -1) {
+                          headerBuf.write(b);
+                          if ((matches == 0 || matches == 2) && b == '\\r') matches++;
+                          else if ((matches == 1 || matches == 3) && b == '\\n') matches++;
+                          else matches = 0;
+                          if (matches == 4) break;
+                      }
+
+                      String headerStr = new String(headerBuf.toByteArray(), StandardCharsets.ISO_8859_1);
+                      String[] lines = headerStr.split("\\r\\n");
+                      if (lines.length == 0) { socket.close(); return; }
+
+                      String[] parts = lines[0].split(" ");
+                      if (parts.length < 2) { socket.close(); return; }
+
+                      String method = parts[0];
+                      String uri = parts[1];
+
+                      if ("POST".equalsIgnoreCase(method) && uri.startsWith("/chunk")) {
+                          int qIdx = uri.indexOf("requestId=");
+                          String reqId = qIdx != -1 ? uri.substring(qIdx + 10) : "";
+                          int ampIdx = reqId.indexOf('&');
+                          if (ampIdx != -1) reqId = reqId.substring(0, ampIdx);
+
+                          int contentLength = 0;
+                          for (String line : lines) {
+                              if (line.toLowerCase().startsWith("content-length:")) {
+                                  contentLength = Integer.parseInt(line.substring(15).trim());
+                              }
+                          }
+
+                          ByteArrayOutputStream bodyBuf = new ByteArrayOutputStream();
+                          if (contentLength > 0) {
+                              byte[] buf = new byte[8192];
+                              int readTotal = 0;
+                              while (readTotal < contentLength) {
+                                  int r = in.read(buf, 0, Math.min(buf.length, contentLength - readTotal));
+                                  if (r == -1) break;
+                                  bodyBuf.write(buf, 0, r);
+                                  readTotal += r;
+                              }
+                          }
+
+                          putChunk(reqId, bodyBuf.toByteArray());
+                          String resp = "HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n";
+                          out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
+                          out.flush();
+                          socket.close();
+                          return;
+                      }
+
+                      if ("POST".equalsIgnoreCase(method) && uri.startsWith("/error")) {
+                          int qIdx = uri.indexOf("requestId=");
+                          String reqId = qIdx != -1 ? uri.substring(qIdx + 10) : "";
+                          int ampIdx = reqId.indexOf('&');
+                          if (ampIdx != -1) reqId = reqId.substring(0, ampIdx);
+                          failChunk(reqId);
+                          String resp = "HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n";
+                          out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
+                          out.flush();
+                          socket.close();
+                          return;
+                      }
+
+                      if (!uri.startsWith("/stream/")) {
+                          String resp = "HTTP/1.1 404 Not Found\\r\\nContent-Length: 0\\r\\n\\r\\n";
+                          out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
+                          out.flush();
+                          socket.close();
+                          return;
+                      }
+
+                      String pathAfter = uri.substring(8);
+                      int slashIdx = pathAfter.indexOf('/');
+                      String streamId = slashIdx != -1 ? pathAfter.substring(0, slashIdx) : pathAfter;
+
+                      StreamMeta meta = streams.get(streamId);
+                      if (meta == null) {
+                          String resp = "HTTP/1.1 404 Stream Not Found\\r\\nContent-Length: 0\\r\\n\\r\\n";
+                          out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
+                          out.flush();
+                          socket.close();
+                          return;
+                      }
+
+                      long totalSize = meta.size;
+                      long start = 0;
+                      long end = totalSize - 1;
+                      boolean hasRange = false;
+
+                      for (String line : lines) {
+                          if (line.toLowerCase().startsWith("range:")) {
+                              hasRange = true;
+                              String rVal = line.substring(6).trim();
+                              if (rVal.startsWith("bytes=")) {
+                                  rVal = rVal.substring(6).trim();
+                                  String[] rParts = rVal.split("-");
+                                  if (rParts.length > 0 && !rParts[0].isEmpty()) {
+                                      start = Long.parseLong(rParts[0]);
+                                  }
+                                  if (rParts.length > 1 && !rParts[1].isEmpty()) {
+                                      end = Long.parseLong(rParts[1]);
+                                  }
+                              }
+                          }
+                      }
+
+                      if (start >= totalSize) {
+                          String resp = "HTTP/1.1 416 Range Not Satisfiable\\r\\nContent-Range: bytes */" + totalSize + "\\r\\n\\r\\n";
+                          out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
+                          out.flush();
+                          socket.close();
+                          return;
+                      }
+
+                      long blockSize = 2L * 1024L * 1024L;
+                      if (end - start + 1 > blockSize) {
+                          end = Math.min(totalSize - 1, start + blockSize - 1);
+                      }
+
+                      String reqId = UUID.randomUUID().toString();
+                      CompletableFuture<byte[]> chunkFuture = new CompletableFuture<>();
+                      pendingChunks.put(reqId, chunkFuture);
+
+                      if (listener != null) {
+                          listener.onNeedRange(streamId, start, end, reqId);
+                      }
+
+                      byte[] chunkData;
+                      try {
+                          chunkData = chunkFuture.get(25, TimeUnit.SECONDS);
+                      } catch (Exception e) {
+                          pendingChunks.remove(reqId);
+                          String resp = "HTTP/1.1 504 Gateway Timeout\\r\\nContent-Length: 0\\r\\n\\r\\n";
+                          out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
+                          out.flush();
+                          socket.close();
+                          return;
+                      }
+
+                      if (chunkData == null) chunkData = new byte[0];
+
+                      StringBuilder sb = new StringBuilder();
+                      if (hasRange) {
+                          sb.append("HTTP/1.1 206 Partial Content\\r\\n");
+                          sb.append("Content-Range: bytes ").append(start).append("-").append(start + chunkData.length - 1).append("/").append(totalSize).append("\\r\\n");
+                      } else {
+                          sb.append("HTTP/1.1 200 OK\\r\\n");
+                      }
+                      sb.append("Content-Type: ").append(meta.mime).append("\\r\\n");
+                      sb.append("Content-Length: ").append(chunkData.length).append("\\r\\n");
+                      sb.append("Accept-Ranges: bytes\\r\\n");
+                      sb.append("Access-Control-Allow-Origin: *\\r\\n");
+                      sb.append("Connection: close\\r\\n\\r\\n");
+
+                      out.write(sb.toString().getBytes(StandardCharsets.ISO_8859_1));
+                      out.write(chunkData);
+                      out.flush();
+                      socket.close();
+                  } catch (Exception e) {
+                      try { socket.close(); } catch (Exception ignored) {}
+                  }
+              }
+          }
+          """
+          with open(server_file, "w", encoding="utf-8") as f:
+              f.write(server_code)
+          print("LocalStreamServer.java inyectado exitosamente.")
+
+          # 2. ExoPlayerPlugin.java
+          plugin_file = os.path.join(java_pkg_dir, "ExoPlayerPlugin.java")
+          plugin_code = """package com.tgvideo.app;
+
+          import android.graphics.Color;
+          import android.net.Uri;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.view.ViewGroup;
+          import android.widget.FrameLayout;
+
+          import androidx.media3.common.MediaItem;
+          import androidx.media3.common.Player;
+          import androidx.media3.exoplayer.ExoPlayer;
+          import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+          import androidx.media3.ui.AspectRatioFrameLayout;
+          import androidx.media3.ui.PlayerView;
+
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          @CapacitorPlugin(name = "ExoPlayerPlugin")
+          public class ExoPlayerPlugin extends Plugin {
+              private ExoPlayer player;
+              private PlayerView playerView;
+              private DefaultTrackSelector trackSelector;
+              private LocalStreamServer streamServer;
+              private Handler progressHandler;
+              private Runnable progressRunnable;
+              private boolean isPlaying = false;
+
+              @Override
+              public void load() {
+                  super.load();
+                  progressHandler = new Handler(Looper.getMainLooper());
+                  streamServer = new LocalStreamServer((streamId, start, end, requestId) -> {
+                      JSObject ev = new JSObject();
+                      ev.put("streamId", streamId);
+                      ev.put("start", start);
+                      ev.put("end", end);
+                      ev.put("requestId", requestId);
+                      notifyListeners("needRange", ev);
+                  });
+                  streamServer.start();
+              }
+
+              @PluginMethod
+              public void startStreamServer(PluginCall call) {
+                  int port = streamServer != null ? streamServer.start() : -1;
+                  JSObject res = new JSObject();
+                  res.put("port", port);
+                  call.resolve(res);
+              }
+
+              @PluginMethod
+              public void registerStream(PluginCall call) {
+                  String id = call.getString("id");
+                  long size = call.getInt("size", 0);
+                  String mime = call.getString("mime", "video/mp4");
+                  String name = call.getString("name", "video");
+
+                  if (streamServer != null && id != null) {
+                      streamServer.registerStream(id, size, mime, name);
+                  }
+                  JSObject res = new JSObject();
+                  res.put("registered", true);
+                  call.resolve(res);
+              }
+
+              @PluginMethod
+              public void play(PluginCall call) {
+                  String url = call.getString("url");
+                  long resumeAt = call.getInt("resumeAt", 0) * 1000L;
+
+                  getActivity().runOnUiThread(() -> {
+                      try {
+                          if (player == null) {
+                              trackSelector = new DefaultTrackSelector(getContext());
+                              player = new ExoPlayer.Builder(getContext())
+                                      .setTrackSelector(trackSelector)
+                                      .build();
+
+                              player.addListener(new Player.Listener() {
+                                  @Override
+                                  public void onPlaybackStateChanged(int state) {
+                                      if (state == Player.STATE_READY) {
+                                          JSObject ret = new JSObject();
+                                          ret.put("state", "ready");
+                                          ret.put("duration", player.getDuration() / 1000.0);
+                                          notifyListeners("onReady", ret);
+                                      } else if (state == Player.STATE_ENDED) {
+                                          notifyListeners("onEnded", new JSObject());
+                                      }
+                                  }
+
+                                  @Override
+                                  public void onIsPlayingChanged(boolean playing) {
+                                      isPlaying = playing;
+                                      JSObject ret = new JSObject();
+                                      ret.put("isPlaying", playing);
+                                      notifyListeners("onPlayingChanged", ret);
+                                  }
+                              });
+
+                              playerView = new PlayerView(getContext());
+                              playerView.setUseController(false);
+                              playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+                              playerView.setPlayer(player);
+
+                              ViewGroup parent = (ViewGroup) getBridge().getWebView().getParent();
+                              FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                                      ViewGroup.LayoutParams.MATCH_PARENT,
+                                      ViewGroup.LayoutParams.MATCH_PARENT
+                              );
+                              int webViewIndex = parent.indexOfChild(getBridge().getWebView());
+                              parent.addView(playerView, webViewIndex, params);
+
+                              getBridge().getWebView().setBackgroundColor(Color.TRANSPARENT);
+                          }
+
+                          if (url != null) {
+                              MediaItem mediaItem = MediaItem.fromUri(Uri.parse(url));
+                              player.setMediaItem(mediaItem);
+                              if (resumeAt > 0) {
+                                  player.seekTo(resumeAt);
+                              }
+                              player.prepare();
+                              player.play();
+                          }
+
+                          startProgressTimer();
+                          call.resolve();
+                      } catch (Exception e) {
+                          call.reject("Error al iniciar ExoPlayer: " + e.getMessage());
+                      }
+                  });
+              }
+
+              @PluginMethod
+              public void togglePlay(PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      if (player != null) {
+                          if (player.isPlaying()) player.pause();
+                          else player.play();
+                      }
+                      call.resolve();
+                  });
+              }
+
+              @PluginMethod
+              public void pause(PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      if (player != null) player.pause();
+                      call.resolve();
+                  });
+              }
+
+              @PluginMethod
+              public void resume(PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      if (player != null) player.play();
+                      call.resolve();
+                  });
+              }
+
+              @PluginMethod
+              public void seekTo(PluginCall call) {
+                  double pos = call.getDouble("position", 0.0);
+                  getActivity().runOnUiThread(() -> {
+                      if (player != null) {
+                          player.seekTo((long) (pos * 1000L));
+                      }
+                      call.resolve();
+                  });
+              }
+
+              @PluginMethod
+              public void stop(PluginCall call) {
+                  getActivity().runOnUiThread(() -> {
+                      stopPlayback();
+                      call.resolve();
+                  });
+              }
+
+              private void startProgressTimer() {
+                  stopProgressTimer();
+                  progressRunnable = new Runnable() {
+                      @Override
+                      public void run() {
+                          if (player != null) {
+                              long cur = player.getCurrentPosition();
+                              long dur = player.getDuration();
+                              JSObject ret = new JSObject();
+                              ret.put("currentTime", cur / 1000.0);
+                              ret.put("duration", dur > 0 ? dur / 1000.0 : 0.0);
+                              ret.put("isPlaying", player.isPlaying());
+                              notifyListeners("onPlaybackProgress", ret);
+                          }
+                          progressHandler.postDelayed(this, 500);
+                      }
+                  };
+                  progressHandler.post(progressRunnable);
+              }
+
+              private void stopProgressTimer() {
+                  if (progressHandler != null && progressRunnable != null) {
+                      progressHandler.removeCallbacks(progressRunnable);
+                  }
+              }
+
+              private void stopPlayback() {
+                  stopProgressTimer();
+                  if (player != null) {
+                      player.stop();
+                      player.release();
+                      player = null;
+                  }
+                  if (playerView != null) {
+                      ViewGroup parent = (ViewGroup) playerView.getParent();
+                      if (parent != null) parent.removeView(playerView);
+                      playerView = null;
+                  }
+                  try {
+                      getBridge().getWebView().setBackgroundColor(Color.BLACK);
+                  } catch (Exception ignored) {}
+              }
+
+              @Override
+              protected void handleOnDestroy() {
+                  super.handleOnDestroy();
+                  stopPlayback();
+                  if (streamServer != null) {
+                      streamServer.stop();
+                  }
+              }
+          }
+          """
+          with open(plugin_file, "w", encoding="utf-8") as f:
+              f.write(plugin_code)
+          print("ExoPlayerPlugin.java inyectado exitosamente.")
+
+          # 3. Registrar plugin en MainActivity.java
+          main_activity = os.path.join(java_pkg_dir, "MainActivity.java")
+          if os.path.exists(main_activity):
+              with open(main_activity, "r", encoding="utf-8") as f:
+                  act = f.read()
+              if "ExoPlayerPlugin" not in act:
+                  act = act.replace("public class MainActivity extends BridgeActivity {", "public class MainActivity extends BridgeActivity {\\n    @Override\\n    public void onCreate(android.os.Bundle savedInstanceState) {\\n        registerPlugin(ExoPlayerPlugin.class);\\n        super.onCreate(savedInstanceState);\\n    }")
+                  with open(main_activity, "w", encoding="utf-8") as f:
+                      f.write(act)
+                  print("MainActivity.java configurado para registrar ExoPlayerPlugin.")
           PYEOF
 
       - name: Setup Signing Key and Version
@@ -264,12 +826,10 @@ jobs:
               run_number = os.environ.get("RUN_NUMBER", "1")
 
               if is_release:
-                  # Publicación oficial: versión tomada de package.json
                   content = re.sub(r'versionCode\s+\d+', f'versionCode {run_number}', content)
                   content = re.sub(r'versionName\s+"[^"]+"', f'versionName "{package_version}"', content)
                   print(f"Modo RELEASE: version oficial {package_version} (versionCode {run_number})")
               else:
-                  # APK de prueba (push): sufijo -dev sin incrementar versión oficial ni generar tag de release
                   dev_version = f"{package_version}-dev"
                   content = re.sub(r'versionName\s+"[^"]+"', f'versionName "{dev_version}"', content)
                   print(f"Modo PRUEBA (push): versionName {dev_version}, versionCode fijo.")
@@ -308,7 +868,7 @@ jobs:
           gh release create "$TAG_NAME" \
             android/app/build/outputs/apk/release/TGVideo.apk \
             --title "TGVideo $TAG_NAME" \
-            --notes "Versión oficial de TGVideo con soporte Android TV y controles TV." \
+            --notes "Versión oficial de TGVideo con ExoPlayer y soporte Android TV." \
             --latest
 
       - name: Update Rolling Debug Release (Automático en Push)
