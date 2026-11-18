@@ -7,13 +7,13 @@ import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js'
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const UI_SCALE_LEVELS = [
-  { id: 'diminuto', label: 'Diminuto', scale: 0.72 },
-  { id: 'muy-pequeno', label: 'Muy pequeño', scale: 0.82 },
-  { id: 'pequeno', label: 'Pequeño', scale: 0.92 },
+  { id: 'diminuto', label: 'Diminuto', scale: 0.60 },
+  { id: 'muy-pequeno', label: 'Muy pequeño', scale: 0.72 },
+  { id: 'pequeno', label: 'Pequeño', scale: 0.85 },
   { id: 'normal', label: 'Normal', scale: 1.0 },
   { id: 'grande', label: 'Grande (predeterminado)', scale: 1.12 },
-  { id: 'muy-grande', label: 'Muy Grande', scale: 1.25 },
-  { id: 'gigante', label: 'Enorme', scale: 1.40 },
+  { id: 'muy-grande', label: 'Muy Grande', scale: 1.22 },
+  { id: 'gigante', label: 'Enorme', scale: 1.32 },
 ];
 
 function normalizeScaleIndex(value, fallback = 4) {
@@ -221,8 +221,8 @@ function deviceSettings(profile, sync, onChanged) {
               <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
                 <input type="radio" name="player" value="exoplayer" ${currentPlayer === 'exoplayer' ? 'checked' : ''}>
                 <div class="settings-radio-info">
-                  <strong>ExoPlayer ★ Recomendado en Android TV</strong>
-                  <small>Decodificación por hardware de MKV/4K, múltiples audios y subtítulos en Android TV.</small>
+                  <strong>ExoPlayer ★ Recomendado</strong>
+                  <small>Nativo Android TV (MKV / 4K / HW)</small>
                 </div>
               </label>` : '';
 
@@ -237,7 +237,7 @@ function deviceSettings(profile, sync, onChanged) {
                 <input type="radio" name="player" value="artplayer" ${currentPlayer === 'artplayer' ? 'checked' : ''}>
                 <div class="settings-radio-info">
                   <strong>ArtPlayer</strong>
-                  <small>Diseño cinemático, gestos táctiles, selector OSD y velocidad (Web y PC).</small>
+                  <small>Reproductor web con OSD cinemático</small>
                 </div>
               </label>
 
@@ -245,7 +245,7 @@ function deviceSettings(profile, sync, onChanged) {
                 <input type="radio" name="player" value="native" ${currentPlayer === 'native' ? 'checked' : ''}>
                 <div class="settings-radio-info">
                   <strong>Reproductor nativo</strong>
-                  <small>Recomendado en iOS / Safari para AirPlay y audios nativos.</small>
+                  <small>HTML5 estándar (AirPlay / Safari / Web)</small>
                 </div>
               </label>
             </div>
@@ -255,24 +255,24 @@ function deviceSettings(profile, sync, onChanged) {
             <legend class="settings-legend">Reproducción e Interfaz</legend>
             <div class="settings-field-row">
               <label class="settings-label-inline">
-                <span>Salto por doble toque / clic:</span>
+                <span>Salto por toque / clic:</span>
                 <select name="skipSeconds" class="settings-select" data-focusable>
                   <option value="5" ${currentSkip === 5 ? 'selected' : ''}>5 segundos</option>
-                  <option value="10" ${currentSkip === 10 ? 'selected' : ''}>10 segundos (por defecto)</option>
+                  <option value="10" ${currentSkip === 10 ? 'selected' : ''}>10s (por defecto)</option>
                   <option value="15" ${currentSkip === 15 ? 'selected' : ''}>15 segundos</option>
                   <option value="30" ${currentSkip === 30 ? 'selected' : ''}>30 segundos</option>
                 </select>
               </label>
             </div>
             <label class="ui-scale-setting device-scale-setting">
-              <span class="ui-scale-header"><span>Tamaño de portadas y letras:</span><strong class="ui-scale-value" id="device-scale-label"></strong></span>
+              <span class="ui-scale-header"><span>Escala de portadas y letras:</span><strong class="ui-scale-value" id="device-scale-label"></strong></span>
               <input name="uiScale" type="range" class="settings-slider" min="0" max="6" step="1" value="${currentScale}" data-focusable>
               <span class="ui-scale-ticks">${UI_SCALE_LEVELS.map(level => `<span>${esc(level.label.replace(' (predeterminado)', ''))}</span>`).join('')}</span>
             </label>
           </fieldset>
 
       <p class="settings-status" role="status"></p>
-      <div class="settings-actions" style="margin-top:1.25rem;">
+      <div class="settings-actions">
         <button class="btn" data-focusable type="submit">Guardar en este dispositivo</button>
       </div>
     </form>
