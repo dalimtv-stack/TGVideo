@@ -183,9 +183,13 @@ jobs:
               m = re.sub(r'<activity\b[^>]*MainActivity[^>]*>', inject_activity_banner, m, count=1)
 
               if "LEANBACK_LAUNCHER" not in m:
+                  leanback_filter = """            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>"""
                   m = re.sub(
-                      r'(<category\s+android:name="android\.intent\.category\.LAUNCHER"\s*/>)',
-                      r'\1\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />',
+                      r'(<intent-filter\b[^>]*>[\s\S]*?android\.intent\.category\.LAUNCHER[\s\S]*?</intent-filter>)',
+                      leanback_filter + r'\n            \1',
                       m,
                       count=1
                   )
