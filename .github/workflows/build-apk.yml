@@ -9,7 +9,7 @@ on:
         description: '¿Publicar como Release oficial en GitHub?'
         required: false
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -67,11 +67,11 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Prepare Android TV & Fire TV Icons, Splash and Manifest
+      - name: Prepare Android TV Icons, Splash, Manifest & ExoPlayer Integration
         run: |
           pip install Pillow
           python3 - << 'PYEOF'
-          import os, re
+          import os, re, shutil
           from PIL import Image
 
           src_path = "public/icons/icon-512.png"
@@ -99,12 +99,25 @@ jobs:
               drawable_path = os.path.join(res_base, "drawable")
               os.makedirs(drawable_path, exist_ok=True)
 
-              # Banner Android TV / Fire TV (320x180) ocupando el rectangulo completo
-              from PIL import ImageOps
-              banner = ImageOps.fit(src, (320, 180), Image.Resampling.LANCZOS)
-              banner.save(os.path.join(drawable_path, "banner.png"))
+              # Banner Android TV / Fire TV (320x180): usar el icono landscape oficial si existe
+              landscape_src = "public/icons/icon-landscape.alt.png"
+              if not os.path.exists(landscape_src):
+                  landscape_src = "public/icons/icon-landscape.png"
 
-              # Reemplazar todos los splash.png de Capacitor para que nunca salga el logo de Capacitor
+              if os.path.exists(landscape_src):
+                  print(f"Usando icono landscape 16:9 oficial desde {landscape_src}...")
+                  b_src = Image.open(landscape_src).convert("RGBA")
+                  b_res = b_src.resize((320, 180), Image.Resampling.LANCZOS)
+                  b_res.save(os.path.join(drawable_path, "banner.png"))
+                  xhdpi_path = os.path.join(res_base, "drawable-xhdpi")
+                  os.makedirs(xhdpi_path, exist_ok=True)
+                  b_res.save(os.path.join(xhdpi_path, "banner.png"))
+              else:
+                  from PIL import ImageOps
+                  banner = ImageOps.fit(src, (320, 180), Image.Resampling.LANCZOS)
+                  banner.save(os.path.join(drawable_path, "banner.png"))
+
+              # Reemplazar splash de Capacitor
               for root, dirs, files in os.walk(res_base):
                   for file in files:
                       if file.lower() == "splash.png":
@@ -119,9 +132,9 @@ jobs:
                               splash_bg.paste(icon_splash, sp_offset, icon_splash)
                               splash_bg.save(target_splash)
                           except Exception as e:
-                              print(f"Error actualizando splash en {target_splash}: {e}")
+                              print(f"Error actualizando splash: {e}")
 
-              print("Iconos, banner y splash screens actualizados.")
+              print("Iconos, banner 16:9 y splash screens listos.")
 
           manifest_path = "android/app/src/main/AndroidManifest.xml"
           if os.path.exists(manifest_path):
@@ -139,7 +152,6 @@ jobs:
               if 'android:banner=' not in m:
                   m = re.sub(r'<application\b', '<application android:banner="@drawable/banner" android:isGame="false"', m, count=1)
 
-              # Inyectar android:banner="@drawable/banner" directamente en la etiqueta <activity> de MainActivity para Leanback
               def inject_activity_banner(match):
                   tag = match.group(0)
                   if 'android:banner=' not in tag:
@@ -160,7 +172,7 @@ jobs:
                   f.write(m)
               print("AndroidManifest.xml configurado para Leanback / Android TV.")
 
-          # Fondo de ventana oscuro para eliminar el destello blanco al iniciar
+          # Fondo negro para estilos
           for styles_path in ["android/app/src/main/res/values/styles.xml", "android/app/src/main/res/values-night/styles.xml"]:
               if os.path.exists(styles_path):
                   with open(styles_path, "r", encoding="utf-8") as f:
@@ -171,7 +183,255 @@ jobs:
                       st = st.replace("</style>", '    <item name="android:windowBackground">@android:color/black</item>\n    </style>')
                   with open(styles_path, "w", encoding="utf-8") as f:
                       f.write(st)
-                  print(f"Fondo de ventana configurado a negro en {styles_path}")
+
+          # Inyectar dependencias de ExoPlayer (Media3) en build.gradle
+          app_gradle = "android/app/build.gradle"
+          if os.path.exists(app_gradle):
+              with open(app_gradle, "r", encoding="utf-8") as f:
+                  g = f.read()
+              if "androidx.media3:media3-exoplayer" not in g:
+                  media3_deps = """
+    implementation 'androidx.media3:media3-exoplayer:1.5.1'
+    implementation 'androidx.media3:media3-ui:1.5.1'
+    implementation 'androidx.media3:media3-common:1.5.1'
+"""
+                  g = re.sub(r'dependencies\s*\{', 'dependencies {' + media3_deps, g, count=1)
+                  with open(app_gradle, "w", encoding="utf-8") as f:
+                      f.write(g)
+                  print("Dependencias de ExoPlayer Media3 agregadas a build.gradle.")
+
+          # Inyectar plugin nativo ExoPlayerPlugin.java en com.tgvideo.app
+          java_pkg_dir = "android/app/src/main/java/com/tgvideo/app"
+          os.makedirs(java_pkg_dir, exist_ok=True)
+          plugin_path = os.path.join(java_pkg_dir, "ExoPlayerPlugin.java")
+
+          exoplayer_plugin_code = """package com.tgvideo.app;
+
+import android.graphics.Color;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.Player;
+import androidx.media3.common.TrackGroup;
+import androidx.media3.common.Tracks;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+import androidx.media3.ui.PlayerView;
+
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+@CapacitorPlugin(name = "ExoPlayerPlugin")
+public class ExoPlayerPlugin extends Plugin {
+    private ExoPlayer player;
+    private PlayerView playerView;
+    private DefaultTrackSelector trackSelector;
+    private Handler progressHandler;
+    private Runnable progressRunnable;
+
+    @Override
+    public void load() {
+        super.load();
+        progressHandler = new Handler(Looper.getMainLooper());
+    }
+
+    @PluginMethod
+    public void play(PluginCall call) {
+        String url = call.getString("url");
+        long resumeAt = call.getInt("resumeAt", 0) * 1000L;
+
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (player == null) {
+                    trackSelector = new DefaultTrackSelector(getContext());
+                    player = new ExoPlayer.Builder(getContext())
+                        .setTrackSelector(trackSelector)
+                        .build();
+
+                    playerView = new PlayerView(getContext());
+                    playerView.setPlayer(player);
+                    playerView.setUseController(false);
+
+                    FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    );
+
+                    // Colocar vista de video detras del WebView transparente
+                    ViewGroup parent = (ViewGroup) getBridge().getWebView().getParent();
+                    int webViewIndex = parent.indexOfChild(getBridge().getWebView());
+                    parent.addView(playerView, webViewIndex, params);
+                    getBridge().getWebView().setBackgroundColor(Color.TRANSPARENT);
+
+                    player.addListener(new Player.Listener() {
+                        @Override
+                        public void onPlaybackStateChanged(int state) {
+                            JSObject ret = new JSObject();
+                            if (state == Player.STATE_READY) {
+                                ret.put("state", "READY");
+                                ret.put("duration", player.getDuration() / 1000.0);
+                                notifyListeners("onStateChanged", ret);
+                                sendTracks();
+                            } else if (state == Player.STATE_ENDED) {
+                                ret.put("state", "ENDED");
+                                notifyListeners("onStateChanged", ret);
+                            }
+                        }
+
+                        @Override
+                        public void onIsPlayingChanged(boolean isPlaying) {
+                            JSObject ret = new JSObject();
+                            ret.put("state", isPlaying ? "PLAYING" : "PAUSED");
+                            notifyListeners("onStateChanged", ret);
+                        }
+
+                        @Override
+                        public void onTracksChanged(Tracks tracks) {
+                            sendTracks();
+                        }
+                    });
+
+                    startProgress();
+                }
+
+                MediaItem mediaItem = MediaItem.fromUri(Uri.parse(url));
+                player.setMediaItem(mediaItem);
+                if (resumeAt > 0) player.seekTo(resumeAt);
+                player.prepare();
+                player.play();
+
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("Error inicializando ExoPlayer: " + e.getMessage());
+            }
+        });
+    }
+
+    private void sendTracks() {
+        if (player == null) return;
+        JSObject ret = new JSObject();
+        JSArray audioArr = new JSArray();
+        JSArray textArr = new JSArray();
+
+        Tracks tracks = player.getCurrentTracks();
+        for (Tracks.Group group : tracks.getGroups()) {
+            TrackGroup tg = group.getMediaTrackGroup();
+            for (int i = 0; i < tg.length; i++) {
+                JSObject tObj = new JSObject();
+                tObj.put("index", i);
+                tObj.put("label", tg.getFormat(i).label);
+                tObj.put("language", tg.getFormat(i).language);
+                tObj.put("selected", group.isTrackSelected(i));
+
+                if (group.getType() == androidx.media3.common.C.TRACK_TYPE_AUDIO) {
+                    audioArr.put(tObj);
+                } else if (group.getType() == androidx.media3.common.C.TRACK_TYPE_TEXT) {
+                    textArr.put(tObj);
+                }
+            }
+        }
+        ret.put("audio", audioArr);
+        ret.put("text", textArr);
+        notifyListeners("onTracks", ret);
+    }
+
+    private void startProgress() {
+        progressRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (player != null && player.isPlaying()) {
+                    JSObject ret = new JSObject();
+                    ret.put("currentTime", player.getCurrentPosition() / 1000.0);
+                    ret.put("duration", player.getDuration() / 1000.0);
+                    notifyListeners("onTimeUpdate", ret);
+                }
+                progressHandler.postDelayed(this, 500);
+            }
+        };
+        progressHandler.post(progressRunnable);
+    }
+
+    @PluginMethod
+    public void pause(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            if (player != null) player.pause();
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
+    public void resume(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            if (player != null) player.play();
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
+    public void seek(PluginCall call) {
+        double time = call.getDouble("time", 0.0);
+        getActivity().runOnUiThread(() -> {
+            if (player != null) player.seekTo((long) (time * 1000));
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
+    public void stop(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            cleanup();
+            if (call != null) call.resolve();
+        });
+    }
+
+    private void cleanup() {
+        if (progressHandler != null && progressRunnable != null) {
+            progressHandler.removeCallbacks(progressRunnable);
+        }
+        if (player != null) {
+            player.stop();
+            player.release();
+            player = null;
+        }
+        if (playerView != null) {
+            ViewGroup parent = (ViewGroup) playerView.getParent();
+            if (parent != null) parent.removeView(playerView);
+            playerView = null;
+        }
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().setBackgroundColor(Color.BLACK);
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        cleanup();
+        super.handleOnDestroy();
+    }
+}
+"""
+          with open(plugin_path, "w", encoding="utf-8") as f:
+              f.write(exoplayer_plugin_code)
+          print("ExoPlayerPlugin.java creado e inyectado correctamente.")
+
+          # Registrar ExoPlayerPlugin en MainActivity.java
+          main_activity = os.path.join(java_pkg_dir, "MainActivity.java")
+          if os.path.exists(main_activity):
+              with open(main_activity, "r", encoding="utf-8") as f:
+                  act = f.read()
+              if "ExoPlayerPlugin" not in act:
+                  act = act.replace("public class MainActivity extends BridgeActivity {", "public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(android.os.Bundle savedInstanceState) {\n        registerPlugin(ExoPlayerPlugin.class);\n        super.onCreate(savedInstanceState);\n    }")
+                  with open(main_activity, "w", encoding="utf-8") as f:
+                      f.write(act)
+                  print("MainActivity.java configurado para registrar ExoPlayerPlugin.")
           PYEOF
 
       - name: Setup Signing Key and Version
@@ -192,8 +452,19 @@ jobs:
           fi
 
           python3 - << 'PYEOF'
-          import os, re
+          import os, re, json
+
           gradle_file = "android/app/build.gradle"
+          pkg_file = "package.json"
+
+          package_version = "0.1.0"
+          if os.path.exists(pkg_file):
+              try:
+                  with open(pkg_file, "r", encoding="utf-8") as f:
+                      package_version = json.load(f).get("version", "0.1.0")
+              except Exception:
+                  pass
+
           if os.path.exists(gradle_file):
               with open(gradle_file, "r", encoding="utf-8") as f:
                   content = f.read()
@@ -224,17 +495,15 @@ jobs:
               run_number = os.environ.get("RUN_NUMBER", "1")
 
               if is_release:
-                  # Incrementar versión oficial únicamente en publicación manual o tags
+                  # Publicación oficial: versión tomada de package.json
                   content = re.sub(r'versionCode\s+\d+', f'versionCode {run_number}', content)
-                  content = re.sub(r'versionName\s+"[^"]+"', f'versionName "1.0.{run_number}"', content)
-                  print(f"Modo RELEASE: version oficial 1.0.{run_number} (versionCode {run_number})")
+                  content = re.sub(r'versionName\s+"[^"]+"', f'versionName "{package_version}"', content)
+                  print(f"Modo RELEASE: version oficial {package_version} (versionCode {run_number})")
               else:
-                  # En push normales de desarrollo: mantener versión base y sufijo -dev
-                  match_vn = re.search(r'versionName\s+"([^"]+)"', content)
-                  base_vn = match_vn.group(1) if match_vn else "1.0.0"
-                  dev_vn = f"{base_vn}-dev" if not base_vn.endswith("-dev") else base_vn
-                  content = re.sub(r'versionName\s+"[^"]+"', f'versionName "{dev_vn}"', content)
-                  print(f"Modo DESARROLLO (push): versionName {dev_vn}, conservando versionCode base.")
+                  # APK de prueba (push): sufijo -dev sin incrementar versión oficial ni generar tag de release
+                  dev_version = f"{package_version}-dev"
+                  content = re.sub(r'versionName\s+"[^"]+"', f'versionName "{dev_version}"', content)
+                  print(f"Modo PRUEBA (push): versionName {dev_version}, versionCode fijo.")
 
               with open(gradle_file, "w", encoding="utf-8") as f:
                   f.write(content)
@@ -252,7 +521,6 @@ jobs:
             cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TGVideo.apk
           else
             cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TGVideo-dev.apk
-            cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TGVideo.apk
           fi
 
       - uses: actions/upload-artifact@v4
@@ -261,14 +529,27 @@ jobs:
           path: android/app/build/outputs/apk/release/TGVideo*.apk
           if-no-files-found: error
 
-      - name: Publish GitHub Release
+      - name: Publish Official Release (Manual o Tag)
         if: (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true') || startsWith(github.ref, 'refs/tags/')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG_NAME="v1.0.${{ github.run_number }}"
+          PKG_VER=$(node -p "require('./package.json').version || '1.0.0'")
+          TAG_NAME="v${PKG_VER}"
           gh release create "$TAG_NAME" \
             android/app/build/outputs/apk/release/TGVideo.apk \
             --title "TGVideo $TAG_NAME" \
-            --notes "Versión oficial de TGVideo con firma fija y soporte Android TV." \
+            --notes "Versión oficial de TGVideo con ExoPlayer y soporte Android TV." \
             --latest
+
+      - name: Update Rolling Debug Release (Automático en Push)
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "debug" \
+            android/app/build/outputs/apk/release/TGVideo-dev.apk \
+            --title "TGVideo (Versión de Prueba / Debug)" \
+            --notes "APK de prueba compilada automáticamente desde el último commit de main. No incrementa la versión oficial." \
+            --prerelease \
+            --clobber || gh release upload "debug" android/app/build/outputs/apk/release/TGVideo-dev.apk --clobber
