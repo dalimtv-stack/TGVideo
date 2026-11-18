@@ -36,9 +36,16 @@ export function getDeviceSettings(profile) {
   const localScale = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_scale') : null;
   const legacyLocalScale = typeof localStorage !== 'undefined' && profile?.id ? localStorage.getItem(`tgvideo_scale_${profile.id}`) : null;
 
+  const isAndroidApp = typeof window !== 'undefined' &&
+    (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
+  let chosenPlayer = devProfile.player || localPlayer || profile?.player || legacyLocalPlayer || 'artplayer';
+  if (!isAndroidApp && chosenPlayer === 'exoplayer') {
+    chosenPlayer = 'artplayer';
+  }
+
   return {
     deviceId,
-    player: devProfile.player || localPlayer || profile?.player || legacyLocalPlayer || 'artplayer',
+    player: chosenPlayer,
     skipSeconds: Number(devProfile.skip_seconds || localSkip || profile?.skip_seconds || legacyLocalSkip || 10),
     uiScale: Number(devProfile.ui_scale ?? localScale ?? profile?.ui_scale ?? legacyLocalScale ?? 4),
   };
