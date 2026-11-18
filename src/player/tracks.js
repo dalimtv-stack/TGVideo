@@ -81,17 +81,19 @@ export function waitForTracks(video, { timeoutMs = 800 } = {}) {
 
 const TRACKS_BY_VIDEO = new WeakMap();
 
-export function ensureTracksDetected(video) {
+export function ensureTracksDetected(video, { deep = false } = {}) {
   if (!video) return Promise.resolve({ audio: [], text: [] });
-  if (TRACKS_BY_VIDEO.has(video)) return TRACKS_BY_VIDEO.get(video);
+  if (TRACKS_BY_VIDEO.has(video) && !deep) return TRACKS_BY_VIDEO.get(video);
 
   const promise = (async () => {
-    const native = await waitForTracks(video, { timeoutMs: 800 });
+    const native = await waitForTracks(video, { timeoutMs: 300 });
     let audio = native.audio.slice();
     let text = native.text.slice();
 
+    // Solo si se solicita explícitamente (al abrir el selector de pistas) y no hay pistas nativas
+    // para no competir con la descarga inicial del vídeo ni causar congelamientos
     const src = video.currentSrc || video.src;
-    if (src) {
+    if (deep && src && (audio.length <= 1 || text.length === 0)) {
       try {
         const parsed = await detectTracksFromUrl(src);
         if (parsed.audio && (parsed.audio.length > audio.length || audio.length === 0)) {
@@ -107,14 +109,16 @@ export function ensureTracksDetected(video) {
     return { audio, text };
   })();
 
-  TRACKS_BY_VIDEO.set(video, promise);
+  if (!deep || !TRACKS_BY_VIDEO.has(video)) {
+    TRACKS_BY_VIDEO.set(video, promise);
+  }
   return promise;
 }
 
 export async function openAudioSelector(video, playerEl, returnFocusEl) {
   playerEl.querySelector(".player-tracks-overlay")?.remove();
 
-  const tracksData = await ensureTracksDetected(video);
+  const tracksData = await ensureTracksDetected(video, { deep: true });
   const rawTracks = tracksData.audio;
 
   const overlay = document.createElement("div");
@@ -220,7 +224,7 @@ export async function openAudioSelector(video, playerEl, returnFocusEl) {
 export async function openSubtitlesSelector(video, playerEl, returnFocusEl) {
   playerEl.querySelector(".player-tracks-overlay")?.remove();
 
-  const tracksData = await ensureTracksDetected(video);
+  const tracksData = await ensureTracksDetected(video, { deep: true });
   let rawTracks = tracksData.text;
 
   try {
