@@ -313,6 +313,43 @@
 
 
 
+/* Engine badge lives on the top-right, separate from the action to switch engines. */
+.player-osd-engine-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.player-engine-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 34px;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.player-engine-pill .engine-dot {
+  color: #4ade80;
+  font-size: 0.62rem;
+  text-shadow: 0 0 8px rgba(74, 222, 128, 0.7);
+}
+
+.player-engine-pill-exo .engine-dot {
+  color: #38bdf8;
+  text-shadow: 0 0 8px rgba(56, 189, 248, 0.7);
+}
+
 .player-osd-badge:focus {
   outline: 3px solid #fff;
   outline-offset: 2px;
@@ -642,27 +679,131 @@
 }
 
 
-/* Subtítulos nativos: zona segura inferior (iPhone) */
+/* Subtítulos nativos: styling compatible sin confiar en la posición del cue de Safari. */
 .native-video::cue,
 video::cue {
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.72);
   color: #fff;
-  font-size: 1.05em;
-  line-height: 1.35;
+  font-size: 1em;
+  line-height: 1.3;
+  text-shadow: 0 1px 2px #000;
 }
 .player-native,
 .player {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: 0;
 }
 .player-osd-bottom {
+  box-sizing: border-box;
   padding-bottom: max(0.6rem, env(safe-area-inset-bottom, 0px));
   padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
   padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
 }
 .player-osd-top {
+  box-sizing: border-box;
   padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
   padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
   padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+}
+
+/* Safari iPhone: prevent flex shrinking and control distortion in narrow viewports. */
+@media (max-width: 700px) and (pointer: coarse) {
+  .player-tv-osd {
+    box-sizing: border-box;
+    padding: max(0.65rem, env(safe-area-inset-top, 0px))
+      max(0.65rem, env(safe-area-inset-right, 0px))
+      max(0.75rem, env(safe-area-inset-bottom, 0px))
+      max(0.65rem, env(safe-area-inset-left, 0px));
+  }
+
+  .player-osd-top {
+    width: 100%;
+    min-width: 0;
+    gap: 0.45rem;
+  }
+
+  .player-osd-back-btn,
+  .player-controls-row .player-ctrl-btn {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    aspect-ratio: 1 / 1;
+    min-width: 40px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .player-controls-row .player-ctrl-btn-primary {
+    min-width: 48px;
+    width: 48px;
+    height: 48px;
+  }
+
+  .player-controls-row {
+    width: 100%;
+    min-width: 0;
+    gap: clamp(0.28rem, 2vw, 0.65rem);
+    justify-content: space-between;
+  }
+
+  .player-controls-row .player-ctrl-btn svg {
+    flex: 0 0 auto;
+  }
+
+  .player-osd-title {
+    min-width: 0;
+    font-size: clamp(0.82rem, 3vw, 1rem);
+  }
+
+  .player-osd-engine-box {
+    gap: 0.3rem;
+  }
+
+  .player-engine-pill {
+    min-height: 30px;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.68rem;
+  }
+
+  .player-osd-badge {
+    min-height: 30px;
+    padding: 0.3rem 0.48rem;
+    font-size: 0.68rem;
+    white-space: nowrap;
+  }
+
+  .player-timeline-row {
+    gap: 0.35rem;
+  }
+
+  .player-osd-time {
+    min-width: 2.8rem;
+    font-size: 0.7rem;
+  }
+}
+
+@media (max-width: 380px) and (pointer: coarse) {
+  .player-osd-engine-box {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.2rem;
+  }
+
+  .player-engine-pill,
+  .player-osd-badge {
+    min-height: 26px;
+    font-size: 0.62rem;
+  }
+
+  .player-controls-row .player-ctrl-btn {
+    min-width: 36px;
+    width: 36px;
+    height: 36px;
+  }
+
+  .player-controls-row .player-ctrl-btn-primary {
+    min-width: 44px;
+    width: 44px;
+    height: 44px;
+  }
 }
 
 
