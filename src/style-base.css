@@ -765,9 +765,17 @@ html, body {
   justify-content: center;
   text-align: center;
   padding: 1rem;
-  background: #000;
-  z-index: 120;
+  background: rgba(0, 0, 0, 0.92);
+  z-index: 2000;
   pointer-events: none;
+}
+.player-loading p,
+.player-loading #pl-status {
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 500;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.85);
+  max-width: 90%;
 }
 
 .artplayer-host {

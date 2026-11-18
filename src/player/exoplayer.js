@@ -56,7 +56,7 @@ export async function playExoPlayer(opts) {
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title" id="pl-title">Cargando…</div>
           <div class="player-osd-engine-box">
-            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>ExoPlayer ⇄</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="Ahora: ExoPlayer · cambiar a ArtPlayer" data-focusable>Ahora: ExoPlayer · Cambiar</button>
           </div>
         </div>
 
@@ -280,12 +280,16 @@ export async function playExoPlayer(opts) {
   };
 
   try {
+    if (loading) loading.style.display = 'flex';
+    if (statusEl) statusEl.textContent = 'Conectando con Telegram…';
     const targetChannel = file?.channel || title?.channel;
     if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
+    if (statusEl) statusEl.textContent = 'Localizando archivo…';
     const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (destroyed) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
+    if (statusEl) statusEl.textContent = 'Iniciando ExoPlayer…';
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
@@ -448,48 +452,101 @@ export async function playExoPlayer(opts) {
     mount.querySelector('#pl-btn-back').onclick = closePlayer;
 
     const openNativeTrackMenu = async (kind) => {
-      let result;
+      // Evitar crash en Android TV: no tocar el plugin si no está listo
+      if (!ExoPlayerPlugin || typeof ExoPlayerPlugin.getTracks !== 'function') {
+        showToast(playerEl, 'Pistas no disponibles en este dispositivo');
+        return;
+      }
+      let result = null;
       try {
         result = await ExoPlayerPlugin.getTracks();
       } catch (error) {
+        console.warn('[exoplayer] getTracks error', error);
         showToast(playerEl, `No se pudieron leer las pistas: ${error?.message || 'error'}`);
         return;
       }
-      const tracks = Array.from(result?.[kind] || []);
-      const overlay = document.createElement('div');
-      overlay.className = 'player-tracks-overlay';
-      const titleText = kind === 'audio' ? 'Pistas de audio' : 'Subtítulos';
-      const labelFor = (track, index) => track.label || track.language || `${titleText} ${index + 1}`;
-      const noneButton = kind === 'text' ? `<button class="player-track-option" data-disabled="true" data-focusable>Desactivados</button>` : '';
-      overlay.innerHTML = `<div class="player-tracks-menu" role="dialog" aria-label="${titleText}"><div class="player-tracks-title"><span>${titleText}</span><button class="player-tracks-close" data-focusable aria-label="Cerrar">✕</button></div><div class="player-tracks-list">${noneButton}${tracks.map((track, index) => `<button class="player-track-option ${track.selected ? 'is-selected' : ''}" data-index="${index}" data-focusable>${escapeHtml(labelFor(track, index))}${track.selected ? ' ✓' : ''}</button>`).join('') || '<div class="player-track-empty">No hay pistas disponibles.</div>'}</div></div>`;
-      playerEl.appendChild(overlay);
-      const closeMenu = () => { overlay.remove(); (kind === 'audio' ? mount.querySelector('#pl-btn-audio') : mount.querySelector('#pl-btn-subs'))?.focus(); };
-      overlay.querySelector('.player-tracks-close')?.addEventListener('click', closeMenu);
-      overlay.querySelectorAll('.player-track-option').forEach((button) => button.addEventListener('click', async () => {
-        try {
-          if (button.dataset.disabled === 'true') await ExoPlayerPlugin.selectTrack({ type: 'text', enabled: false });
-          else {
-            const track = tracks[Number(button.dataset.index)];
-            if (track) await ExoPlayerPlugin.selectTrack({ type: kind, group: track.group, track: track.track, enabled: true });
+      try {
+        const raw = result?.[kind];
+        const tracks = Array.isArray(raw)
+          ? raw
+          : (raw && typeof raw === 'object' ? Object.values(raw) : []);
+        const overlay = document.createElement('div');
+        overlay.className = 'player-tracks-overlay';
+        const titleText = kind === 'audio' ? 'Pistas de audio' : 'Subtítulos';
+        const labelFor = (track, index) => {
+          if (!track || typeof track !== 'object') return `${titleText} ${index + 1}`;
+          return track.label || track.language || `${titleText} ${index + 1}`;
+        };
+        const noneButton = kind === 'text'
+          ? `<button class="player-track-option" data-disabled="true" data-focusable>Desactivados</button>`
+          : '';
+        const listHtml = tracks.length
+          ? tracks.map((track, index) => {
+              const selected = !!(track && track.selected);
+              return `<button class="player-track-option ${selected ? 'is-selected' : ''}" data-index="${index}" data-focusable>${escapeHtml(labelFor(track, index))}${selected ? ' ✓' : ''}</button>`;
+            }).join('')
+          : '<div class="player-track-empty">No hay pistas disponibles.</div>';
+        overlay.innerHTML = `<div class="player-tracks-menu" role="dialog" aria-label="${titleText}"><div class="player-tracks-title"><span>${titleText}</span><button class="player-tracks-close" data-focusable aria-label="Cerrar">✕</button></div><div class="player-tracks-list">${noneButton}${listHtml}</div></div>`;
+        playerEl.appendChild(overlay);
+
+        const closeMenu = () => {
+          try { overlay.remove(); } catch (_) {}
+          try {
+            (kind === 'audio' ? mount.querySelector('#pl-btn-audio') : mount.querySelector('#pl-btn-subs'))?.focus?.();
+          } catch (_) {}
+        };
+        overlay.querySelector('.player-tracks-close')?.addEventListener('click', closeMenu);
+        overlay.querySelectorAll('.player-track-option').forEach((button) => {
+          button.addEventListener('click', async () => {
+            try {
+              if (button.dataset.disabled === 'true') {
+                await ExoPlayerPlugin.selectTrack({ type: 'text', enabled: false });
+              } else {
+                const track = tracks[Number(button.dataset.index)];
+                if (track) {
+                  await ExoPlayerPlugin.selectTrack({
+                    type: kind,
+                    group: Number(track.group),
+                    track: Number(track.track),
+                    enabled: true,
+                  });
+                }
+              }
+              showToast(playerEl, `${titleText}: ${button.textContent.trim()}`);
+              closeMenu();
+            } catch (error) {
+              console.warn('[exoplayer] selectTrack error', error);
+              showToast(playerEl, `No se pudo cambiar la pista: ${error?.message || 'error'}`);
+            }
+          });
+        });
+        overlay.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' || e.key === 'Back' || e.keyCode === 4) {
+            e.preventDefault();
+            e.stopPropagation();
+            closeMenu();
+            return;
           }
-          showToast(playerEl, `${titleText}: ${button.textContent.trim()}`);
-          closeMenu();
-        } catch (error) {
-          showToast(playerEl, `No se pudo cambiar la pista: ${error?.message || 'error'}`);
-        }
-      }));
-      overlay.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' || e.key === 'Back' || e.keyCode === 4) { e.preventDefault(); e.stopPropagation(); closeMenu(); return; }
-        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-          e.preventDefault(); e.stopPropagation();
-          const options = [...overlay.querySelectorAll('[data-focusable]')].filter(el => !el.disabled);
-          const current = options.indexOf(document.activeElement);
-          const delta = e.key === 'ArrowUp' ? -1 : 1;
-          options[Math.max(0, Math.min(options.length - 1, current + delta))]?.focus();
-        }
-      });
-      overlay.querySelector('.player-track-option')?.focus();
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            e.stopPropagation();
+            const options = [...overlay.querySelectorAll('[data-focusable]')].filter(el => !el.disabled);
+            const current = options.indexOf(document.activeElement);
+            const delta = e.key === 'ArrowUp' ? -1 : 1;
+            const next = Math.max(0, Math.min(options.length - 1, (current < 0 ? 0 : current) + delta));
+            options[next]?.focus?.();
+          }
+        });
+        // Focus diferido: en Android TV focus inmediato a veces tumba el WebView
+        setTimeout(() => {
+          try { overlay.querySelector('.player-track-option, .player-tracks-close')?.focus?.(); } catch (_) {}
+        }, 50);
+      } catch (error) {
+        console.warn('[exoplayer] menú de pistas error', error);
+        showToast(playerEl, `Error al mostrar pistas: ${error?.message || 'error'}`);
+      }
     };
+
     mount.querySelector('#pl-btn-audio').onclick = () => openNativeTrackMenu('audio');
     mount.querySelector('#pl-btn-subs').onclick = () => openNativeTrackMenu('text');
 

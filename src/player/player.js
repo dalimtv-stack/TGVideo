@@ -94,6 +94,7 @@ export async function playNative({
   onNext = null,
 }) {
   const displayTitle = formatPlayerTitle(title, file);
+  const isWeb = !(typeof window !== 'undefined' && (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android'));
   const isAndroidApp = typeof window !== 'undefined' &&
     (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
 
@@ -104,7 +105,7 @@ export async function playNative({
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
           <div class="player-osd-engine-box">
-            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Nativo ⇄</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Ahora: Nativo · Cambiar</button>
           </div>
         </div>
 
@@ -136,9 +137,7 @@ export async function playNative({
             <button class="player-ctrl-btn" id="pl-btn-subs" data-focusable title="Subtítulos">
               <svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
             </button>
-            <button class="player-ctrl-btn" id="pl-btn-fullscreen" data-focusable title="Pantalla completa">
-              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-            </button>
+            ${isWeb ? `<button class="player-ctrl-btn" id="pl-btn-fullscreen" data-focusable title="Pantalla completa"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>` : ''}
           </div>
         </div>
       </div>
@@ -332,7 +331,8 @@ export async function playNative({
     showOsd();
   };
 
-  mount.querySelector('#pl-btn-fullscreen').onclick = () => {
+  const __fsBtn = mount.querySelector('#pl-btn-fullscreen');
+  if (__fsBtn) __fsBtn.onclick = () => {
     if (document.fullscreenElement) {
       document.exitFullscreen?.().catch(() => {});
     } else if (playerEl.requestFullscreen) {
@@ -539,12 +539,16 @@ export async function playNative({
   registerPlayerController(tvController);
 
   try {
+    if (loading) loading.style.display = 'flex';
+    if (status) status.textContent = 'Conectando con Telegram…';
     const targetChannel = file?.channel || title?.channel;
     if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
+    if (status) status.textContent = 'Localizando archivo…';
     const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
+    if (status) status.textContent = 'Abriendo túnel de streaming…';
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
@@ -680,6 +684,7 @@ export async function playArtplayer({
   onNext = null,
 }) {
   const displayTitle = formatPlayerTitle(title, file);
+  const isWeb = !(typeof window !== 'undefined' && (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android'));
   const isAndroidApp = typeof window !== 'undefined' &&
     (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
 
@@ -690,7 +695,7 @@ export async function playArtplayer({
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
           <div class="player-osd-engine-box">
-            <button class="player-osd-badge" id="pl-badge-toggle" title="${isAndroidApp ? 'Cambiar a ExoPlayer' : 'Cambiar a Nativo'}" data-focusable>ArtPlayer ⇄</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="${isAndroidApp ? 'Cambiar a ExoPlayer' : 'Cambiar a Nativo'}" data-focusable>Ahora: ArtPlayer · Cambiar</button>
           </div>
         </div>
 
@@ -722,9 +727,7 @@ export async function playArtplayer({
             <button class="player-ctrl-btn" id="pl-btn-subs" data-focusable title="Subtítulos">
               <svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
             </button>
-            <button class="player-ctrl-btn" id="pl-btn-fullscreen" data-focusable title="Pantalla completa">
-              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-            </button>
+            ${isWeb ? `<button class="player-ctrl-btn" id="pl-btn-fullscreen" data-focusable title="Pantalla completa"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>` : ''}
           </div>
         </div>
       </div>
@@ -920,7 +923,8 @@ export async function playArtplayer({
     }
   };
 
-  mount.querySelector('#pl-btn-fullscreen').onclick = () => {
+  const __fsBtn = mount.querySelector('#pl-btn-fullscreen');
+  if (__fsBtn) __fsBtn.onclick = () => {
     if (art?.fullscreen) {
       art.fullscreen.toggle();
     } else if (document.fullscreenElement) {
@@ -1139,12 +1143,16 @@ export async function playArtplayer({
   registerPlayerController(tvController);
 
   try {
+    if (loading) loading.style.display = 'flex';
+    if (status) status.textContent = 'Conectando con Telegram…';
     const targetChannel = file?.channel || title?.channel;
     if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
+    if (status) status.textContent = 'Localizando archivo…';
     const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
+    if (status) status.textContent = 'Abriendo túnel de streaming…';
 
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
