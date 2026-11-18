@@ -547,9 +547,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "debug" \
-            android/app/build/outputs/apk/release/TGVideo-dev.apk \
-            --title "TGVideo (Versión de Prueba / Debug)" \
-            --notes "APK de prueba compilada automáticamente desde el último commit de main. No incrementa la versión oficial." \
-            --prerelease \
-            --clobber || gh release upload "debug" android/app/build/outputs/apk/release/TGVideo-dev.apk --clobber
+          if gh release view "debug" >/dev/null 2>&1; then
+            echo "Actualizando release debug existente..."
+            gh release upload "debug" android/app/build/outputs/apk/release/TGVideo-dev.apk --clobber
+          else
+            echo "Creando release debug inicial..."
+            gh release create "debug" \
+              android/app/build/outputs/apk/release/TGVideo-dev.apk \
+              --title "TGVideo (Versión de Prueba / Debug)" \
+              --notes "APK de prueba compilada automáticamente desde el último commit de main. No incrementa la versión oficial." \
+              --prerelease
+          fi
