@@ -761,10 +761,17 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
         : t.tipo === 'serie'
           ? (f.metadata?.name || prettyEpisodeName(f.fileName || f.label, normalizedMovieName))
           : (t.archivos.length > 1 ? (f.label || `Versión ${files.indexOf(f) + 1}`) : (f.metadata?.name || normalizedMovieName || f.sagaName || f.label));
-      const sentAt = Number(f.date);
-      const episodeDate = Number.isFinite(sentAt) && sentAt > 0
-        ? new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(sentAt * 1000))
-        : '';
+      // En series se muestra la fecha oficial de emisión de TMDB si está disponible.
+      // Se omite la fecha interna de subida a Telegram según especificación.
+      let episodeDate = '';
+      if (t.tipo === 'serie' && f.metadata?.air_date) {
+        const parts = String(f.metadata.air_date).split('-');
+        if (parts.length === 3) {
+          episodeDate = `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+        } else {
+          episodeDate = String(f.metadata.air_date);
+        }
+      }
       const fileDurationSecs = f.duration || (t.metadata?.runtime ? (t.metadata.runtime * 60) : 0);
       const durStr = fmtDur(fileDurationSecs);
       const poster = f.metadata?.poster ? `<img class="saga-film-poster" src="${esc(memoryCache.get(f.metadata.poster) || f.metadata.poster)}" alt="" loading="lazy">` : `<div class="saga-film-poster saga-film-placeholder">${esc(filmYear || '🎬')}</div>`;
@@ -793,8 +800,13 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
         let updated = false;
         for (const f of currentFiles) {
           const ep = episodes.find(e => e.episode_number === f.episode);
-          if (ep && ep.name) {
-            f.metadata = { ...(f.metadata || {}), name: ep.name, overview: ep.overview || f.metadata?.overview };
+          if (ep && (ep.name || ep.air_date)) {
+            f.metadata = {
+              ...(f.metadata || {}),
+              name: ep.name || f.metadata?.name,
+              overview: ep.overview || f.metadata?.overview,
+              air_date: ep.air_date || f.metadata?.air_date
+            };
             updated = true;
           }
         }
