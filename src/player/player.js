@@ -9,6 +9,8 @@ import { registerPlayerController, unregisterPlayerController } from '../ui/dpad
 import { ensureTracksDetected, openAudioSelector, openSubtitlesSelector, formatTrackName } from './tracks.js';
 import { escapeHtml, formatTime, showToast, setupDoubleTapSkip, bindNextUp } from './ui-helpers.js';
 import { langName } from './trackParser.js';
+import { getDeviceSettings } from '../ui/settings.js';
+import { playExoPlayer } from './exoplayer.js';
 
 export function formatPlayerTitle(title, file) {
   if (!title) return file?.label || 'Reproduciendo';
@@ -47,17 +49,14 @@ export async function playFile({
   nextFile = null,
   onNext = null,
 }) {
-  const localPref = typeof localStorage !== 'undefined' && profile?.id
-    ? localStorage.getItem(`tgvideo_player_${profile.id}`)
-    : null;
-  const playerType = profile?.player || localPref || 'artplayer';
-
-  const localSkip = typeof localStorage !== 'undefined' && profile?.id
-    ? localStorage.getItem(`tgvideo_skip_${profile.id}`)
-    : null;
-  const skipSeconds = Number(profile?.skip_seconds || localSkip || 10);
+  const devSettings = getDeviceSettings(profile);
+  const playerType = devSettings.player || 'artplayer';
+  const skipSeconds = Number(devSettings.skipSeconds || 10);
 
   const opts = { client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync, nextFile, onNext };
+  if (playerType === 'exoplayer') {
+    return playExoPlayer(opts);
+  }
   if (playerType === 'native') {
     return playNative(opts);
   }
@@ -67,7 +66,7 @@ export async function playFile({
 // -------------------------------------------------------------
 // Reproductor Nativo HTML5 (<video>)
 // -------------------------------------------------------------
-async function playNative({
+export async function playNative({
   client,
   peerOf,
   file,
@@ -627,7 +626,7 @@ async function playNative({
 // -------------------------------------------------------------
 // Reproductor ArtPlayer (Motor predeterminado en Web y Android)
 // -------------------------------------------------------------
-async function playArtplayer({
+export async function playArtplayer({
   client,
   peerOf,
   file,
