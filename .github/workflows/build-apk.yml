@@ -569,7 +569,7 @@ jobs:
               @PluginMethod
               public void registerStream(PluginCall call) {
                   String id = call.getString("id");
-                  long size = call.getInt("size", 0);
+                  long size = call.getData().optLong("size", 0L);
                   String mime = call.getString("mime", "video/mp4");
                   String name = call.getString("name", "video");
 
@@ -584,7 +584,7 @@ jobs:
               @PluginMethod
               public void play(PluginCall call) {
                   String url = call.getString("url");
-                  long resumeAt = call.getInt("resumeAt", 0) * 1000L;
+                  long resumeAt = (long) (call.getData().optDouble("resumeAt", 0.0) * 1000.0);
 
                   getActivity().runOnUiThread(() -> {
                       try {
@@ -759,7 +759,15 @@ jobs:
               with open(main_activity, "r", encoding="utf-8") as f:
                   act = f.read()
               if "ExoPlayerPlugin" not in act:
-                  act = act.replace("public class MainActivity extends BridgeActivity {", "public class MainActivity extends BridgeActivity {\\n    @Override\\n    public void onCreate(android.os.Bundle savedInstanceState) {\\n        registerPlugin(ExoPlayerPlugin.class);\\n        super.onCreate(savedInstanceState);\\n    }")
+                  replacement = (
+                      "public class MainActivity extends BridgeActivity {\n"
+                      "    @Override\n"
+                      "    public void onCreate(android.os.Bundle savedInstanceState) {\n"
+                      "        registerPlugin(ExoPlayerPlugin.class);\n"
+                      "        super.onCreate(savedInstanceState);\n"
+                      "    }\n"
+                  )
+                  act = act.replace("public class MainActivity extends BridgeActivity {", replacement, 1)
                   with open(main_activity, "w", encoding="utf-8") as f:
                       f.write(act)
                   print("MainActivity.java configurado para registrar ExoPlayerPlugin.")
