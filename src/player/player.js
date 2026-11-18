@@ -15,25 +15,30 @@ import { playExoPlayer } from './exoplayer.js';
 export function formatPlayerTitle(title, file) {
   if (!title) return file?.label || 'Reproduciendo';
 
-  const rawName = title.metadata?.name || title.metadata?.title || title.nombre || '';
-  const parsed = extractTitleAndYear(rawName);
-  const cleanTitle = parsed.title || rawName;
-  const year = title.metadata?.date?.slice(0, 4) || parsed.year || '';
-  const yearSuffix = year ? ` (${year})` : '';
+  try {
+    const rawName = title.metadata?.name || title.metadata?.title || title.nombre || '';
+    const parsed = extractTitleAndYear(rawName);
+    const cleanTitle = parsed.title || rawName;
+    const year = title.metadata?.date?.slice(0, 4) || parsed.year || '';
+    const yearSuffix = year ? ` (${year})` : '';
 
-  if (title.tipo === 'serie') {
-    const epNum = (file?.season || file?.episode)
-      ? `T${file.season || 1}·E${String(file.episode || 1).padStart(2, '0')}`
-      : '';
-    const epName = file?.metadata?.name || prettyEpisodeName(file?.fileName || file?.label, cleanTitle);
-    return `${cleanTitle} · ${epNum ? epNum + ' - ' : ''}${epName}`;
+    if (title.tipo === 'serie') {
+      const epNum = (file?.season || file?.episode)
+        ? `T${file.season || 1}·E${String(file.episode || 1).padStart(2, '0')}`
+        : '';
+      const epName = file?.metadata?.name || prettyEpisodeName(file?.fileName || file?.label, cleanTitle);
+      return `${cleanTitle} · ${epNum ? epNum + ' - ' : ''}${epName}`;
+    }
+
+    if (title.isSaga) {
+      return file?.metadata?.name || file?.sagaName || file?.label || cleanTitle;
+    }
+
+    return `${cleanTitle}${yearSuffix}`;
+  } catch (err) {
+    console.warn('[player] Error al formatear título:', err);
+    return title.metadata?.name || title.nombre || file?.label || 'Reproduciendo';
   }
-
-  if (title.isSaga) {
-    return file?.metadata?.name || file?.sagaName || file?.label || cleanTitle;
-  }
-
-  return `${cleanTitle}${yearSuffix}`;
 }
 
 export async function playFile({
@@ -50,7 +55,12 @@ export async function playFile({
   onNext = null,
 }) {
   const devSettings = getDeviceSettings(profile);
-  const playerType = devSettings.player || 'artplayer';
+  const isAndroidApp = typeof window !== 'undefined' &&
+    (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
+  let playerType = devSettings.player || 'artplayer';
+  if (!isAndroidApp && playerType === 'exoplayer') {
+    playerType = 'artplayer';
+  }
   const skipSeconds = Number(devSettings.skipSeconds || 10);
 
   const opts = { client, peerOf, file, title, profile, resumeAt, skipSeconds, onClose, mount, sync, nextFile, onNext };
