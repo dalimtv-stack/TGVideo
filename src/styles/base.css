@@ -1,0 +1,193 @@
+/* src/styles/base.css */
+/* Prevenir zoom automático al enfocar inputs en móviles y fijar viewport */
+input, select, textarea {
+  font-size: 16px !important;
+  touch-action: manipulation;
+}
+html, body {
+  touch-action: pan-x pan-y;
+  overscroll-behavior: none;
+}
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  background: var(--theme-bg, #141414);
+  color: var(--theme-text, #fff);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.screen {
+  min-height: 100vh;
+  padding: 2rem;
+  padding-left: max(1.5rem, calc(var(--sal) + 1rem));
+  padding-right: max(1.5rem, calc(var(--sar) + 1rem));
+}
+
+.screen.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.btn {
+  background: var(--theme-accent, #e50914);
+  color: white;
+  border: none;
+  padding: 0.75rem 1.8rem;
+  font-size: 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.btn:hover {
+  background: var(--theme-accent-hover, #f6121d);
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: background 0.15s;
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.loader {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #333;
+  border-top-color: var(--theme-accent, #e50914);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 1rem;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Selector de perfiles ===== */
+.profiles-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  position: relative;
+  padding-top: max(2rem, calc(var(--sat) + 1rem));
+  padding-bottom: max(2rem, calc(var(--sab) + 1rem));
+}
+
+.profiles-title {
+  font-size: 2.2rem;
+  font-weight: 400;
+  margin-bottom: 2.5rem;
+  text-align: center;
+}
+
+.profiles-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  justify-content: center;
+  max-width: 900px;
+}
+
+.profile-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.profile-card:hover {
+  transform: scale(1.08);
+}
+
+.profile-card:hover .avatar {
+  outline: 3px solid #fff;
+}
+
+.avatar {
+  width: 120px;
+  height: 120px;
+  border-radius: 8px;
+  background: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3rem;
+  font-weight: 700;
+  color: #fff;
+  transition: outline 0.15s;
+}
+
+.avatar.small {
+  width: 38px;
+  height: 38px;
+  font-size: 1.05rem;
+  border-radius: 50%;
+  background: #333;
+  border: 2px solid transparent;
+  transition: border-color 0.15s, transform 0.1s;
+}
+
+.avatar.add {
+  background: #1a1a1a;
+  font-size: 4rem;
+  font-weight: 300;
+  color: #888;
+}
+
+.profile-card.add-profile:hover .avatar.add {
+  background: var(--theme-accent, #e50914);
+  color: #fff;
+  outline: none;
+}
+
+.profile-name {
+  font-size: 1.05rem;
+  color: #ccc;
+  text-align: center;
+}
+
+.profile-card:hover .profile-name {
+  color: #fff;
+}
+
+.logout-btn {
+  position: fixed;
+  bottom: max(1.5rem, calc(var(--sab) + 1rem));
+  right: max(1.5rem, calc(var(--sar) + 1rem));
+  background: transparent;
+  border: 1px solid #555;
+  color: #888;
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.logout-btn:hover {
+  border-color: #888;
+  color: #ccc;
+}
+

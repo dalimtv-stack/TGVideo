@@ -1,0 +1,37 @@
+
+/* src/styles/theme.css */
+/* Sistema de diseño y variables preparado para soporte de skins intercambiables */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --ui-scale: 1.12;
+  --ui-font-scale: calc(var(--ui-scale, 1.12) / 1.12);
+
+  /* Paleta base de la skin por defecto (Netflix Dark) */
+  --theme-bg: #141414;
+  --theme-bg-dialog: #1c1c1c;
+  --theme-text: #ffffff;
+  --theme-text-muted: #aaaaaa;
+  --theme-accent: #e50914;
+  --theme-accent-hover: #f6121d;
+  --theme-border: rgba(255, 255, 255, 0.15);
+  --theme-focus-border: #ffffff;
+  --theme-focus-glow: rgba(255, 255, 255, 0.45);
+}
+
+/* Soporte de skins alternativas */
+body[data-skin="cinema"] {
+  --theme-bg: #0b111e;
+  --theme-bg-dialog: #131c2e;
+  --theme-accent: #0070f3;
+  --theme-accent-hover: #1a8cff;
+}
+
+body[data-skin="oled"] {
+  --theme-bg: #000000;
+  --theme-bg-dialog: #111111;
+  --theme-accent: #e50914;
+}
+

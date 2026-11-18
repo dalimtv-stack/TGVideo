@@ -1,0 +1,105 @@
+/* src/styles/dpad.css */
+/* Foco unificado TV / D-Pad: elegante, blanco y redondeado */
+:focus {
+  outline: none;
+}
+
+.lib-card:focus {
+  outline: none;
+}
+
+.lib-card:focus .lib-card-poster {
+  transform: scale(1.08);
+  border-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 0 24px rgba(255, 255, 255, 0.45);
+}
+
+.profile-card:focus {
+  outline: none;
+  transform: scale(1.08);
+}
+
+.profile-card:focus .avatar {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+  border-radius: 12px;
+  box-shadow: 0 0 22px rgba(255, 255, 255, 0.4);
+}
+
+.btn:focus,
+.btn-ghost:focus,
+.btn-icon:focus,
+.logout-btn:focus,
+.btn-syn-toggle:focus {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  border-radius: 6px;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.4);
+}
+
+.btn-icon-circle:focus,
+.btn-icon-circle:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.6);
+  transform: scale(1.15);
+}
+
+.ep:focus,
+.ep:focus-visible {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border-color: #fff !important;
+  border-radius: 8px !important;
+  outline: 3px solid #fff !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.6) !important;
+}
+
+.season-btn:focus,
+.season-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.3) !important;
+  border-color: #fff !important;
+  color: #fff !important;
+  border-radius: 6px !important;
+  outline: 3px solid #fff !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.6) !important;
+}
+
+.settings-dialog input:focus,
+.settings-dialog select:focus,
+.meta-field input:focus,
+.meta-field select:focus {
+  outline: 2px solid #fff;
+  border-color: #fff;
+  border-radius: 6px;
+}
+
+.btn-select-meta:focus {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  background: #fff;
+  color: #111;
+  border-radius: 6px;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.4);
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: background 0.15s;
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+
