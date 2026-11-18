@@ -705,31 +705,50 @@ jobs:
 
               @PluginMethod
               public void getTracks(PluginCall call) {
-                  JSObject result = new JSObject();
-                  org.json.JSONArray audio = new org.json.JSONArray();
-                  org.json.JSONArray text = new org.json.JSONArray();
-                  if (player != null) {
-                      Tracks tracks = player.getCurrentTracks();
-                      for (int groupIndex = 0; groupIndex < tracks.getGroups().size(); groupIndex++) {
-                          Tracks.Group group = tracks.getGroups().get(groupIndex);
-                          int type = group.getType();
-                          if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) continue;
-                          for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
-                              androidx.media3.common.Format format = group.getTrackFormat(trackIndex);
-                              JSObject item = new JSObject();
-                              item.put("group", groupIndex);
-                              item.put("track", trackIndex);
-                              item.put("language", format.language == null ? "" : format.language);
-                              item.put("label", format.label == null ? "" : format.label);
-                              item.put("selected", group.isTrackSelected(trackIndex));
-                              item.put("type", type == C.TRACK_TYPE_AUDIO ? "audio" : "text");
-                              (type == C.TRACK_TYPE_AUDIO ? audio : text).put(item);
+                  getActivity().runOnUiThread(() -> {
+                      try {
+                          JSObject result = new JSObject();
+                          com.getcapacitor.JSArray audio = new com.getcapacitor.JSArray();
+                          com.getcapacitor.JSArray text = new com.getcapacitor.JSArray();
+                          if (player != null) {
+                              Tracks tracks = player.getCurrentTracks();
+                              if (tracks != null) {
+                                  for (int groupIndex = 0; groupIndex < tracks.getGroups().size(); groupIndex++) {
+                                      Tracks.Group group = tracks.getGroups().get(groupIndex);
+                                      if (group == null) continue;
+                                      int type = group.getType();
+                                      if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) continue;
+                                      int trackCount = group.length;
+                                      for (int trackIndex = 0; trackIndex < trackCount; trackIndex++) {
+                                          try {
+                                              if (!group.isTrackSupported(trackIndex)) continue;
+                                          } catch (Throwable ignored) {}
+                                          androidx.media3.common.Format format = group.getTrackFormat(trackIndex);
+                                          if (format == null) continue;
+                                          JSObject item = new JSObject();
+                                          item.put("group", groupIndex);
+                                          item.put("track", trackIndex);
+                                          item.put("language", format.language != null ? format.language : "");
+                                          item.put("label", format.label != null ? format.label : "");
+                                          try {
+                                              item.put("selected", group.isTrackSelected(trackIndex));
+                                          } catch (Throwable t) {
+                                              item.put("selected", false);
+                                          }
+                                          item.put("type", type == C.TRACK_TYPE_AUDIO ? "audio" : "text");
+                                          if (type == C.TRACK_TYPE_AUDIO) audio.put(item);
+                                          else text.put(item);
+                                      }
+                                  }
+                              }
                           }
+                          result.put("audio", audio);
+                          result.put("text", text);
+                          call.resolve(result);
+                      } catch (Throwable t) {
+                          call.reject("getTracks falló: " + (t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName()));
                       }
-                  }
-                  result.put("audio", audio);
-                  result.put("text", text);
-                  call.resolve(result);
+                  });
               }
 
               @PluginMethod
