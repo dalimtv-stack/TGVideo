@@ -1,9 +1,8 @@
 // src/player/exoplayer.js
-// Integración de ExoPlayer nativo para Android TV / APK con descarga de bloques bajo demanda de Telegram
+// Integración de ExoPlayer nativo para Android TV / APK con túnel de streaming bajo demanda de Telegram
 import { getStream, readRange, openStream } from './stream.js';
-import { formatTime, showToast, setupDoubleTapSkip, bindNextUp } from './ui-helpers.js';
+import { formatTime, showToast } from './ui-helpers.js';
 import { saveProgress } from './progress.js';
-import { playArtplayer } from './player.js';
 import { getDeviceSettings } from '../ui/settings.js';
 
 function escapeHtml(str) {
@@ -16,7 +15,7 @@ function escapeHtml(str) {
 
 export async function playExoPlayer(opts) {
   const {
-    client, peerOf, file, title, profile, resumeAt = 0, mount, sync, nextFile, onNext,
+    client, peerOf, file, title, profile, resumeAt = 0, mount, sync, nextFile, onNext, fallbackToArt, onClose,
   } = opts;
 
   const isAndroidNative = typeof window !== 'undefined' &&
@@ -24,27 +23,29 @@ export async function playExoPlayer(opts) {
   const ExoPlayerPlugin = window.Capacitor?.Plugins?.ExoPlayerPlugin;
 
   if (!isAndroidNative || !ExoPlayerPlugin) {
-    console.warn('[exoplayer] ExoPlayer no disponible en este entorno, usando ArtPlayer.');
-    return playArtplayer(opts);
+    console.warn('[exoplayer] ExoPlayer no disponible en este entorno, cambiando a ArtPlayer.');
+    if (typeof fallbackToArt === 'function') return fallbackToArt();
+    onClose?.();
+    return;
   }
 
-  const media = file.media?.document || file.media;
-  const size = Number(media.size);
-  const mime = media.mimeType || 'video/mp4';
-  const name = media.attributes?.find(a => a.fileName)?.fileName || 'video.mkv';
-  const displayTitle = title?.nombre || title?.name || name;
-
-  const stream = openStream({ client, media, size, mime, name });
-
   const devSettings = getDeviceSettings(profile);
-  const skipSeconds = devSettings.skipSeconds || 10;
+  const skipSeconds = Number(devSettings.skipSeconds || 10);
+
+  let stream = null;
+  let destroyed = false;
+  let osdTimer = null;
+  let currentDuration = 0;
+  let currentPosition = resumeAt || 0;
+  let isPlaying = false;
+  let lastProgressSave = 0;
 
   mount.innerHTML = `
     <div class="player player-native player-exoplayer">
       <div class="player-tv-osd" id="pl-osd">
         <div class="player-osd-top">
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
-          <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
+          <div class="player-osd-title" id="pl-title">Cargando…</div>
           <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>ExoPlayer ⇄</button>
         </div>
 
@@ -70,11 +71,8 @@ export async function playExoPlayer(opts) {
             <button class="player-ctrl-btn" id="pl-btn-ff" data-focusable title="Adelantar ${skipSeconds}s">
               <svg viewBox="0 0 24 24"><path d="M5.54 7.16 10.53 11.23a.996.996 0 0 1 0 1.54l-4.99 4.07c-.63.51-1.54.04-1.54-.77V7.93c0-.81.91-1.28 1.54-.77zm8 0 4.99 4.07a.996.996 0 0 1 0 1.54l-4.99 4.07c-.63.51-1.54.04-1.54-.77V7.93c0-.81.91-1.28 1.54-.77z"/></svg>
             </button>
-            <button class="player-ctrl-btn" id="pl-btn-audio" data-focusable title="Pistas de Audio">
-              <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-            </button>
-            <button class="player-ctrl-btn" id="pl-btn-subs" data-focusable title="Subtítulos">
-              <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-9 7H6.5v-1.5h4.5V11zm7 4h-4.5v-1.5H18V15zm0-3H12v-1.5h6V12z"/></svg>
+            <button class="player-ctrl-btn" id="pl-btn-fullscreen" data-focusable title="Pantalla completa">
+              <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
             </button>
           </div>
         </div>
@@ -82,7 +80,7 @@ export async function playExoPlayer(opts) {
       <div class="player-osd-toast" id="pl-osd-toast"></div>
       <div class="player-loading" id="pl-loading">
         <div class="spinner"></div>
-        <p>Iniciando ExoPlayer por hardware…</p>
+        <p id="pl-status">Abriendo túnel de streaming para ExoPlayer…</p>
       </div>
     </div>
   `;
@@ -90,6 +88,8 @@ export async function playExoPlayer(opts) {
   const playerEl = mount.querySelector('.player');
   const osd = mount.querySelector('#pl-osd');
   const loading = mount.querySelector('#pl-loading');
+  const statusEl = mount.querySelector('#pl-status');
+  const titleEl = mount.querySelector('#pl-title');
   const scrubber = mount.querySelector('#pl-scrubber');
   const scrubberFill = mount.querySelector('#pl-scrubber-fill');
   const timeCur = mount.querySelector('#pl-time-cur');
@@ -97,20 +97,14 @@ export async function playExoPlayer(opts) {
   const iconPlay = mount.querySelector('#pl-icon-play');
   const iconPause = mount.querySelector('#pl-icon-pause');
 
-  let currentDuration = 0;
-  let currentPosition = resumeAt || 0;
-  let isPlaying = false;
-  let osdTimer = null;
-  let destroyed = false;
-  let lastProgressSave = 0;
-
   const showOsd = () => {
+    if (destroyed) return;
     osd.classList.remove('is-hidden');
     clearTimeout(osdTimer);
     if (isPlaying) {
       osdTimer = setTimeout(() => {
         if (!destroyed && isPlaying) osd.classList.add('is-hidden');
-      }, 1500);
+      }, 2000);
     }
   };
 
@@ -118,14 +112,62 @@ export async function playExoPlayer(opts) {
     if (loading) loading.style.display = 'none';
   };
 
-  try {
-    const { port } = await ExoPlayerPlugin.startStreamServer();
-    await ExoPlayerPlugin.registerStream({ id: stream.id, size, mime, name });
+  let rangeListener = null;
+  let readyListener = null;
+  let playingListener = null;
+  let progressListener = null;
+  let endedListener = null;
 
+  const closePlayer = () => {
+    if (destroyed) return;
+    destroyed = true;
+    document.body.classList.remove('exoplayer-active');
+    clearTimeout(osdTimer);
+    try {
+      rangeListener?.remove?.();
+      readyListener?.remove?.();
+      playingListener?.remove?.();
+      progressListener?.remove?.();
+      endedListener?.remove?.();
+    } catch (_) {}
+
+    ExoPlayerPlugin.stop().catch(() => {});
+    if (stream) stream.close();
+
+    const fileKey = String(file?.id || file?.messageId || file?.key || '');
+    if (currentDuration > 0 && fileKey) {
+      saveProgress(profile.id, fileKey, Math.floor(currentPosition), Math.floor(currentDuration));
+    }
+    mount.innerHTML = '';
+    onClose?.();
+  };
+
+  try {
+    const targetChannel = file?.channel || title?.channel;
+    if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
+    const peer = await peerOf(targetChannel);
+    const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
+    if (destroyed) return;
+    if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
+
+    const doc = msg.media.document;
+    const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
+    const mime = doc?.mimeType || file.mimeType || file.mime || 'video/mp4';
+    const name = doc?.attributes?.find(a => a.fileName)?.fileName || file.fileName || file.label || 'video.mkv';
+    const displayTitle = title?.nombre || title?.name || file.label || name;
+
+    titleEl.textContent = displayTitle;
+
+    stream = openStream({ client, media: msg.media, size, mime, name });
+
+    const serverRes = await ExoPlayerPlugin.startStreamServer();
+    const port = serverRes?.port;
+    if (!port || port <= 0) throw new Error('No se pudo iniciar el servidor local de streaming.');
+
+    await ExoPlayerPlugin.registerStream({ id: stream.id, size, mime, name });
     const streamUrl = `http://127.0.0.1:${port}/stream/${stream.id}/${encodeURIComponent(name)}`;
 
-    // Escucha de peticiones de bloques Range desde ExoPlayer hacia Telegram
-    const rangeListener = await ExoPlayerPlugin.addListener('needRange', async (ev) => {
+    rangeListener = await ExoPlayerPlugin.addListener('needRange', async (ev) => {
       if (destroyed) return;
       const { streamId, start, end, requestId } = ev;
       const s = getStream(streamId);
@@ -145,18 +187,18 @@ export async function playExoPlayer(opts) {
       }
     });
 
-    const readyListener = await ExoPlayerPlugin.addListener('onReady', (ev) => {
+    readyListener = await ExoPlayerPlugin.addListener('onReady', (ev) => {
       hideLoading();
       document.body.classList.add('exoplayer-active');
       if (ev?.duration) {
         currentDuration = ev.duration;
         timeDur.textContent = formatTime(currentDuration);
       }
-      showToast(playerEl, '▶ ExoPlayer conectado por hardware');
+      showToast(playerEl, '▶ ExoPlayer conectado');
       showOsd();
     });
 
-    const playingListener = await ExoPlayerPlugin.addListener('onPlayingChanged', (ev) => {
+    playingListener = await ExoPlayerPlugin.addListener('onPlayingChanged', (ev) => {
       isPlaying = !!ev.isPlaying;
       if (iconPlay && iconPause) {
         iconPlay.style.display = isPlaying ? 'none' : 'block';
@@ -168,7 +210,7 @@ export async function playExoPlayer(opts) {
       }
     });
 
-    const progressListener = await ExoPlayerPlugin.addListener('onPlaybackProgress', (ev) => {
+    progressListener = await ExoPlayerPlugin.addListener('onPlaybackProgress', (ev) => {
       if (destroyed) return;
       hideLoading();
       currentPosition = ev.currentTime || 0;
@@ -183,16 +225,17 @@ export async function playExoPlayer(opts) {
         scrubberFill.style.width = `${pct}%`;
       }
 
-      // Guardado periódico de progreso cada 5 segundos
       const now = Date.now();
       if (now - lastProgressSave > 5000 && currentDuration > 0) {
         lastProgressSave = now;
-        const key = String(file.id || file.messageId || name);
-        saveProgress(profile.id, key, Math.floor(currentPosition), Math.floor(currentDuration));
+        const fileKey = String(file?.id || file?.messageId || file?.key || '');
+        if (fileKey) {
+          saveProgress(profile.id, fileKey, Math.floor(currentPosition), Math.floor(currentDuration));
+        }
       }
     });
 
-    const endedListener = await ExoPlayerPlugin.addListener('onEnded', () => {
+    endedListener = await ExoPlayerPlugin.addListener('onEnded', () => {
       isPlaying = false;
       showOsd();
       if (nextFile && onNext) {
@@ -200,14 +243,14 @@ export async function playExoPlayer(opts) {
       }
     });
 
-    // Iniciar reproducción
+    // Iniciar reproducción nativa con ExoPlayer
     await ExoPlayerPlugin.play({
       url: streamUrl,
       resumeAt: Math.floor(resumeAt),
       title: displayTitle
     });
 
-    // Control de botones OSD
+    // Controles táctiles y botones
     mount.querySelector('#pl-btn-playpause').onclick = () => {
       ExoPlayerPlugin.togglePlay();
       showOsd();
@@ -227,38 +270,32 @@ export async function playExoPlayer(opts) {
       showOsd();
     };
 
-    mount.querySelector('#pl-badge-toggle').onclick = () => {
-      closePlayer();
-      opts.profile.player = 'artplayer';
-      playArtplayer(opts);
+    mount.querySelector('#pl-btn-fullscreen').onclick = () => {
+      if (!document.fullscreenElement) {
+        playerEl.requestFullscreen?.().catch(() => {});
+      } else {
+        document.exitFullscreen?.().catch(() => {});
+      }
     };
 
-    const closePlayer = () => {
-      if (destroyed) return;
-      destroyed = true;
-      document.body.classList.remove('exoplayer-active');
-      clearTimeout(osdTimer);
-      try {
-        rangeListener?.remove?.();
-        readyListener?.remove?.();
-        playingListener?.remove?.();
-        progressListener?.remove?.();
-        endedListener?.remove?.();
-      } catch (ignored) {}
-
-      ExoPlayerPlugin.stop().catch(() => {});
-      stream.close();
-
-      const key = String(file.id || file.messageId || name);
-      if (currentDuration > 0) {
-        saveProgress(profile.id, key, Math.floor(currentPosition), Math.floor(currentDuration));
-      }
-      mount.innerHTML = '';
+    mount.querySelector('#pl-badge-toggle').onclick = () => {
+      closePlayer();
+      if (typeof fallbackToArt === 'function') fallbackToArt();
     };
 
     mount.querySelector('#pl-btn-back').onclick = closePlayer;
 
-    // D-Pad y mando de TV
+    scrubber.onclick = (e) => {
+      const rect = scrubber.getBoundingClientRect();
+      if (rect.width && currentDuration > 0) {
+        const pos = (e.clientX - rect.left) / rect.width;
+        const target = Math.max(0, Math.min(currentDuration, pos * currentDuration));
+        ExoPlayerPlugin.seekTo({ position: target });
+        showOsd();
+      }
+    };
+
+    // Navegación con teclado y mando Android TV
     playerEl.addEventListener('keydown', (e) => {
       showOsd();
       if (['Escape', 'GoBack', 'Back'].includes(e.key) || e.keyCode === 4 ||
@@ -275,29 +312,32 @@ export async function playExoPlayer(opts) {
         return;
       }
 
-      if (e.key === 'MediaFastForward') {
+      if (e.key === 'MediaFastForward' || e.key === 'ArrowRight') {
         e.preventDefault();
         const target = Math.min(currentDuration || currentPosition + skipSeconds, currentPosition + skipSeconds);
         ExoPlayerPlugin.seekTo({ position: target });
+        showToast(playerEl, `+${skipSeconds}s ⏩`);
         return;
       }
 
-      if (e.key === 'MediaRewind') {
+      if (e.key === 'MediaRewind' || e.key === 'ArrowLeft') {
         e.preventDefault();
         const target = Math.max(0, currentPosition - skipSeconds);
         ExoPlayerPlugin.seekTo({ position: target });
+        showToast(playerEl, `⏪ -${skipSeconds}s`);
         return;
       }
     });
 
     playerEl.addEventListener('mousemove', showOsd);
     playerEl.addEventListener('click', showOsd);
-
     showOsd();
 
   } catch (err) {
     console.error('[exoplayer] Fallo al inicializar ExoPlayer:', err);
     document.body.classList.remove('exoplayer-active');
-    return playArtplayer(opts);
+    showToast(playerEl, 'Error con ExoPlayer. Cambiando a ArtPlayer…');
+    if (typeof fallbackToArt === 'function') return fallbackToArt();
+    onClose?.();
   }
 }
