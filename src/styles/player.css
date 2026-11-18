@@ -92,10 +92,36 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 1rem;
+  padding: 1.5rem;
   background: #000;
+  color: #fff;
   z-index: 120;
   pointer-events: none;
+}
+
+.player-loading #pl-status {
+  margin-top: 1rem;
+  max-width: 85%;
+  color: #f3f4f6;
+  font-size: 1.15rem;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.2px;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.85);
+}
+
+.player-loading .loader,
+.player-loading .spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #e50914;
+  border-radius: 50%;
+  animation: player-spin 0.8s linear infinite;
+}
+
+@keyframes player-spin {
+  to { transform: rotate(360deg); }
 }
 
 .artplayer-host {
@@ -641,9 +667,13 @@ video::cue {
 
 
 /* ExoPlayer en APK nativo (fondo transparente para renderizado por debajo) */
+html.exoplayer-active,
+html.exoplayer-active body,
 body.exoplayer-active,
 body.exoplayer-active #app,
 body.exoplayer-active .player,
+body.exoplayer-active .player-native,
+body.exoplayer-active .player-exoplayer,
 body.exoplayer-active .player-video-mount {
   background: transparent !important;
   background-color: transparent !important;
@@ -725,8 +755,12 @@ body.exoplayer-active .player-video-mount {
 .profile-scale-setting .ui-scale-ticks span { flex: 1; text-align: center; font-size: .62rem; line-height: 1.15; }
 
 /* La APK usa pantalla completa del sistema; el control propio queda solo en web. */
+/* El control de pantalla completa solo está disponible en la versión web. */
+.native-android-app #pl-btn-fullscreen,
 .player-exoplayer #pl-btn-fullscreen,
-.player-native.native-android-app #pl-btn-fullscreen { display: none !important; }
-
+body.is-capacitor #pl-btn-fullscreen,
+body.platform-android #pl-btn-fullscreen {
+  display: none !important;
+}
 
 
