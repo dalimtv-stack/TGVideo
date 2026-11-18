@@ -363,6 +363,19 @@ jobs:
                       String method = parts[0];
                       String uri = parts[1];
 
+                      if ("OPTIONS".equalsIgnoreCase(method)) {
+                          String resp = "HTTP/1.1 204 No Content\r\n" +
+                                  "Access-Control-Allow-Origin: *\r\n" +
+                                  "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
+                                  "Access-Control-Allow-Headers: Content-Type, Range\r\n" +
+                                  "Access-Control-Max-Age: 600\r\n" +
+                                  "Content-Length: 0\r\nConnection: close\r\n\r\n";
+                          out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
+                          out.flush();
+                          socket.close();
+                          return;
+                      }
+
                       if ("POST".equalsIgnoreCase(method) && uri.startsWith("/chunk")) {
                           int qIdx = uri.indexOf("requestId=");
                           String reqId = qIdx != -1 ? uri.substring(qIdx + 10) : "";
@@ -389,7 +402,7 @@ jobs:
                           }
 
                           putChunk(reqId, bodyBuf.toByteArray());
-                          String resp = "HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n";
+                          String resp = "HTTP/1.1 200 OK\\r\\nAccess-Control-Allow-Origin: *\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n";
                           out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
                           out.flush();
                           socket.close();
@@ -402,7 +415,7 @@ jobs:
                           int ampIdx = reqId.indexOf('&');
                           if (ampIdx != -1) reqId = reqId.substring(0, ampIdx);
                           failChunk(reqId);
-                          String resp = "HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n";
+                          String resp = "HTTP/1.1 200 OK\\r\\nAccess-Control-Allow-Origin: *\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n";
                           out.write(resp.getBytes(StandardCharsets.ISO_8859_1));
                           out.flush();
                           socket.close();
@@ -525,8 +538,11 @@ jobs:
           import android.view.ViewGroup;
           import android.widget.FrameLayout;
 
+          import androidx.media3.common.C;
           import androidx.media3.common.MediaItem;
           import androidx.media3.common.Player;
+          import androidx.media3.common.Tracks;
+          import androidx.media3.common.TrackSelectionOverride;
           import androidx.media3.exoplayer.ExoPlayer;
           import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
           import androidx.media3.ui.AspectRatioFrameLayout;
@@ -652,6 +668,66 @@ jobs:
                       } catch (Exception e) {
                           call.reject("Error al iniciar ExoPlayer: " + e.getMessage());
                       }
+                  });
+              }
+
+              @PluginMethod
+              public void getTracks(PluginCall call) {
+                  JSObject result = new JSObject();
+                  org.json.JSONArray audio = new org.json.JSONArray();
+                  org.json.JSONArray text = new org.json.JSONArray();
+                  if (player != null) {
+                      Tracks tracks = player.getCurrentTracks();
+                      for (int groupIndex = 0; groupIndex < tracks.getGroups().size(); groupIndex++) {
+                          Tracks.Group group = tracks.getGroups().get(groupIndex);
+                          int type = group.getType();
+                          if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) continue;
+                          for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
+                              androidx.media3.common.Format format = group.getTrackFormat(trackIndex);
+                              JSObject item = new JSObject();
+                              item.put("group", groupIndex);
+                              item.put("track", trackIndex);
+                              item.put("language", format.language == null ? "" : format.language);
+                              item.put("label", format.label == null ? "" : format.label);
+                              item.put("selected", group.isTrackSelected(trackIndex));
+                              item.put("type", type == C.TRACK_TYPE_AUDIO ? "audio" : "text");
+                              (type == C.TRACK_TYPE_AUDIO ? audio : text).put(item);
+                          }
+                      }
+                  }
+                  result.put("audio", audio);
+                  result.put("text", text);
+                  call.resolve(result);
+              }
+
+              @PluginMethod
+              public void selectTrack(PluginCall call) {
+                  String typeName = call.getString("type", "audio");
+                  int groupIndex = call.getData().optInt("group", -1);
+                  int trackIndex = call.getData().optInt("track", -1);
+                  boolean enabled = call.getData().optBoolean("enabled", true);
+                  getActivity().runOnUiThread(() -> {
+                      if (player == null) { call.reject("ExoPlayer no está activo"); return; }
+                      int trackType = "text".equals(typeName) ? C.TRACK_TYPE_TEXT : C.TRACK_TYPE_AUDIO;
+                      if (trackType == C.TRACK_TYPE_TEXT && !enabled) {
+                          player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                                  .clearOverridesOfType(trackType).setTrackTypeDisabled(trackType, true).build());
+                          call.resolve();
+                          return;
+                      }
+                      Tracks groups = player.getCurrentTracks();
+                      if (groupIndex < 0 || groupIndex >= groups.getGroups().size()) {
+                          call.reject("Grupo de pista no disponible"); return;
+                      }
+                      Tracks.Group group = groups.getGroups().get(groupIndex);
+                      if (trackIndex < 0 || trackIndex >= group.length || group.getType() != trackType) {
+                          call.reject("Pista no disponible"); return;
+                      }
+                      TrackSelectionOverride override = new TrackSelectionOverride(group.getMediaTrackGroup(), trackIndex);
+                      player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                              .clearOverridesOfType(trackType).addOverride(override)
+                              .setTrackTypeDisabled(trackType, false).build());
+                      call.resolve();
                   });
               }
 
