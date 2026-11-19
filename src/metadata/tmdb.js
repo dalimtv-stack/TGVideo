@@ -256,6 +256,7 @@ async function enrichSaga(title, { signal } = {}) {
 }
 
 export async function enrichTitle(title, { signal } = {}) {
+  if (!['pelicula', 'serie'].includes(title?.tipo)) return null;
   const ov = getOverride(title.id);
   if (ov) { title.metadata = ov; title.tmdbId = ov.id; return ov; }
   // Reenvío u otro mensaje: mismo TMDB en caption o ya conocido
