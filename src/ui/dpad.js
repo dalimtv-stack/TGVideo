@@ -186,9 +186,11 @@ function move(dir) {
         return;
       }
       if (dir === 'down') {
-        const firstCard = document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
-        firstCard?.focus({ preventScroll: true });
-        firstCard?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        const target = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]')
+          || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+        target?.focus({ preventScroll: true });
+        target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
         return;
       }
       if (dir === 'up') {
@@ -242,16 +244,51 @@ function move(dir) {
       return;
     }
     if (dir === 'down') {
-      const firstCard = document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
-      if (firstCard) {
-        firstCard.focus({ preventScroll: true });
-        firstCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      const target = document.querySelector('.category-sort-bar [data-focusable].active')
+        || document.querySelector('.category-sort-bar [data-focusable]')
+        || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+      if (target) {
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
       }
       return;
     }
     if (dir === 'up') {
       curNav.closest('.home-header')?.querySelector('#btn-reload')?.focus();
       return;
+    }
+  }
+
+  // 2.5 Si está en la barra de ordenación de categorías (.category-sort-bar)
+  const curSortBar = cur.closest('.category-sort-bar');
+  if (curSortBar) {
+    const sortBtns = [...curSortBar.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+    const idx = sortBtns.indexOf(cur);
+    if (dir === 'left' && idx > 0) {
+      sortBtns[idx - 1].focus();
+      sortBtns[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (dir === 'right' && idx >= 0 && idx < sortBtns.length - 1) {
+      sortBtns[idx + 1].focus();
+      sortBtns[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (dir === 'up') {
+      const activeNav = document.querySelector('.home-nav-item.active') || document.querySelector('.home-nav-item');
+      if (activeNav) {
+        activeNav.focus();
+        activeNav.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
+    }
+    if (dir === 'down') {
+      const firstCard = document.querySelector('.home-main .category-grid .lib-card[data-focusable]');
+      if (firstCard) {
+        firstCard.focus({ preventScroll: true });
+        firstCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        return;
+      }
     }
   }
 
