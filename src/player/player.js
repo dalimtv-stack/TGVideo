@@ -13,6 +13,7 @@ import { getDeviceSettings, getDeviceId } from '../ui/settings.js';
 import { playExoPlayer } from './exoplayer.js';
 import { badgeText, badgeTitle, nextPlayerId, playerLabel, setDevicePlayer } from './playerPrefs.js';
 import { isAndroidApp as isAndroidPlatform } from '../core/platform.js';
+import { ensureConnected } from '../core/telegram.js';
 import { bindWakeLock } from './wakeLock.js';
 import { bindLoadingGate } from './loadingGate.js';
 
@@ -541,6 +542,7 @@ export async function playNative({
     const targetChannel = file?.channel || title?.channel;
     if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
     if (status) status.textContent = 'Localizando archivo…';
+    await ensureConnected(client);
     const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
@@ -1132,6 +1134,7 @@ export async function playArtplayer({
     const targetChannel = file?.channel || title?.channel;
     if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
     if (status) status.textContent = 'Localizando archivo…';
+    await ensureConnected(client);
     const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
