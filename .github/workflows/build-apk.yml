@@ -562,6 +562,7 @@ jobs:
           import android.os.Handler;
           import android.os.Looper;
           import android.view.ViewGroup;
+          import android.view.WindowManager;
           import android.widget.FrameLayout;
 
           import androidx.media3.common.C;
@@ -778,6 +779,18 @@ jobs:
                       player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
                               .clearOverridesOfType(trackType).addOverride(override)
                               .setTrackTypeDisabled(trackType, false).build());
+                      call.resolve();
+                  });
+              }
+
+              @PluginMethod
+              public void keepScreenOn(PluginCall call) {
+                  final boolean enabled = call.getBoolean("enabled", true);
+                  getActivity().runOnUiThread(() -> {
+                      try {
+                          if (enabled) getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                          else getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                      } catch (Throwable ignored) {}
                       call.resolve();
                   });
               }
