@@ -14,6 +14,7 @@ import { loadPoster, prewarmPosterCache, memoryCache } from './metadata/posterCa
 import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
 import { showImagePicker } from './ui/imagePickerModal.js';
+import { getAutoLogo } from './metadata/autoLogo.js';
 import { applyImagePrefs, restoreOriginalImage } from './metadata/imagePrefs.js';
 import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
@@ -560,6 +561,14 @@ function applyDetailMetadata(t, profile) {
   applyImagePrefs(t, profile);
   const metadata = t.metadata;
   if (!metadata) return;
+  if (!metadata.logo) {
+    getAutoLogo(t).then((url) => {
+      if (url && t.metadata && !t.metadata.logo) {
+        t.metadata = { ...t.metadata, logo: url };
+        applyDetailMetadata(t, profile);
+      }
+    }).catch(() => {});
+  }
   const detail = document.querySelector('.detail');
   if (!detail || String(detail.dataset.title) !== String(t.id)) return;
   const displayName = metadata.name || metadata.title || t.nombre;
