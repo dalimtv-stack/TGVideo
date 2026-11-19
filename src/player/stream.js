@@ -1,5 +1,6 @@
 // Puente página <-> Service Worker: descarga de Telegram solo los trozos pedidos.
 import bigInt from 'big-integer';
+import { ensureConnected } from '../core/telegram.js';
 
 const PART = 512 * 1024; // tamaño de petición a Telegram (múltiplo válido para upload.getFile)
 const CACHE_PARTS = 24;  // ~12 MB en memoria
@@ -39,14 +40,53 @@ function listen() {
   });
 }
 
+async function fetchPartWithRetry(s, idx, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      if (s.client && typeof s.client.connected === 'boolean' && !s.client.connected) {
+        console.warn(`[stream] Cliente desconectado antes de chunk ${idx}, reconectando (intento ${attempt})...`);
+        await ensureConnected(s.client);
+      }
+
+      const chunkPromise = (async () => {
+        for await (const chunk of s.client.iterDownload({
+          file: s.media,
+          offset: bigInt(idx * PART),
+          requestSize: PART,
+          limit: 1,
+          fileSize: bigInt(s.size),
+        })) {
+          return new Uint8Array(chunk);
+        }
+        return new Uint8Array(0);
+      })();
+
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`Timeout descargando chunk ${idx}`)), 12000);
+      });
+
+      const result = await Promise.race([chunkPromise, timeoutPromise]);
+      return result;
+    } catch (err) {
+      console.warn(`[stream] Error en descarga de chunk ${idx} (intento ${attempt}/${retries}):`, err?.message || err);
+      if (attempt === retries) throw err;
+      await new Promise(r => setTimeout(r, 400 * attempt));
+      if (s.client) {
+        try { await ensureConnected(s.client); } catch (_) {}
+      }
+    }
+  }
+  return new Uint8Array(0);
+}
+
 function getPart(s, idx) {
-  if (s.cache.has(idx)) { const p = s.cache.get(idx); s.cache.delete(idx); s.cache.set(idx, p); return p; }
-  const p = (async () => {
-    for await (const chunk of s.client.iterDownload({
-      file: s.media, offset: bigInt(idx * PART), requestSize: PART, limit: 1, fileSize: bigInt(s.size),
-    })) return new Uint8Array(chunk);
-    return new Uint8Array(0);
-  })();
+  if (s.cache.has(idx)) {
+    const p = s.cache.get(idx);
+    s.cache.delete(idx);
+    s.cache.set(idx, p);
+    return p;
+  }
+  const p = fetchPartWithRetry(s, idx);
   p.catch(() => s.cache.delete(idx));
   s.cache.set(idx, p);
   while (s.cache.size > CACHE_PARTS) s.cache.delete(s.cache.keys().next().value);
