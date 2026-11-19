@@ -26,7 +26,7 @@ export function extractTitleAndYear(name = "") {
   }
 
   // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis: [BlurayRip], [480p], [Dual], etc.
-  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|2160p|1080p|720p|480p|4k|uhd|x26[45]|h26[45]|hevc|aac|ac3|dts|dts-hd|truehd|mp3|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack)";
+  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
   const bracketQualityRe = new RegExp('\\[[^\\]]*' + qualityKw + '[^\\]]*\\]', 'gi');
   const parenQualityRe = new RegExp('\\([^\\)]*' + qualityKw + '[^\\)]*\\)', 'gi');
   strClean = strClean.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
@@ -55,6 +55,8 @@ export function extractTitleAndYear(name = "") {
   }
 
   // 7. Limpiar corchetes o paréntesis residuales y espacios
+  strClean = strClean.replace(/\[[^\]]*\]/g, " ");
+  strClean = strClean.replace(/\([^)]*\)/g, " ");
   strClean = strClean.replace(/[\[\]\(\)]/g, " ");
   strClean = strClean.replace(/[-–—\s]+$/, "").replace(/^\s*[-–—]+/, "").replace(/\s+/g, " ").trim();
 
@@ -270,7 +272,7 @@ export async function enrichTitle(title, { signal } = {}) {
   const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
   const parsed = extractTitleAndYear(title.nombre);
   const query = parsed.title;
-  const year = title.yearHint || parsed.year;
+  const year = parsed.year || title.yearHint;
   const cacheKey = `tmdb_v2:${type}:${directId || `${query.toLowerCase()}:${year || ''}`}`;
   const cached = await kv.get(cacheKey).catch(() => null);
   if (cached) { title.metadata = cached; return cached; }
