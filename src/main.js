@@ -511,8 +511,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       loadPoster(image, title.metadata.poster);
     });
     if (String(document.querySelector('.detail')?.dataset.title) === String(title.id)) {
-      applyDetailMetadata(title, profile);
-      if (title.isSaga) applySagaFilmMetadata(title);
+      libraryViews.applyDetailMetadata(title, profile);
+      if (title.isSaga) libraryViews.applySagaFilmMetadata(title);
     }
   } }).then(() => {
     // Tras enriquecer, re-agrupar películas con el mismo TMDB
