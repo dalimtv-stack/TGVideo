@@ -1,19 +1,19 @@
 // src/player/loadingGate.js
 // Controla el cargador (.player-loading) de los reproductores basados en <video>.
 // Se mantiene visible, con texto de estado, hasta que se pinta el primer fotograma
-// (no basta con loadedmetadata, que llega antes que la imagen) y reaparece al bufferizar.
+// (no basta con loadedmetadata, que llega antes que la imagen).
 export function bindLoadingGate(video, loading, status) {
   if (!video || !loading) return () => {};
   let firstFrame = false;
   let waitTimer = null;
   const setText = (t) => { if (status && t) status.textContent = t; };
   const root = loading.closest('.player') || loading.parentElement;
-  // Carga inicial: fondo negro y OSD siempre visible (se puede volver atrás).
-  // Rebuffering a mitad de vídeo: aviso ligero y transparente, sin tapar ni bloquear los controles.
+
+  // Carga inicial: fondo negro y OSD visible para permitir volver atrás
   const show = (t) => {
     setText(t);
-    loading.classList.toggle('buffering', firstFrame);
-    root?.classList.toggle('is-loading', !firstFrame);
+    loading.classList.remove('buffering');
+    root?.classList.add('is-loading');
     loading.style.display = 'flex';
   };
   const hide = () => {
@@ -34,23 +34,17 @@ export function bindLoadingGate(video, loading, status) {
     } else done();
   };
   const onCanPlay = () => { if (video.paused) hide(); };
-  const onWaiting = () => {
-    clearTimeout(waitTimer);
-    waitTimer = setTimeout(() => show('Cargando…'), 700);
-  };
   const onError = () => clearTimeout(waitTimer);
 
   video.addEventListener('loadedmetadata', onMeta);
   video.addEventListener('playing', onPlaying);
   video.addEventListener('canplay', onCanPlay);
-  video.addEventListener('waiting', onWaiting);
-  video.addEventListener('stalled', onWaiting);
   video.addEventListener('error', onError);
   show();
   return () => {
     clearTimeout(waitTimer);
-    ['loadedmetadata', 'playing', 'canplay', 'waiting', 'stalled', 'error'].forEach((e) => {
-      video.removeEventListener(e, { loadedmetadata: onMeta, playing: onPlaying, canplay: onCanPlay, waiting: onWaiting, stalled: onWaiting, error: onError }[e]);
+    ['loadedmetadata', 'playing', 'canplay', 'error'].forEach((e) => {
+      video.removeEventListener(e, { loadedmetadata: onMeta, playing: onPlaying, canplay: onCanPlay, error: onError }[e]);
     });
   };
 }
