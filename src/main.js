@@ -370,6 +370,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   }
   titles = mergeMoviesByTmdb(titles);
   TITLES_CACHE = titles;
+  // Carteles/fondos/logos elegidos por el usuario (por perfil + caché del dispositivo)
+  titles.forEach(t => applyImagePrefs(t, profile));
 
   // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
   await prewarmPosterCache(titles);
@@ -495,6 +497,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   };
 
   enrichTitles(titles, { signal: metadataController.signal, onUpdate: title => {
+    applyImagePrefs(title, profile);
     saveMetaDebounced();
     document.querySelectorAll('.lib-card').forEach(card => {
       if (String(card.dataset.title) !== String(title.id)) return;
@@ -714,7 +717,9 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           <span class="poster-group">${esc(t.grupo)}</span><span class="poster-name">${esc(displayName)}</span></div>
         <div>
           <div class="detail-kicker">${t.tipo === 'serie' ? 'Serie' : 'Película'} · ${esc(t.grupo)}</div>
-          ${t.metadata?.logo ? `<div class="detail-logo-container"><img class="detail-logo-img" src="${esc(t.metadata.logo)}" alt="${esc(displayName)}"><h1 class="detail-title-hidden sr-only">${esc(displayName)}</h1></div>` : `<h1>${esc(displayName)}</h1>`}
+          <div class="detail-title-slot">
+            ${t.metadata?.logo ? `<div class="detail-logo-container"><img class="detail-logo-img" src="${esc(t.metadata.logo)}" alt="${esc(displayName)}"><h1 class="detail-title-hidden sr-only">${esc(displayName)}</h1></div>` : `<h1>${esc(displayName)}</h1>`}
+          </div>
           <p class="detail-sub">${t.isSaga ? `${t.archivos.length} películas de la saga` : t.tipo === 'serie' ? `${t.archivos.length} episodios` : t.archivos.length > 1 ? `${t.archivos.length} versiones disponibles` : (fmtDur(t.archivos[0]?.duration) || 'Película')}</p>
           <p class="detail-metadata"></p>
           <div class="detail-syn-container">
