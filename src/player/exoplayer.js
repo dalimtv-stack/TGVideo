@@ -4,6 +4,8 @@ import { getStream, readRange, openStream } from './stream.js';
 import { formatTime, showToast } from './ui-helpers.js';
 import { saveProgress } from './progress.js';
 import { getDeviceSettings } from '../ui/settings.js';
+import { badgeText, badgeTitle, nextPlayerId, playerLabel, setDevicePlayer } from './playerPrefs.js';
+import { keepScreenOn } from './wakeLock.js';
 import { registerPlayerController, unregisterPlayerController } from '../ui/dpad.js';
 
 function escapeHtml(str) {
@@ -16,7 +18,7 @@ function escapeHtml(str) {
 
 export async function playExoPlayer(opts) {
   const {
-    client, peerOf, file, title, profile, resumeAt = 0, mount, sync, nextFile, onNext, fallbackToArt, onClose,
+    client, peerOf, file, title, profile, resumeAt = 0, mount, sync, nextFile, onNext, fallbackToArt, switchPlayer, onClose,
   } = opts;
 
   const isAndroidNative = typeof window !== 'undefined' &&
@@ -56,7 +58,7 @@ export async function playExoPlayer(opts) {
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title" id="pl-title">Cargando…</div>
           <div class="player-osd-engine-box">
-            <button class="player-osd-badge" id="pl-badge-toggle" title="Ahora: ExoPlayer · cambiar a ArtPlayer" data-focusable>Ahora: ExoPlayer · Cambiar</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="${badgeTitle('exoplayer')}" data-focusable>${badgeText('exoplayer')}</button>
           </div>
         </div>
 
@@ -260,6 +262,7 @@ export async function playExoPlayer(opts) {
     }
     unregisterPlayerController();
     clearTimeout(osdTimer);
+    keepScreenOn(false);
     try {
       rangeListener?.remove?.();
       readyListener?.remove?.();
@@ -361,6 +364,7 @@ export async function playExoPlayer(opts) {
 
     playingListener = await ExoPlayerPlugin.addListener('onPlayingChanged', (ev) => {
       isPlaying = !!ev.isPlaying;
+      keepScreenOn(isPlaying);
       if (iconPlay && iconPause) {
         iconPlay.style.display = isPlaying ? 'none' : 'block';
         iconPause.style.display = isPlaying ? 'block' : 'none';
@@ -433,20 +437,12 @@ export async function playExoPlayer(opts) {
 
 
     mount.querySelector('#pl-badge-toggle').onclick = async () => {
-      const devId = devSettings?.deviceId || 'device_default';
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('tgvideo_device_player', 'artplayer');
-        if (profile?.id) localStorage.setItem(`tgvideo_player_${profile.id}`, 'artplayer');
-      }
-      if (!profile.devices) profile.devices = {};
-      if (!profile.devices[devId]) profile.devices[devId] = {};
-      profile.devices[devId].player = 'artplayer';
-      profile.devices[devId].updated_at = Date.now();
-      profile.player = 'artplayer';
-
-      showToast(playerEl, 'Cambiando a ArtPlayer…');
+      const target = setDevicePlayer(profile, nextPlayerId('exoplayer'));
+      showToast(playerEl, `Cambiando a ${playerLabel(target)}…`);
+      const resume = currentPosition || resumeAt || 0;
       await closePlayer({ isSwitching: true });
-      if (typeof fallbackToArt === 'function') fallbackToArt();
+      if (typeof switchPlayer === 'function') switchPlayer(resume);
+      else if (typeof fallbackToArt === 'function') fallbackToArt();
     };
 
     mount.querySelector('#pl-btn-back').onclick = closePlayer;

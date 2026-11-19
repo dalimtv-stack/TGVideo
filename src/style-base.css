@@ -756,27 +756,7 @@ html, body {
   background: #2563eb;
 }
 
-.player-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 1rem;
-  background: rgba(0, 0, 0, 0.92);
-  z-index: 2000;
-  pointer-events: none;
-}
-.player-loading p,
-.player-loading #pl-status {
-  color: #fff;
-  font-size: 1.05rem;
-  font-weight: 500;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.85);
-  max-width: 90%;
-}
+/* .player-loading: definido solo en styles/player.css */
 
 .artplayer-host {
   position: absolute;

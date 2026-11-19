@@ -11,6 +11,10 @@ import { escapeHtml, formatTime, showToast, setupDoubleTapSkip, bindNextUp } fro
 import { langName } from './trackParser.js';
 import { getDeviceSettings, getDeviceId } from '../ui/settings.js';
 import { playExoPlayer } from './exoplayer.js';
+import { badgeText, badgeTitle, nextPlayerId, playerLabel, setDevicePlayer } from './playerPrefs.js';
+import { isAndroidApp as isAndroidPlatform } from '../core/platform.js';
+import { bindWakeLock } from './wakeLock.js';
+import { bindLoadingGate } from './loadingGate.js';
 
 export function formatPlayerTitle(title, file) {
   if (!title) return file?.label || 'Reproduciendo';
@@ -67,7 +71,8 @@ export async function playFile({
   if (playerType === 'exoplayer') {
     return playExoPlayer({
       ...opts,
-      fallbackToArt: () => playArtplayer(opts)
+      fallbackToArt: () => playArtplayer(opts),
+      switchPlayer: (resume) => playFile({ ...opts, resumeAt: resume ?? opts.resumeAt })
     });
   }
   if (playerType === 'native') {
@@ -105,7 +110,7 @@ export async function playNative({
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
           <div class="player-osd-engine-box">
-            <button class="player-osd-badge" id="pl-badge-toggle" title="Cambiar a ArtPlayer" data-focusable>Ahora: Nativo · Cambiar</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="${badgeTitle('native')}" data-focusable>${badgeText('native')}</button>
           </div>
         </div>
 
@@ -288,17 +293,8 @@ export async function playNative({
     try { video.pause(); } catch (_) {}
     if (stream) stream.close();
     else if (url) URL.revokeObjectURL(url);
-    const devId = getDeviceId();
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('tgvideo_device_player', 'artplayer');
-      if (profile?.id) localStorage.setItem(`tgvideo_player_${profile.id}`, 'artplayer');
-    }
-    if (!profile.devices) profile.devices = {};
-    if (!profile.devices[devId]) profile.devices[devId] = {};
-    profile.devices[devId].player = 'artplayer';
-    profile.devices[devId].updated_at = Date.now();
-    profile.player = 'artplayer';
-    showToast(playerEl, 'Cambiando a ArtPlayer…');
+    const target = setDevicePlayer(profile, nextPlayerId('native'));
+    showToast(playerEl, `Cambiando a ${playerLabel(target)}…`);
     playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync, nextFile, onNext });
   });
 
@@ -588,22 +584,21 @@ export async function playNative({
       if (btnSubs) btnSubs.title = subs.length > 0 ? `Subtítulos (${subs.length})` : 'Subtítulos';
     };
 
+    bindLoadingGate(video, loading, status);
+    bindWakeLock(video);
     video.src = url;
 
     video.onloadedmetadata = () => {
-      loading.style.display = 'none';
       if (resumeAt > 0) video.currentTime = resumeAt;
       timeDur.textContent = formatTime(video.duration);
       checkTracks();
     };
 
     video.oncanplay = () => {
-      loading.style.display = 'none';
       checkTracks();
     };
 
     video.onplay = () => {
-      loading.style.display = 'none';
       updatePlayIcons();
       showOsd();
     };
@@ -695,7 +690,7 @@ export async function playArtplayer({
           <button class="player-osd-back-btn" id="pl-btn-back" data-focusable title="Volver">←</button>
           <div class="player-osd-title">${escapeHtml(displayTitle)}</div>
           <div class="player-osd-engine-box">
-            <button class="player-osd-badge" id="pl-badge-toggle" title="${isAndroidApp ? 'Cambiar a ExoPlayer' : 'Cambiar a Nativo'}" data-focusable>Ahora: ArtPlayer · Cambiar</button>
+            <button class="player-osd-badge" id="pl-badge-toggle" title="${badgeTitle('artplayer')}" data-focusable>${badgeText('artplayer')}</button>
           </div>
         </div>
 
@@ -866,20 +861,8 @@ export async function playArtplayer({
     }
     if (stream) stream.close();
     else if (url) URL.revokeObjectURL(url);
-    const isAndroidNative = typeof window !== 'undefined' &&
-      (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
-    const targetPlayer = isAndroidNative ? 'exoplayer' : 'native';
-    const devId = getDeviceId();
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('tgvideo_device_player', targetPlayer);
-      if (profile?.id) localStorage.setItem(`tgvideo_player_${profile.id}`, targetPlayer);
-    }
-    if (!profile.devices) profile.devices = {};
-    if (!profile.devices[devId]) profile.devices[devId] = {};
-    profile.devices[devId].player = targetPlayer;
-    profile.devices[devId].updated_at = Date.now();
-    profile.player = targetPlayer;
-    showToast(playerEl, isAndroidNative ? 'Cambiando a ExoPlayer…' : 'Cambiando a Nativo…');
+    const target = setDevicePlayer(profile, nextPlayerId('artplayer'));
+    showToast(playerEl, `Cambiando a ${playerLabel(target)}…`);
     playFile({ client, peerOf, file, title, profile, resumeAt: curTime, onClose, mount, sync, nextFile, onNext });
   });
 
@@ -1213,6 +1196,8 @@ export async function playArtplayer({
     });
 
     const video = art.template.$video;
+    bindLoadingGate(video, loading, status);
+    bindWakeLock(video);
     ensureTracksDetected(video, { deep: true }).catch(() => {});
 
     const nextUp = bindNextUp({
@@ -1326,20 +1311,17 @@ export async function playArtplayer({
     };
 
     art.on('ready', () => {
-      loading.style.display = 'none';
       if (resumeAt > 0) art.currentTime = resumeAt;
       if (video.duration) timeDur.textContent = formatTime(video.duration);
       checkTracks();
     });
 
     art.on('video:loadedmetadata', () => {
-      loading.style.display = 'none';
       timeDur.textContent = formatTime(video.duration);
       checkTracks();
     });
 
     art.on('video:canplay', () => {
-      loading.style.display = 'none';
       checkTracks();
     });
 
@@ -1347,7 +1329,6 @@ export async function playArtplayer({
     if (video.audioTracks) video.audioTracks.addEventListener('addtrack', checkTracks);
 
     art.on('video:play', () => {
-      loading.style.display = 'none';
       updatePlayIcons();
       showOsd();
     });

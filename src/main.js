@@ -13,6 +13,8 @@ import { enrichTitles, enrichTitle, fetchSeasonEpisodes } from './metadata/tmdb.
 import { loadPoster, prewarmPosterCache, memoryCache } from './metadata/posterCache.js';
 import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
+import { showImagePicker } from './ui/imagePickerModal.js';
+import { applyImagePrefs, restoreOriginalImage } from './metadata/imagePrefs.js';
 import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
@@ -555,6 +557,7 @@ function applySagaFilmMetadata(t) {
 }
 
 function applyDetailMetadata(t, profile) {
+  applyImagePrefs(t, profile);
   const metadata = t.metadata;
   if (!metadata) return;
   const detail = document.querySelector('.detail');
@@ -691,7 +694,10 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     <div class="screen detail" data-title="${esc(t.id)}" style="--pc:${posterColor(t.grupo + t.nombre)}">
       <div class="detail-nav-bar">
         <button class="btn-ghost" data-focusable id="d-back">← Volver</button>
-        <button class="btn-icon-circle" data-focusable id="d-fix-meta" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>
+        <div class="detail-nav-actions">
+          <button class="btn-icon-circle" data-focusable id="d-fix-meta" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>
+          <button class="btn-icon-circle" data-focusable id="d-images" title="Cambiar cartel, fondo o logo" aria-label="Imágenes de la ficha">⚙</button>
+        </div>
       </div>
       <div class="detail-head">
         <div class="lib-card-poster big" style="--pc:${posterColor(t.grupo + t.nombre)}">
@@ -735,6 +741,16 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       }
     }).catch(() => {});
   }
+
+  document.getElementById('d-images').onclick = () => {
+    showImagePicker(t, profile, {
+      sync,
+      onChanged: (kind, url) => {
+        if (!url) restoreOriginalImage(t, kind);
+        applyDetailMetadata(t, profile);
+      },
+    });
+  };
 
   document.getElementById('d-fix-meta').onclick = () => {
     showMetadataModal(t, (updatedMeta) => {

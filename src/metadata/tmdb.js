@@ -83,6 +83,22 @@ async function request(path, params = {}, signal) {
   if (!response.ok) throw new Error(response.status === 401 ? 'La clave de TMDB no es válida.' : `TMDB no disponible (${response.status}).`);
   return response.json();
 }
+// Imágenes disponibles en TMDB para un título: { poster: [...], backdrop: [...], logo: [...] }
+export async function fetchTmdbImages(type, id, signal) {
+  const endpoint = type === 'collection' ? 'collection' : (type === 'serie' || type === 'tv' ? 'tv' : 'movie');
+  const data = await request(`/${endpoint}/${id}/images`, { include_image_language: 'es,en,null' }, signal);
+  const rank = (x) => (x.iso_639_1 === 'es' ? 0 : x.iso_639_1 === 'en' ? 1 : 2);
+  const build = (list = [], thumb, full) => [...list]
+    .sort((a, b) => rank(a) - rank(b) || (b.vote_average || 0) - (a.vote_average || 0))
+    .slice(0, 40)
+    .map((x) => ({ thumb: imageUrl(x.file_path, thumb), url: imageUrl(x.file_path, full), lang: x.iso_639_1 || '' }));
+  return {
+    poster: build(data.posters, 'w185', 'w500'),
+    backdrop: build(data.backdrops, 'w300', 'w1280'),
+    logo: build(data.logos, 'w300', 'w500'),
+  };
+}
+
 export async function validateTmdbKey() { return request('/configuration'); }
 
 const normalize = s => String(s || '')
