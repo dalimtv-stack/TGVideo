@@ -422,3 +422,10 @@
 }
 
 
+
+/* Filas de la home pegadas a la izquierda (la primera tarjeta es el "+") */
+.home-screen .row-title { margin-left: max(0.6rem, var(--sal, 0px)); }
+.home-screen .row-track {
+  padding-left: max(0.6rem, var(--sal, 0px));
+  scroll-padding-left: max(0.6rem, var(--sal, 0px));
+}

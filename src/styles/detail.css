@@ -421,3 +421,27 @@
   white-space: nowrap;
   border: 0;
 }
+
+/* Ficha estable: cartel fijo arriba y hueco reservado para título o logo */
+.detail .detail-head { align-items: flex-start; }
+.detail-title-slot {
+  height: calc(120px * var(--ui-font-scale, 1));
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  overflow: hidden;
+  margin: 0.2rem 0 0.4rem;
+}
+.detail-title-slot h1 {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.detail-title-slot .detail-logo-container { margin: 0; max-width: 100%; }
+.detail-title-slot .detail-logo-img { max-height: calc(110px * var(--ui-font-scale, 1)); }
+@media (max-width: 680px) {
+  .detail-title-slot { justify-content: center; text-align: center; height: calc(100px * var(--ui-font-scale, 1)); }
+  .detail-title-slot .detail-logo-img { max-height: calc(90px * var(--ui-font-scale, 1)); }
+}
