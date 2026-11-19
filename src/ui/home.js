@@ -15,6 +15,10 @@ export function buildHomeRows(titles, progress) {
   const series = titles.filter(t => t.tipo === 'serie').sort(byDate);
   if (movies.length) rows.push({ id: 'new-movies', title: 'Novedades · Películas', items: movies });
   if (series.length) rows.push({ id: 'new-series', title: 'Novedades · Series', items: series });
+  const sports = titles.filter(t => t.tipo === 'deporte').sort(byDate);
+  const music = titles.filter(t => t.tipo === 'musica').sort(byDate);
+  if (sports.length) rows.push({ id: 'new-sports', title: 'Deportes', items: sports });
+  if (music.length) rows.push({ id: 'new-music', title: 'Música', items: music });
 
   const groupRows = (list, label) => {
     const m = new Map();
