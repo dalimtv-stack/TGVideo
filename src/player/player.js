@@ -6,7 +6,7 @@ import { streamingAvailable, openStream } from './stream.js';
 import { extractTitleAndYear } from '../metadata/tmdb.js';
 import { prettyEpisodeName } from '../library/parse.js';
 import { registerPlayerController, unregisterPlayerController } from '../ui/dpad.js';
-import { ensureTracksDetected, openAudioSelector, openSubtitlesSelector, formatTrackName } from './tracks.js';
+import { ensureTracksDetected, openAudioSelector, openSubtitlesSelector, formatTrackName, applyCenteredCueFix } from './tracks.js';
 import { escapeHtml, formatTime, showToast, setupDoubleTapSkip, bindNextUp } from './ui-helpers.js';
 import { langName } from './trackParser.js';
 import { getDeviceSettings, getDeviceId } from '../ui/settings.js';
@@ -162,6 +162,7 @@ export async function playNative({
   const isAndroidNative = typeof window !== 'undefined' && (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
   if (isAndroidNative) playerEl?.classList.add('native-android-app');
   const video = mount.querySelector('video');
+  applyCenteredCueFix(video);
   const loading = mount.querySelector('#pl-loading');
   const status = mount.querySelector('#pl-status');
   const osd = mount.querySelector('#pl-osd');
@@ -1196,6 +1197,7 @@ export async function playArtplayer({
     });
 
     const video = art.template.$video;
+    applyCenteredCueFix(video);
     bindLoadingGate(video, loading, status);
     bindWakeLock(video);
     ensureTracksDetected(video, { deep: true }).catch(() => {});
@@ -1301,6 +1303,7 @@ export async function playArtplayer({
                 subs.forEach((t, i) => {
                   if (typeof t.mode === 'string') t.mode = (i === idx) ? "showing" : "disabled";
                 });
+                if (idx >= 0) applyCenteredCueFix(video);
                 showToast(playerEl, idx === -1 ? "Subtítulos desactivados" : `✓ Subtítulos: ${item.html}`);
                 return item.html;
               },
