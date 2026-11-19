@@ -1,6 +1,7 @@
 // src/player/exoplayer.js
 // Integración de ExoPlayer nativo para Android TV / APK con túnel de streaming bajo demanda de Telegram
 import { getStream, readRange, openStream } from './stream.js';
+import { ensureConnected } from '../core/telegram.js';
 import { formatTime, showToast } from './ui-helpers.js';
 import { saveProgress } from './progress.js';
 import { getDeviceSettings } from '../ui/settings.js';
@@ -302,6 +303,7 @@ export async function playExoPlayer(opts) {
 
     titleEl.textContent = displayTitle;
 
+    await ensureConnected(client);
     stream = openStream({ client, media: msg.media, size, mime, name });
 
     const serverRes = await ExoPlayerPlugin.startStreamServer();
