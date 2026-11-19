@@ -1,3 +1,48 @@
+export function applyCenteredCueFix(video) {
+  if (!video || !video.textTracks) return;
+  const fixCue = (cue) => {
+    if (!cue) return;
+    try {
+      cue.align = 'center';
+      cue.position = 50;
+      if ('positionAlign' in cue) cue.positionAlign = 'center';
+      if ('lineAlign' in cue) cue.lineAlign = 'end';
+      cue.line = -2;
+      cue.snapToLines = true;
+      cue.size = 100;
+    } catch (_) {}
+  };
+
+  const attachTrack = (track) => {
+    if (!track) return;
+    try {
+      if (track.cues) {
+        for (let i = 0; i < track.cues.length; i++) fixCue(track.cues[i]);
+      }
+      if (track._centerHandler) {
+        track.removeEventListener?.('cuechange', track._centerHandler);
+      }
+      track._centerHandler = () => {
+        if (track.activeCues) {
+          for (let i = 0; i < track.activeCues.length; i++) fixCue(track.activeCues[i]);
+        }
+      };
+      track.addEventListener?.('cuechange', track._centerHandler);
+    } catch (_) {}
+  };
+
+  Array.from(video.textTracks).forEach(attachTrack);
+  try {
+    if (video._centerAddTrackHandler) {
+      video.textTracks.removeEventListener?.('addtrack', video._centerAddTrackHandler);
+    }
+    video._centerAddTrackHandler = (e) => {
+      if (e.track) attachTrack(e.track);
+    };
+    video.textTracks.addEventListener?.('addtrack', video._centerAddTrackHandler);
+  } catch (_) {}
+}
+
 // src/player/tracks.js
 // Detección y gestión de pistas de audio y subtítulos (nativas y parseadas desde cabecera)
 import { detectTracksFromUrl, langName } from './trackParser.js';
@@ -300,6 +345,7 @@ export async function openSubtitlesSelector(video, playerEl, returnFocusEl) {
       rawTracks.forEach((t, i) => {
         if (typeof t.mode === 'string') t.mode = (i === idx) ? "showing" : "disabled";
       });
+      if (idx >= 0) applyCenteredCueFix(video);
       if (idx === -1) {
         showToast(playerEl, "Subtítulos desactivados");
       } else if (rawTracks[idx]) {
