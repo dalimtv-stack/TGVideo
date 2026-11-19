@@ -710,14 +710,97 @@
 }
 
 
-/* Subtítulos nativos: styling compatible sin confiar en la posición del cue de Safari. */
+/* Subtítulos nativos y WebKit: siempre centrados abajo, adaptados a safe-area y sin desbordes */
+::cue,
+video::cue,
 .native-video::cue,
-video::cue {
-  background: rgba(0, 0, 0, 0.72);
-  color: #fff;
-  font-size: 1em;
-  line-height: 1.3;
-  text-shadow: 0 1px 2px #000;
+.art-video-player video::cue {
+  background: rgba(0, 0, 0, 0.78) !important;
+  color: #ffffff !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  font-size: clamp(0.95rem, 2.4vw, 1.4rem) !important;
+  line-height: 1.4 !important;
+  text-align: center !important;
+  white-space: pre-wrap !important;
+  text-shadow: 0 1px 3px #000, 0 0 2px #000 !important;
+  border-radius: 4px !important;
+  padding: 0.2em 0.5em !important;
+}
+
+/* Safari WebKit Text Track container & display overrides: obligan a centrar en iPhone */
+video::-webkit-media-text-track-container,
+.native-video::-webkit-media-text-track-container {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  text-align: center !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  padding-bottom: max(1.5rem, calc(env(safe-area-inset-bottom, 0px) + 0.8rem)) !important;
+  padding-left: max(1rem, env(safe-area-inset-left, 0px)) !important;
+  padding-right: max(1rem, env(safe-area-inset-right, 0px)) !important;
+  pointer-events: none !important;
+  overflow: visible !important;
+}
+
+video::-webkit-media-text-track-display,
+.native-video::-webkit-media-text-track-display {
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  left: 0 !important;
+  right: 0 !important;
+  max-width: 90% !important;
+  box-sizing: border-box !important;
+}
+
+video::-webkit-media-text-track-region,
+.native-video::-webkit-media-text-track-region {
+  text-align: center !important;
+  margin: 0 auto !important;
+}
+
+/* ArtPlayer custom subtitle container fallback */
+.artplayer-app .art-subtitle,
+.art-video-player .art-subtitle,
+.art-subtitle {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: max(1.5rem, calc(env(safe-area-inset-bottom, 0px) + 0.8rem)) !important;
+  width: 100% !important;
+  text-align: center !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  pointer-events: none !important;
+  z-index: 25 !important;
+  box-sizing: border-box !important;
+  padding: 0 1rem !important;
+}
+
+.artplayer-app .art-subtitle p,
+.art-video-player .art-subtitle p,
+.art-subtitle p {
+  display: inline-block !important;
+  margin: 0 auto !important;
+  padding: 0.3rem 0.8rem !important;
+  background: rgba(0, 0, 0, 0.78) !important;
+  color: #fff !important;
+  font-size: clamp(0.95rem, 2.4vw, 1.35rem) !important;
+  line-height: 1.4 !important;
+  border-radius: 4px !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9) !important;
+  text-align: center !important;
+  max-width: 90% !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
 }
 .player-native,
 .player {
