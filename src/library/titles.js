@@ -37,7 +37,7 @@ function sortFiles(files, tipo) {
 }
 
 function makeTitle({ id, ch, name, origen, seccion, files }) {
-  const tipo = ch.category === 'Películas' ? 'pelicula' : 'serie';
+  const tipo = ch.category === 'Películas' ? 'pelicula' : ch.category === 'Series' ? 'serie' : ch.category === 'Deportes' ? 'deporte' : ch.category === 'Música' ? 'musica' : 'serie';
   sortFiles(files, tipo);
   return {
     id: String(id), tipo, grupo: ch.group, nombre: name,
