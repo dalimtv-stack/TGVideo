@@ -1,6 +1,6 @@
 /**
  * Descubrimiento y listado de canales de vídeo (tgstorage).
- * Categorías soportadas: Series, Películas
+ * Categorías soportadas: Series, Películas, Deportes, Música
  */
 
 import { Api } from 'telegram';
@@ -8,12 +8,14 @@ import { Api } from 'telegram';
 const SEP_RE = /\s*::\s*/;
 const TSEP = ':';
 const TGSTORAGE_SUFFIX_RE = /\s*::\s*tgstorage\s*$/i;
-const VALID_CATEGORIES = ['series', 'películas', 'peliculas', 'movies', 'tv'];
+const VALID_CATEGORIES = ['series', 'películas', 'peliculas', 'movies', 'tv', 'deportes', 'sport', 'sports', 'música', 'musica', 'music'];
 
 function normalizeCategory(cat) {
   const c = String(cat || '').toLowerCase().trim();
   if (c === 'peliculas' || c === 'movies') return 'Películas';
   if (c === 'series' || c === 'tv') return 'Series';
+  if (['deportes', 'sport', 'sports'].includes(c)) return 'Deportes';
+  if (['música', 'musica', 'music'].includes(c)) return 'Música';
   return cat || '';
 }
 
@@ -38,7 +40,7 @@ export function parseChannelTitle(title) {
 
   const category = normalizeCategory(parts[parts.length - 1]);
   if (!VALID_CATEGORIES.includes(category.toLowerCase()) &&
-      !['Series', 'Películas'].includes(category)) {
+      !['Series', 'Películas', 'Deportes', 'Música'].includes(category)) {
     return null;
   }
 
