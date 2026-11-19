@@ -1,3 +1,16 @@
+// Suprimir alerts intrusivos de GramJS (ej. TypeNotFoundError / Missing MTProto Entity ID 0)
+if (typeof window !== 'undefined') {
+  const origAlert = window.alert;
+  window.alert = function (msg, ...args) {
+    const text = String(msg || '');
+    if (text.includes('Missing MTProto Entity') || text.includes('TL definition')) {
+      console.warn('[GramJS alert interceptado y suprimido]:', text);
+      return;
+    }
+    return origAlert ? origAlert.apply(this, [msg, ...args]) : undefined;
+  };
+}
+
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import bigInt from 'big-integer';
@@ -21,6 +34,32 @@ export function getStoredApiCredentials() {
 }
 
 let client = null;
+let isReconnecting = false;
+
+/**
+ * Asegura que el cliente de Telegram esté conectado.
+ * Si la conexión se ha perdido (ej. tras error MTProto o suspensión de red), reconecta automáticamente.
+ */
+export async function ensureConnected(tgClient = client) {
+  if (!tgClient) return null;
+  if (tgClient.connected) return tgClient;
+  if (isReconnecting) {
+    await new Promise(r => setTimeout(r, 600));
+    return tgClient;
+  }
+  isReconnecting = true;
+  try {
+    console.warn('[telegram] Conexión perdida, reconectando cliente Telegram...');
+    await tgClient.connect();
+    console.info('[telegram] Cliente Telegram reconectado con éxito.');
+  } catch (err) {
+    console.warn('[telegram] Error durante la reconexión:', err?.message || err);
+  } finally {
+    isReconnecting = false;
+  }
+  return tgClient;
+}
+
 let readyPromise = null;
 
 /**
@@ -101,6 +140,9 @@ export function createTelegramClient({
       channelId: bigInt(ch.id),
       accessHash: bigInt(ch.hash),
     }),
+
+    /** Asegura reconexión si se pierde la conexión */
+    ensureConnected: () => ensureConnected(client),
 
     /** ¿Hay sesión guardada? */
     hasSession: () => !!localStorage.getItem('tg_session'),
