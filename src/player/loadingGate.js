@@ -7,8 +7,21 @@ export function bindLoadingGate(video, loading, status) {
   let firstFrame = false;
   let waitTimer = null;
   const setText = (t) => { if (status && t) status.textContent = t; };
-  const show = (t) => { setText(t); loading.style.display = 'flex'; };
-  const hide = () => { clearTimeout(waitTimer); loading.style.display = 'none'; };
+  const root = loading.closest('.player') || loading.parentElement;
+  // Carga inicial: fondo negro y OSD siempre visible (se puede volver atrás).
+  // Rebuffering a mitad de vídeo: aviso ligero y transparente, sin tapar ni bloquear los controles.
+  const show = (t) => {
+    setText(t);
+    loading.classList.toggle('buffering', firstFrame);
+    root?.classList.toggle('is-loading', !firstFrame);
+    loading.style.display = 'flex';
+  };
+  const hide = () => {
+    clearTimeout(waitTimer);
+    loading.style.display = 'none';
+    loading.classList.remove('buffering');
+    root?.classList.remove('is-loading');
+  };
 
   const onMeta = () => { if (!firstFrame) setText('Preparando reproducción…'); };
   const onPlaying = () => {
