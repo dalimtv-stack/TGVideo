@@ -6,7 +6,7 @@ import { loadLibrary } from './library/channels.js';
 import { buildTitles, mergeMoviesByTmdb } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
 import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
-import { loadProgress, writeFullProgress, titleState, isFavorite, toggleFavorite, toggleAllWatched } from './player/progress.js';
+import { loadProgress, loadFavorites, writeFullProgress, titleState, isFavorite, toggleFavorite, toggleAllWatched } from './player/progress.js';
 import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
 import { enrichTitles, enrichTitle, fetchSeasonEpisodes } from './metadata/tmdb.js';
@@ -20,6 +20,7 @@ import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
+import { createLibraryViews } from './ui/libraryViews.js';
 
 const kv = createKV();
 const LIB_KEY = 'library_v2';
@@ -163,6 +164,7 @@ function promptApiCredentialsUI() {
 
 // ---------- Home con biblioteca ----------
 let TITLES_CACHE = null;
+let ACTIVE_HOME_SECTION = 'inicio';
 let metadataController = null;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtSize = (b) => b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixed(0) + ' MB';
@@ -196,7 +198,7 @@ function cardHtml(t, progress) {
   const p = st.next && progress[st.next.key];
   const pct = p && p.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
   const displayName = t.metadata?.name || t.metadata?.title || t.nombre;
-  const metaBadge = t.tipo === 'serie' ? `${t.archivos.length} ep.` : t.isSaga ? `${t.archivos.length} películas` : t.archivos.length > 1 ? `${t.archivos.length} vers.` : 'Película';
+  const metaBadge = t.tipo === 'serie' ? `${t.archivos.length} ep.` : t.isSaga ? `${t.archivos.length} películas` : t.tipo === 'deporte' ? 'Deporte' : t.tipo === 'musica' ? 'Música' : t.archivos.length > 1 ? `${t.archivos.length} vers.` : 'Película';
   const posterUrl = t.metadata?.poster;
   const localPoster = posterUrl ? (memoryCache.get(posterUrl) || posterUrl) : '';
 
@@ -212,6 +214,15 @@ function cardHtml(t, progress) {
       <div class="lib-card-name">${esc(displayName)}</div>
     </div>`;
 }
+
+const libraryViews = createLibraryViews({
+  applyProfileScale, setBackHandler, getTitles: () => TITLES_CACHE, setTitles: value => { TITLES_CACHE = value; },
+  loadProgress, titleState, formatPlayButtonLabel, esc, posterColor, memoryCache, showScreen, cardHtml,
+  loadPoster, applyImagePrefs, getAutoLogo, fmtDur, fmtSize, enrichTitle, showImagePicker,
+  restoreOriginalImage, showMetadataModal, mergeMoviesByTmdb, playFile, fetchSeasonEpisodes,
+  centerSeason, firstUncompleted, adjacentSeason, isFavorite, toggleFavorite, toggleAllWatched,
+  focusFirst, showHome, app,
+});
 
 // Lee los canales y solo vuelve a escanear los que han cambiado (o todos si force)
 async function refreshLibrary(tg, { force = false, onProgress } = {}) {
@@ -261,60 +272,9 @@ function showUpdateDialog({ onQuick, onFull }) {
   }, 50);
 }
 
-function showGroupGrid(tg, sync, profile, row, { focusTitleId = null } = {}) {
-  applyProfileScale(profile);
-  const back = () => showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
-  setBackHandler(back);
-
-  const titles = TITLES_CACHE || [];
-  const progress = loadProgress(profile.id);
-  const currentItems = row.items.map(it => titles.find(t => String(t.id) === String(it.id)) || it);
-
-  showScreen(`
-    <div class="screen grid-screen" data-grid-id="${esc(row.id)}">
-      <header class="grid-header">
-        <button class="btn-icon" data-focusable id="grid-btn-back" title="Volver al inicio" aria-label="Volver">←</button>
-        <div class="grid-header-info">
-          <h1>${esc(row.title)}</h1>
-          <span class="grid-count">${currentItems.length} ${currentItems.length === 1 ? "título" : "títulos"}</span>
-        </div>
-      </header>
-      <main class="grid-cards">
-        ${currentItems.map(t => cardHtml(t, progress)).join("")}
-      </main>
-    </div>`);
-
-  document.getElementById("grid-btn-back").onclick = back;
-
-  document.querySelectorAll("#app .grid-cards .lib-card").forEach(card => {
-    card.onclick = () => {
-      const t = currentItems.find(x => String(x.id) === String(card.dataset.title));
-      if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
-    };
-  });
-
-  document.querySelectorAll("#app .grid-cards .lib-card-poster img.poster-image").forEach(img => {
-    const url = img.getAttribute("data-poster-url") || img.src;
-    if (url) loadPoster(img, url);
-  });
-
-  setTimeout(() => {
-    let el = null;
-    if (focusTitleId) {
-      el = document.querySelector(`.grid-cards .lib-card[data-title="${focusTitleId}"]`);
-    }
-    if (!el) {
-      el = document.querySelector(".grid-cards .lib-card[data-focusable]") || document.getElementById("grid-btn-back");
-    }
-    if (el) {
-      el.focus();
-      el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
-    }
-  }, 80);
-}
 
 let CHECKED = false;
-async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false } = {}) {
+async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, selectedSection = ACTIVE_HOME_SECTION } = {}) {
   applyProfileScale(profile);
   setBackHandler(() => showProfileSelector(tg, sync));
   const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
@@ -378,11 +338,29 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
   const progress = loadProgress(profile.id);
   const rows = buildHomeRows(titles, progress);
+  const titleById = new Map(titles.map(t => [String(t.id), t]));
+  const favoriteTitles = loadFavorites(profile.id).map(id => titleById.get(String(id))).filter(Boolean);
+  const sectionDefs = [
+    ...(titles.length ? [{ id: 'inicio', label: 'Inicio', items: titles }] : []),
+    ...(favoriteTitles.length ? [{ id: 'favoritos', label: 'Favoritos', items: favoriteTitles }] : []),
+    ...[
+      ['peliculas', 'Películas', 'pelicula'], ['series', 'Series', 'serie'],
+      ['deportes', 'Deportes', 'deporte'], ['musica', 'Música', 'musica'],
+    ].map(([id, label, tipo]) => ({ id, label, items: titles.filter(t => t.tipo === tipo) })).filter(section => section.items.length),
+  ];
+  if (!sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
+  ACTIVE_HOME_SECTION = selectedSection;
+  const activeSection = sectionDefs.find(section => section.id === selectedSection);
 
   const body = !titles.length ? `
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
         <p style="opacity:.6;margin-top:.5rem">Los canales deben terminar en <code>::Series::tgstorage</code> o <code>::Películas::tgstorage</code></p></div>`
+    : selectedSection !== 'inicio' ? `
+      <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
+        <h1 class="category-title">${esc(activeSection?.label || '')}</h1>
+        <div class="category-grid">${(activeSection?.items || []).map(t => cardHtml(t, progress)).join('')}</div>
+      </section>`
     : rows.map(r => `
       <section class="row" data-row-id="${esc(r.id)}">
         <div class="row-header">
@@ -402,6 +380,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     <div class="screen home-screen">
       <header class="home-header">
         <div class="home-logo">TGVideo</div>
+        ${sectionDefs.length ? `<nav class="home-nav" aria-label="Secciones">${sectionDefs.map(section => `<button class="home-nav-item ${section.id === selectedSection ? 'active' : ''}" data-focusable data-section="${esc(section.id)}" type="button" aria-current="${section.id === selectedSection ? 'page' : 'false'}">${esc(section.label)}</button>`).join('')}</nav>` : ''}
         <div class="home-actions">
           <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
           <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile" title="${esc(profile.name)}" aria-label="Perfil: ${esc(profile.name)}">
@@ -412,6 +391,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       <main class="home-main">${body}</main>
     </div>`);
 
+  document.querySelectorAll('.home-nav-item').forEach(button => {
+    button.onclick = () => showHome(tg, sync, profile, { selectedSection: button.dataset.section });
+  });
   document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
     onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
     onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
@@ -427,7 +409,13 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       e.stopPropagation();
       const rowId = btn.dataset.rowId;
       const r = rows.find(x => x.id === rowId);
-      if (r) showGroupGrid(tg, sync, profile, r);
+      if (r) libraryViews.showGroupGrid(tg, sync, profile, r);
+    };
+  });
+  document.querySelectorAll('#app .category-grid .lib-card[data-title]').forEach(card => {
+    card.onclick = () => {
+      const t = titles.find(x => String(x.id) === String(card.dataset.title));
+      if (t) libraryViews.showDetail(tg, sync, profile, t);
     };
   });
   document.querySelectorAll('#app .row').forEach(rowEl => {
@@ -435,7 +423,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     rowEl.querySelectorAll('.lib-card[data-title]').forEach((card, idx) => {
       card.onclick = () => {
         const t = titles.find(x => String(x.id) === String(card.dataset.title));
-        if (t) showDetail(tg, sync, profile, t, { fromRowId: rowId, fromCardIndex: idx + 1 });
+        if (t) libraryViews.showDetail(tg, sync, profile, t, { fromRowId: rowId, fromCardIndex: idx + 1 });
       };
     });
   });
@@ -460,12 +448,13 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
     }
     if (!el) {
-      // Primera carátula de Seguir viendo; si no existe, primera fila disponible.
-      el = document.querySelector('.row[data-row-id="continue"] .row-track .lib-card[data-title]')
+      // Categorías enfocan su pestaña activa; Inicio mantiene el foco en la primera carátula.
+      el = selectedSection !== 'inicio' ? document.querySelector('.home-nav-item.active') : null;
+      el ||= document.querySelector('.row[data-row-id="continue"] .row-track .lib-card[data-title]')
         || document.querySelector('.row-track .lib-card[data-title]');
     }
     if (!el) {
-      el = document.querySelector('[data-focusable]');
+      el = document.querySelector('.home-nav-item.active, [data-focusable]');
     }
     if (el) {
       el.focus();
@@ -535,467 +524,6 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       }
     }
   }).catch(() => {});
-}
-
-function applySagaFilmMetadata(t) {
-  const detail = document.querySelector('.detail');
-  if (!detail || String(detail.dataset.title) !== String(t.id)) return;
-  for (const file of t.archivos) {
-    const row = [...detail.querySelectorAll('.ep[data-key]')].find(el => el.dataset.key === file.key);
-    if (!row || !file.metadata) continue;
-    const image = row.querySelector('.saga-film-poster');
-    if (image && file.metadata.poster && image.tagName !== 'IMG') {
-      const img = document.createElement('img');
-      img.className = 'saga-film-poster'; img.alt = ''; img.loading = 'lazy';
-      loadPoster(img, file.metadata.poster);
-      image.replaceWith(img);
-    }
-    const name = row.querySelector('.ep-name');
-    if (name && file.metadata.name) name.textContent = file.metadata.name;
-    const synopsis = row.querySelector('.saga-film-synopsis');
-    if (!synopsis && file.metadata.overview) {
-      const el = document.createElement('div'); el.className = 'saga-film-synopsis'; el.textContent = file.metadata.overview;
-      row.querySelector('.ep-info')?.append(el);
-    }
-  }
-}
-
-function applyDetailMetadata(t, profile) {
-  applyImagePrefs(t, profile);
-  const metadata = t.metadata;
-  if (!metadata) return;
-  if (!metadata.logo) {
-    getAutoLogo(t).then((url) => {
-      if (url && t.metadata && !t.metadata.logo) {
-        t.metadata = { ...t.metadata, logo: url };
-        applyDetailMetadata(t, profile);
-      }
-    }).catch(() => {});
-  }
-  const detail = document.querySelector('.detail');
-  if (!detail || String(detail.dataset.title) !== String(t.id)) return;
-  const displayName = metadata.name || metadata.title || t.nombre;
-
-  const titleH1 = detail.querySelector('.detail-head h1');
-  if (titleH1 && displayName) titleH1.textContent = displayName;
-  const posterName = detail.querySelector('.detail-head .poster-name');
-  if (posterName && displayName) posterName.textContent = displayName;
-
-  const detailHeadInfo = detail.querySelector('.detail-head > div:last-child');
-  if (detailHeadInfo) {
-    let logoBox = detailHeadInfo.querySelector('.detail-logo-container');
-    if (metadata.logo) {
-      if (!logoBox) {
-        logoBox = document.createElement('div');
-        logoBox.className = 'detail-logo-container';
-        const img = document.createElement('img');
-        img.className = 'detail-logo-img';
-        img.alt = displayName || '';
-        img.src = metadata.logo;
-        img.onerror = () => { logoBox.remove(); if (titleH1) titleH1.classList.remove('detail-title-hidden', 'sr-only'); };
-        logoBox.appendChild(img);
-        if (titleH1) {
-          titleH1.classList.add('detail-title-hidden', 'sr-only');
-          titleH1.parentNode.insertBefore(logoBox, titleH1);
-        } else {
-          detailHeadInfo.prepend(logoBox);
-        }
-      } else {
-        const img = logoBox.querySelector('.detail-logo-img');
-        if (img) {
-          img.src = metadata.logo;
-          img.alt = displayName || '';
-        }
-        if (titleH1) titleH1.classList.add('detail-title-hidden', 'sr-only');
-      }
-    } else {
-      if (logoBox) logoBox.remove();
-      if (titleH1) titleH1.classList.remove('detail-title-hidden', 'sr-only');
-    }
-  }
-
-  if (metadata.backdrop) {
-    detail.style.setProperty('--detail-backdrop', `url("${metadata.backdrop}")`);
-    detail.classList.add('has-backdrop');
-  }
-  const poster = detail.querySelector('.lib-card-poster.big');
-  if (metadata.poster && poster) {
-    let image = poster.querySelector('img.poster-image');
-    if (!image) {
-      image = document.createElement('img');
-      image.className = 'poster-image';
-      image.alt = displayName;
-      poster.prepend(image);
-    }
-    image.onerror = () => {
-      if (image.src !== metadata.poster) image.src = metadata.poster;
-    };
-    loadPoster(image, metadata.poster);
-  }
-  const synopsis = detail.querySelector('.detail-syn');
-  const toggle = detail.querySelector('.btn-syn-toggle');
-  if (synopsis && metadata.overview) {
-    synopsis.textContent = metadata.overview;
-    synopsis.hidden = false;
-    if (toggle) {
-      synopsis.classList.remove('expanded');
-      requestAnimationFrame(() => {
-        const isClamped = synopsis.scrollHeight > synopsis.clientHeight + 4;
-        if (isClamped) {
-          toggle.hidden = false;
-          toggle.textContent = 'más';
-          toggle.onclick = (e) => {
-            e.preventDefault();
-            const exp = synopsis.classList.toggle('expanded');
-            toggle.textContent = exp ? 'menos' : 'más';
-          };
-        } else {
-          toggle.hidden = true;
-        }
-      });
-    }
-  }
-  const info = detail.querySelector('.detail-metadata');
-  if (info) {
-    const numRating = Number(metadata.rating);
-    const ratingStr = Number.isFinite(numRating) && numRating > 0 ? `★ ${numRating.toFixed(1)}` : '';
-    info.textContent = [metadata.date?.slice(0, 4), ratingStr].filter(Boolean).join(' · ');
-  }
-
-
-  // Actualizar botón de reproducir con el nombre TMDB si está disponible
-  const playBtn = detail.querySelector('#d-play');
-  if (playBtn && profile?.id) {
-    const progress = loadProgress(profile.id);
-    const st = titleState(t, progress);
-    const label = formatPlayButtonLabel(t, st, progress);
-    if (label) playBtn.textContent = label;
-  }
-}
-
-function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = null, fromGrid = null } = {}) {
-  LAST_OPENED_TITLE_ID = t.id;
-  const back = () => {
-    if (fromGrid) {
-      showGroupGrid(tg, sync, profile, fromGrid, { focusTitleId: t.id });
-    } else {
-      showHome(tg, sync, profile, { focusTitleId: t.id, focusRowId: fromRowId, focusCardIndex: fromCardIndex });
-    }
-  };
-  setBackHandler(back);
-  const progress = loadProgress(profile.id);
-  const st = titleState(t, progress);
-  const nextLabel = formatPlayButtonLabel(t, st, progress);
-
-  const seasonsMap = new Map();
-  if (t.tipo === 'serie') for (const f of t.archivos) {
-    const s = f.season || 1;
-    if (!seasonsMap.has(s)) seasonsMap.set(s, []);
-    seasonsMap.get(s).push(f);
-  }
-  const seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
-  let currentSeason = st.next?.season && seasonsMap.has(st.next.season) ? st.next.season : (seasons[0] || 1);
-  const hasSeasons = t.tipo === 'serie' && seasons.length > 1;
-  const seasonsBarHtml = hasSeasons ? `
-    <div class="seasons-bar"><div class="seasons-label">Temporadas</div>
-      <div class="seasons-track">${seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('')}</div>
-    </div>` : '';
-  const displayName = t.metadata?.name || t.metadata?.title || t.nombre;
-
-  showScreen(`
-    <div class="screen detail" data-title="${esc(t.id)}" style="--pc:${posterColor(t.grupo + t.nombre)}">
-      <div class="detail-nav-bar">
-        <button class="btn-ghost" data-focusable id="d-back">← Volver</button>
-        <div class="detail-nav-actions">
-          <button class="btn-icon-circle" data-focusable id="d-fix-meta" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>
-          <button class="btn-icon-circle" data-focusable id="d-images" title="Cambiar cartel, fondo o logo" aria-label="Imágenes de la ficha">⚙</button>
-        </div>
-      </div>
-      <div class="detail-head">
-        <div class="lib-card-poster big" style="--pc:${posterColor(t.grupo + t.nombre)}">
-          ${t.metadata?.poster ? `<img class="poster-image" src="${esc(memoryCache.get(t.metadata.poster) || t.metadata.poster)}" alt="${esc(displayName)}">` : ''}
-          <span class="poster-group">${esc(t.grupo)}</span><span class="poster-name">${esc(displayName)}</span></div>
-        <div>
-          <div class="detail-kicker">${t.tipo === 'serie' ? 'Serie' : 'Película'} · ${esc(t.grupo)}</div>
-          <div class="detail-title-slot">
-            ${t.metadata?.logo ? `<div class="detail-logo-container"><img class="detail-logo-img" src="${esc(t.metadata.logo)}" alt="${esc(displayName)}"><h1 class="detail-title-hidden sr-only">${esc(displayName)}</h1></div>` : `<h1>${esc(displayName)}</h1>`}
-          </div>
-          <p class="detail-sub">${t.isSaga ? `${t.archivos.length} películas de la saga` : t.tipo === 'serie' ? `${t.archivos.length} episodios` : t.archivos.length > 1 ? `${t.archivos.length} versiones disponibles` : (fmtDur(t.archivos[0]?.duration) || 'Película')}</p>
-          <p class="detail-metadata"></p>
-          <div class="detail-syn-container">
-            <p class="detail-syn" ${t.archivos[0]?.synopsis ? '' : 'hidden'}>${esc(t.archivos[0]?.synopsis || '')}</p>
-            <button class="btn-syn-toggle" type="button" hidden data-focusable>más</button>
-          </div>
-          <div class="detail-actions-row">
-            ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
-            <button class="btn-icon-action" data-focusable id="d-fav" type="button" title="Añadir a favoritos" aria-label="Añadir a favoritos">
-              <span class="btn-action-icon" aria-hidden="true">★</span>
-              <span class="btn-action-tooltip">Añadir a favoritos</span>
-            </button>
-            <button class="btn-icon-action" data-focusable id="d-watched" type="button" title="Marcar como visto" aria-label="Marcar como visto">
-              <span class="btn-action-icon" aria-hidden="true">✓</span>
-              <span class="btn-action-tooltip">Marcar como visto</span>
-            </button>
-          </div>
-        </div>
-      </div>
-      ${seasonsBarHtml}
-      <h2 class="row-title" id="d-list-title">${t.isSaga ? 'Películas de la saga' : t.tipo === 'serie' ? 'Episodios' : t.archivos.length > 1 ? 'Versiones disponibles' : 'Archivo de vídeo'}</h2>
-      <div class="ep-list" id="ep-list"></div>
-    </div>`);
-
-  applyDetailMetadata(t, profile);
-  if (t.isSaga) applySagaFilmMetadata(t);
-
-  if (!t.metadata) {
-    enrichTitle(t).then(meta => {
-      if (meta && String(document.querySelector('.detail')?.dataset.title) === String(t.id)) {
-        applyDetailMetadata(t, profile);
-        if (t.isSaga) applySagaFilmMetadata(t);
-      }
-    }).catch(() => {});
-  }
-
-  document.getElementById('d-images').onclick = () => {
-    showImagePicker(t, profile, {
-      sync,
-      onChanged: (kind, url) => {
-        if (!url) restoreOriginalImage(t, kind);
-        applyDetailMetadata(t, profile);
-      },
-    });
-  };
-
-  document.getElementById('d-fix-meta').onclick = () => {
-    showMetadataModal(t, (updatedMeta) => {
-      t.metadata = updatedMeta;
-      if (t.archivos && !t.isSaga) {
-        for (const f of t.archivos) {
-          f.metadata = updatedMeta;
-        }
-      }
-      if (TITLES_CACHE) {
-        TITLES_CACHE = mergeMoviesByTmdb(TITLES_CACHE);
-      }
-      applyDetailMetadata(t, profile);
-      showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid });
-    }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
-  };
-
-  const play = (f) => {
-    const p = loadProgress(profile.id)[f.key];
-    setBackHandler(null);
-    // Siguiente archivo en la lista (episodio / saga / versiones)
-    let nextFile = null;
-    if (t.isSaga) {
-      const yearOf = (x) => Number(x.metadata?.date?.slice(0, 4) || x.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
-      const sortedSaga = [...(t.archivos || [])].sort((a, b) => (
-        yearOf(a) - yearOf(b) ||
-        (Number(b.size) || 0) - (Number(a.size) || 0) ||
-        a.label.localeCompare(b.label, 'es', { numeric: true })
-      ));
-      const curFilmId = f.metadata?.id || f.tmdbId || f.sagaName || f.label;
-      nextFile = sortedSaga.find(x => {
-        const xFilmId = x.metadata?.id || x.tmdbId || x.sagaName || x.label;
-        if (xFilmId === curFilmId) return false;
-        return yearOf(x) > yearOf(f) || (yearOf(x) === yearOf(f) && sortedSaga.indexOf(x) > sortedSaga.indexOf(f));
-      }) || null;
-    } else if (t.tipo === 'serie') {
-      let list = t.archivos || [];
-      if (f.season != null) {
-        list = list.filter(x => Number(x.season) === Number(f.season));
-        list = [...list].sort((a, b) => (a.episode || 0) - (b.episode || 0));
-      }
-      const idx = list.findIndex(x => String(x.key) === String(f.key));
-      nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
-    } else {
-      let list = t.archivos || [];
-      const idx = list.findIndex(x => String(x.key) === String(f.key));
-      nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
-    }
-
-    playFile({
-      client: tg.getClient(), peerOf: tg.peerOf, file: f, title: t, profile,
-      resumeAt: p && !p.is_completed ? p.current_time : 0, mount: app,
-      onClose: () => showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid }),
-      sync,
-      nextFile,
-      onNext: (nf) => play(nf),
-    });
-  };
-
-  const renderEpisodes = (seasonNum) => {
-    let files = hasSeasons ? (seasonsMap.get(seasonNum) || []) : t.archivos;
-    if (t.isSaga) {
-      const yearOf = (f) => Number(f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
-      files = [...files].sort((a, b) => (
-        yearOf(a) - yearOf(b) ||
-        (Number(b.size) || 0) - (Number(a.size) || 0) ||
-        a.label.localeCompare(b.label, 'es', { numeric: true })
-      ));
-    } else if (t.tipo === 'pelicula') {
-      // Ordenar las versiones de mayor a menor tamaño
-      files = [...files].sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
-    }
-    const container = document.getElementById('ep-list');
-    container.innerHTML = files.map((f) => {
-      const p = progress[f.key];
-      const pct = p?.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
-      const ep = f.season || f.episode ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
-      const filmYear = f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || t.metadata?.date?.slice(0, 4) || '';
-      const normalizedMovieName = t.metadata?.name || t.metadata?.title || t.nombre;
-      const filmTitle = t.isSaga
-        ? (f.metadata?.name || f.sagaName || f.label)
-        : t.tipo === 'serie'
-          ? (f.metadata?.name || prettyEpisodeName(f.fileName || f.label, normalizedMovieName))
-          : (t.archivos.length > 1 ? (f.label || `Versión ${files.indexOf(f) + 1}`) : (f.metadata?.name || normalizedMovieName || f.sagaName || f.label));
-      // En series se muestra la fecha oficial de emisión de TMDB si está disponible.
-      // Se omite la fecha interna de subida a Telegram según especificación.
-      let episodeDate = '';
-      if (t.tipo === 'serie' && f.metadata?.air_date) {
-        const parts = String(f.metadata.air_date).split('-');
-        if (parts.length === 3) {
-          episodeDate = `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
-        } else {
-          episodeDate = String(f.metadata.air_date);
-        }
-      }
-      const fileDurationSecs = f.duration || (t.metadata?.runtime ? (t.metadata.runtime * 60) : 0);
-      const durStr = fmtDur(fileDurationSecs);
-      const poster = f.metadata?.poster ? `<img class="saga-film-poster" src="${esc(memoryCache.get(f.metadata.poster) || f.metadata.poster)}" alt="" loading="lazy">` : `<div class="saga-film-poster saga-film-placeholder">${esc(filmYear || '🎬')}</div>`;
-      const synopsis = f.metadata?.overview ? `<div class="saga-film-synopsis">${esc(f.metadata.overview)}</div>` : '';
-      return `<div class="ep ${t.isSaga ? 'saga-film' : ''}" tabindex="0" data-focusable data-key="${esc(f.key)}">
-        ${t.isSaga ? poster : `<div class="ep-num">${ep || '•'}</div>`}
-        <div class="ep-info"><div class="ep-name">${esc(filmTitle)}</div>
-          <div class="ep-meta">${(t.tipo === 'serie' ? [durStr, fmtSize(f.size), episodeDate] : [filmYear, durStr, fmtSize(f.size)]).filter(Boolean).join(' · ')}</div>
-          ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
-        <div class="ep-state">${p?.is_completed ? '✓ Visto' : pct ? Math.round(pct) + '%' : ''}</div>
-      </div>`;
-    }).join('');
-    container.querySelectorAll('.ep').forEach(el => {
-      el.onclick = () => { const f = t.archivos.find(x => x.key === el.dataset.key); if (f) play(f); };
-    });
-    if (hasSeasons) document.getElementById('d-list-title').textContent = `Temporada ${seasonNum} (${files.length} ep.)`;
-  };
-  renderEpisodes(currentSeason);
-
-  // Enriquecer nombres/sinopsis de episodios desde TMDB (cada temporada al abrirla)
-  let loadSeasonMeta = () => {};
-  if (t.tipo === 'serie' && (t.metadata?.id || t.tmdbId)) {
-    loadSeasonMeta = (sNum) => {
-      fetchSeasonEpisodes(t.metadata?.id || t.tmdbId, sNum).then(episodes => {
-        if (!episodes || !episodes.length) return;
-        const currentFiles = hasSeasons ? (seasonsMap.get(sNum) || []) : t.archivos;
-        let updated = false;
-        for (const f of currentFiles) {
-          const ep = episodes.find(e => e.episode_number === f.episode);
-          if (ep && (ep.name || ep.air_date)) {
-            f.metadata = {
-              ...(f.metadata || {}),
-              name: ep.name || f.metadata?.name,
-              overview: ep.overview || f.metadata?.overview,
-              air_date: ep.air_date || f.metadata?.air_date
-            };
-            updated = true;
-          }
-        }
-        if (updated && String(document.querySelector('.detail')?.dataset.title) === String(t.id)) {
-          if (currentSeason === sNum) {
-            renderEpisodes(sNum);
-          }
-          const playBtn = document.getElementById('d-play');
-          if (playBtn) {
-            playBtn.textContent = formatPlayButtonLabel(t, st, progress);
-          }
-        }
-      }).catch(() => {});
-    };
-    loadSeasonMeta(currentSeason);
-  }
-
-  const centerCurrentSeason = () => centerSeason(document.querySelector('.seasons-track'), document.querySelector('.season-btn.active'));
-  const changeSeason = (season, focusEpisode = false) => {
-    currentSeason = season;
-    document.querySelectorAll('.season-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.season) === season));
-    renderEpisodes(season);
-    loadSeasonMeta(season);
-    centerCurrentSeason();
-    if (focusEpisode) {
-      const target = firstUncompleted(seasonsMap.get(season) || [], loadProgress(profile.id));
-      const element = [...document.querySelectorAll('.ep')].find(el => el.dataset.key === target?.key);
-      element?.focus({ preventScroll: true });
-      element?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    }
-  };
-  document.getElementById('ep-list').addEventListener('keydown', e => {
-    if (!e.target.closest('.ep') || !['ArrowLeft', 'ArrowRight'].includes(e.key) || !hasSeasons) return;
-    e.preventDefault(); e.stopPropagation();
-    const season = adjacentSeason(seasons, currentSeason, e.key === 'ArrowLeft' ? -1 : 1);
-    if (season !== null) changeSeason(season, true);
-  });
-  document.querySelectorAll('.season-btn').forEach(btn => {
-    btn.onclick = () => changeSeason(Number(btn.dataset.season));
-  });
-  requestAnimationFrame(centerCurrentSeason);
-  const track = document.querySelector('.seasons-track');
-  if (track) {
-    const observer = new ResizeObserver(() => { if (track.isConnected) centerCurrentSeason(); else observer.disconnect(); });
-    observer.observe(track);
-  }
-  document.getElementById('d-back').onclick = back;
-  document.getElementById('d-play')?.addEventListener('click', () => play(st.next));
-
-  const favBtn = document.getElementById('d-fav');
-  const watchedBtn = document.getElementById('d-watched');
-
-  const updateActionButtons = () => {
-    if (favBtn && profile?.id) {
-      const fav = isFavorite(profile.id, t.id);
-      favBtn.classList.toggle('active', fav);
-      const tip = fav ? 'Quitar de favoritos' : 'Añadir a favoritos';
-      favBtn.title = tip;
-      favBtn.setAttribute('aria-label', tip);
-      const tipEl = favBtn.querySelector('.btn-action-tooltip');
-      if (tipEl) tipEl.textContent = tip;
-    }
-    if (watchedBtn && profile?.id) {
-      const prg = loadProgress(profile.id);
-      const allWatched = (t.archivos || []).length > 0 && (t.archivos || []).every(f => prg[f.key]?.is_completed);
-      watchedBtn.classList.toggle('active', allWatched);
-      const tip = allWatched ? 'Marcar como no visto' : 'Marcar como visto';
-      watchedBtn.title = tip;
-      watchedBtn.setAttribute('aria-label', tip);
-      const tipEl = watchedBtn.querySelector('.btn-action-tooltip');
-      if (tipEl) tipEl.textContent = tip;
-    }
-  };
-
-  updateActionButtons();
-
-  if (favBtn && profile?.id) {
-    favBtn.onclick = (e) => {
-      e.preventDefault();
-      toggleFavorite(profile.id, t.id);
-      updateActionButtons();
-    };
-  }
-
-  if (watchedBtn && profile?.id) {
-    watchedBtn.onclick = (e) => {
-      e.preventDefault();
-      toggleAllWatched(profile.id, t);
-      updateActionButtons();
-      const prg = loadProgress(profile.id);
-      const newSt = titleState(t, prg);
-      const playBtnEl = document.getElementById('d-play');
-      if (playBtnEl) {
-        const lbl = formatPlayButtonLabel(t, newSt, prg);
-        if (lbl) playBtnEl.textContent = lbl;
-      }
-      renderEpisodes(currentSeason);
-    };
-  }
-  focusFirst('#d-play, .season-btn.active, #ep-list .ep[data-focusable]');
 }
 
 // ---------- Selector de perfiles ----------
