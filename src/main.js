@@ -879,9 +879,10 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   };
   renderEpisodes(currentSeason);
 
-  // Enriquecer nombres normalizados de episodios desde TMDB
+  // Enriquecer nombres/sinopsis de episodios desde TMDB (cada temporada al abrirla)
+  let loadSeasonMeta = () => {};
   if (t.tipo === 'serie' && (t.metadata?.id || t.tmdbId)) {
-    const loadSeasonMeta = (sNum) => {
+    loadSeasonMeta = (sNum) => {
       fetchSeasonEpisodes(t.metadata?.id || t.tmdbId, sNum).then(episodes => {
         if (!episodes || !episodes.length) return;
         const currentFiles = hasSeasons ? (seasonsMap.get(sNum) || []) : t.archivos;
@@ -917,6 +918,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     currentSeason = season;
     document.querySelectorAll('.season-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.season) === season));
     renderEpisodes(season);
+    loadSeasonMeta(season);
     centerCurrentSeason();
     if (focusEpisode) {
       const target = firstUncompleted(seasonsMap.get(season) || [], loadProgress(profile.id));

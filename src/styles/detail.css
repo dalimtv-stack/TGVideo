@@ -249,6 +249,7 @@
   text-decoration: underline;
   display: inline-block;
 }
+.btn-syn-toggle[hidden] { display: none; }
 .btn-syn-toggle:hover {
   color: #ff3b47;
 }
