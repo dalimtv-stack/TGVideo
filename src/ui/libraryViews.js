@@ -1,3 +1,5 @@
+import { prettyEpisodeName } from '../library/parse.js';
+
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
   const {
@@ -8,6 +10,61 @@ export function createLibraryViews(deps) {
     playFile, fetchSeasonEpisodes, centerSeason, firstUncompleted, adjacentSeason,
     isFavorite, toggleFavorite, toggleAllWatched, focusFirst, showHome, app,
   } = deps;
+  let lastOpenedTitleId = null;
+
+  function showGroupGrid(tg, sync, profile, row, { focusTitleId = null } = {}) {
+    applyProfileScale(profile);
+    const back = () => showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
+    setBackHandler(back);
+
+    const titles = getTitles() || [];
+    const progress = loadProgress(profile.id);
+    const currentItems = row.items.map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+
+    showScreen(`
+      <div class="screen grid-screen" data-grid-id="${esc(row.id)}">
+        <header class="grid-header">
+          <button class="btn-icon" data-focusable id="grid-btn-back" title="Volver al inicio" aria-label="Volver">←</button>
+          <div class="grid-header-info">
+            <h1>${esc(row.title)}</h1>
+            <span class="grid-count">${currentItems.length} ${currentItems.length === 1 ? "título" : "títulos"}</span>
+          </div>
+        </header>
+        <main class="grid-cards">
+          ${currentItems.map(t => cardHtml(t, progress)).join("")}
+        </main>
+      </div>`);
+
+    document.getElementById("grid-btn-back").onclick = back;
+
+    document.querySelectorAll("#app .grid-cards .lib-card").forEach(card => {
+      card.onclick = () => {
+        const t = currentItems.find(x => String(x.id) === String(card.dataset.title));
+        if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
+      };
+    });
+
+    document.querySelectorAll("#app .grid-cards .lib-card-poster img.poster-image").forEach(img => {
+      const url = img.getAttribute("data-poster-url") || img.src;
+      if (url) loadPoster(img, url);
+    });
+
+    setTimeout(() => {
+      let el = null;
+      if (focusTitleId) {
+        el = document.querySelector(`.grid-cards .lib-card[data-title="${focusTitleId}"]`);
+      }
+      if (!el) {
+        el = document.querySelector(".grid-cards .lib-card[data-focusable]") || document.getElementById("grid-btn-back");
+      }
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+      }
+    }, 80);
+  }
+
+
 
 function applySagaFilmMetadata(t) {
   const detail = document.querySelector('.detail');
@@ -146,7 +203,7 @@ function applyDetailMetadata(t, profile) {
 }
 
 function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = null, fromGrid = null } = {}) {
-  LAST_OPENED_TITLE_ID = t.id;
+  lastOpenedTitleId = t.id;
   const back = () => {
     if (fromGrid) {
       showGroupGrid(tg, sync, profile, fromGrid, { focusTitleId: t.id });
@@ -470,5 +527,5 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
 }
 
 
-  return { showGroupGrid, showDetail };
+  return { showGroupGrid, showDetail, applyDetailMetadata, applySagaFilmMetadata };
 }
