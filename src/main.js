@@ -1,3 +1,16 @@
+// Suprimir alerts intrusivos de GramJS (ej. TypeNotFoundError ID 0)
+if (typeof window !== 'undefined') {
+  const _origAlert = window.alert;
+  window.alert = function (msg, ...args) {
+    const text = String(msg || '');
+    if (text.includes('Missing MTProto Entity') || text.includes('TL definition')) {
+      console.warn('[GramJS alert interceptado en main]:', text);
+      return;
+    }
+    return _origAlert ? _origAlert.apply(this, [msg, ...args]) : undefined;
+  };
+}
+
 let LAST_OPENED_TITLE_ID = null;
 import './style.css';
 import { createTelegramClient } from './core/telegram.js';
@@ -274,7 +287,66 @@ function showUpdateDialog({ onQuick, onFull }) {
 
 
 let CHECKED = false;
-async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, selectedSection = ACTIVE_HOME_SECTION } = {}) {
+function getSectionSort(profileId, sectionId) {
+  try {
+    return localStorage.getItem(`tg_sort_${profileId}_${sectionId}`) || 'nombre';
+  } catch (_) {
+    return 'nombre';
+  }
+}
+
+function setSectionSort(profileId, sectionId, sortType) {
+  try {
+    localStorage.setItem(`tg_sort_${profileId}_${sectionId}`, sortType);
+  } catch (_) {}
+}
+
+function sortTitles(items, sortType) {
+  const list = [...items];
+  if (sortType === 'estreno') {
+    return list.sort((a, b) => {
+      const dateA = a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '';
+      const dateB = b.metadata?.date || b.yearHint || b.metadata?.release_date || b.metadata?.first_air_date || '';
+      if (dateA && dateB) {
+        const cmp = String(dateB).localeCompare(String(dateA));
+        if (cmp !== 0) return cmp;
+      } else if (dateA && !dateB) {
+        return -1;
+      } else if (!dateA && dateB) {
+        return 1;
+      }
+      const msgA = a.ultimoMensajeFecha || 0;
+      const msgB = b.ultimoMensajeFecha || 0;
+      if (msgB !== msgA) return msgB - msgA;
+      const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
+      const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+      return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+    });
+  }
+  if (sortType === 'puntuacion') {
+    return list.sort((a, b) => {
+      const rA = Number(a.metadata?.rating) || 0;
+      const rB = Number(b.metadata?.rating) || 0;
+      if (rB !== rA) return rB - rA;
+      const dateA = a.metadata?.date || a.yearHint || '';
+      const dateB = b.metadata?.date || b.yearHint || '';
+      if (dateA && dateB) {
+        const cmp = String(dateB).localeCompare(String(dateA));
+        if (cmp !== 0) return cmp;
+      }
+      const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
+      const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+      return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+    });
+  }
+  return list.sort((a, b) => {
+    const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
+    const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+    return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+  });
+}
+
+async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, selectedSection = ACTIVE_HOME_SECTION } = {}) {
   applyProfileScale(profile);
   setBackHandler(() => showProfileSelector(tg, sync));
   const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
@@ -340,13 +412,20 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   const rows = buildHomeRows(titles, progress);
   const titleById = new Map(titles.map(t => [String(t.id), t]));
   const favoriteTitles = loadFavorites(profile.id).map(id => titleById.get(String(id))).filter(Boolean);
+  const collectionTitles = titles.filter(t => t.isSaga || t.metadata?.tipo === 'collection');
+  const movieTitles = titles.filter(t => t.tipo === 'pelicula' && !t.isSaga && t.metadata?.tipo !== 'collection');
+  const seriesTitles = titles.filter(t => t.tipo === 'serie');
+  const sportTitles = titles.filter(t => t.tipo === 'deporte');
+  const musicTitles = titles.filter(t => t.tipo === 'musica');
+
   const sectionDefs = [
     ...(titles.length ? [{ id: 'inicio', label: 'Inicio', items: titles }] : []),
     ...(favoriteTitles.length ? [{ id: 'favoritos', label: 'Favoritos', items: favoriteTitles }] : []),
-    ...[
-      ['peliculas', 'Películas', 'pelicula'], ['series', 'Series', 'serie'],
-      ['deportes', 'Deportes', 'deporte'], ['musica', 'Música', 'musica'],
-    ].map(([id, label, tipo]) => ({ id, label, items: titles.filter(t => t.tipo === tipo) })).filter(section => section.items.length),
+    ...(movieTitles.length ? [{ id: 'peliculas', label: 'Películas', items: movieTitles }] : []),
+    ...(seriesTitles.length ? [{ id: 'series', label: 'Series', items: seriesTitles }] : []),
+    ...(sportTitles.length ? [{ id: 'deportes', label: 'Deportes', items: sportTitles }] : []),
+    ...(musicTitles.length ? [{ id: 'musica', label: 'Música', items: musicTitles }] : []),
+    ...(collectionTitles.length ? [{ id: 'colecciones', label: 'Colecciones', items: collectionTitles }] : []),
   ];
   if (!sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
   ACTIVE_HOME_SECTION = selectedSection;
@@ -356,11 +435,23 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
         <p style="opacity:.6;margin-top:.5rem">Los canales deben terminar en <code>::Series::tgstorage</code> o <code>::Películas::tgstorage</code></p></div>`
-    : selectedSection !== 'inicio' ? `
+    : selectedSection !== 'inicio' ? (() => {
+        const currentSort = getSectionSort(profile.id, selectedSection);
+        const sortedItems = sortTitles(activeSection?.items || [], currentSort);
+        return `
       <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
-        <h1 class="category-title">${esc(activeSection?.label || '')}</h1>
-        <div class="category-grid">${(activeSection?.items || []).map(t => cardHtml(t, progress)).join('')}</div>
-      </section>`
+        <div class="category-header">
+          <h1 class="category-title">${esc(activeSection?.label || '')}</h1>
+          <div class="category-sort-bar" role="group" aria-label="Ordenar por">
+            <span class="category-sort-label">Ordenar:</span>
+            <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
+            <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
+            <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
+          </div>
+        </div>
+        <div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>
+      </section>`;
+      })()
     : rows.map(r => `
       <section class="row" data-row-id="${esc(r.id)}">
         <div class="row-header">
@@ -393,6 +484,16 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
   document.querySelectorAll('.home-nav-item').forEach(button => {
     button.onclick = () => showHome(tg, sync, profile, { selectedSection: button.dataset.section });
+  });
+  document.querySelectorAll('.category-sort-btn').forEach(btn => {
+    btn.onclick = () => {
+      const newSort = btn.dataset.sort;
+      const currentSort = getSectionSort(profile.id, selectedSection);
+      if (newSort && newSort !== currentSort) {
+        setSectionSort(profile.id, selectedSection, newSort);
+        showHome(tg, sync, profile, { selectedSection, focusSort: newSort });
+      }
+    };
   });
   document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
     onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
@@ -435,6 +536,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
   setTimeout(() => {
     let el = null;
+    if (focusSort) {
+      el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);
+    }
     if (focusRowId && focusExpandBtn) {
       el = document.querySelector(`.row[data-row-id="${focusRowId}"] .row-expand-card`);
     } else if (focusRowId && focusTitleId) {
