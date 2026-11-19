@@ -11,7 +11,7 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
   const currentMeta = title.metadata;
   const parsed = extractTitleAndYear(title.nombre);
   const initialQuery = parsed.title;
-  const initialYear = title.yearHint || parsed.year || '';
+  const initialYear = parsed.year || title.yearHint || '';
   const currentType = title.isSaga ? 'collection' : title.tipo === 'serie' ? 'tv' : 'movie';
 
   const telegramFileName = title.archivos?.[0]?.fileName || title.nombre || '';
