@@ -6,6 +6,7 @@
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from './parse.js';
 import { splitBySection } from './macro.js';
 import { parseChannelTitle } from './channels.js';
+import { extractTitleAndYear } from '../metadata/tmdb.js';
 
 async function scanFiles(client, peer, ch) {
   const files = [];
@@ -60,10 +61,12 @@ export function seriesNameFromFile(fileName = '') {
 }
 
 function movieName(file) {
+  const parsed = extractTitleAndYear(file.fileName || file.label || `video_${file.messageId}`);
+  if (parsed.title) return parsed.title;
   return String(file.fileName || file.label || `video_${file.messageId}`)
     .replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '')
     .replace(/[._]+/g, ' ')
-    .replace(/\b(2160p|1080p|720p|480p|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc)\b.*/i, '')
+    .replace(/\b(\d{3,4}p|[248]k|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc)\b.*/i, '')
     .replace(/\s+/g, ' ').trim();
 }
 
@@ -147,12 +150,14 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     }
 
     if (ch.isYearContainer) {
-      // Un canal por año es un contenedor: agrupa múltiples versiones de la misma película en una sola ficha
-      const channelYear = ch.name.match(YEAR_RE)?.[1] || null;
+      // Un canal por año es un contenedor: agrupa múltiples versiones de la misma película en una sola ficha.
+      // Solo tomamos channelYear si el nombre del canal es un año único de 4 dígitos (ej: 1988), NO si es un rango (ej: 1990-1999).
+      const channelYear = /^\d{4}$/.test(String(ch.name || '').trim()) ? ch.name.trim() : null;
       const movieMap = new Map();
       for (const f of files) {
-        const yearHint = f.fileName.match(YEAR_RE)?.[1] || channelYear;
-        const baseName = movieName(f);
+        const parsedFile = extractTitleAndYear(f.fileName || f.label);
+        const yearHint = parsedFile.year || f.fileName.match(YEAR_RE)?.[1] || channelYear;
+        const baseName = parsedFile.title || movieName(f);
         const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
         if (!movieMap.has(normKey)) {
           movieMap.set(normKey, {
@@ -198,7 +203,11 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       const keyed = files.map(f => (f.section || !isSeries) ? f : { ...f, section: seriesNameFromFile(f.fileName) });
       for (const [sec, fs] of splitBySection(keyed)) {
         if (fs && fs.length > 0) {
-          titles.push(makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs }));
+          const parsedSec = extractTitleAndYear(sec);
+          const titleYearHint = parsedSec.year || fs.find(f => f.fileName?.match(YEAR_RE))?.fileName?.match(YEAR_RE)?.[1] || null;
+          const t = makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs });
+          if (titleYearHint) t.yearHint = titleYearHint;
+          titles.push(t);
         }
       }
     } else {
