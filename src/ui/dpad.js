@@ -128,7 +128,13 @@ function move(dir) {
           return;
         }
       } else {
-        // Primera fila: subir al header
+        // Primera fila: subir a la sección activa; fallback a controles de cabecera.
+        const activeTab = document.querySelector('.home-nav-item.active');
+        if (activeTab) {
+          activeTab.focus();
+          activeTab.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          return;
+        }
         const headerBtn = document.querySelector('#btn-reload, #btn-change-profile');
         if (headerBtn) {
           headerBtn.focus();
@@ -165,6 +171,31 @@ function move(dir) {
   // 2. Si está en el header de la Home (.home-header)
   const curHeader = cur.closest('.home-header');
   if (curHeader) {
+    const nav = curHeader.querySelector('.home-nav');
+    if (nav && nav.contains(cur)) {
+      const tabs = [...nav.querySelectorAll('.home-nav-item[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+      const idx = tabs.indexOf(cur);
+      if (dir === 'left' && idx > 0) {
+        tabs[idx - 1].focus();
+        tabs[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
+      if (dir === 'right' && idx >= 0 && idx < tabs.length - 1) {
+        tabs[idx + 1].focus();
+        tabs[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
+      if (dir === 'down') {
+        const firstCard = document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+        firstCard?.focus({ preventScroll: true });
+        firstCard?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        return;
+      }
+      if (dir === 'up') {
+        curHeader.querySelector('#btn-reload')?.focus();
+        return;
+      }
+    }
     if (dir === 'left') {
       const reload = curHeader.querySelector('#btn-reload');
       if (reload && cur !== reload) {
@@ -181,7 +212,7 @@ function move(dir) {
     }
     if (dir === 'down') {
       const firstRow = document.querySelector('.row');
-      const firstCard = firstRow?.querySelector('.row-track .lib-card[data-title]') || document.querySelector('.row-track .lib-card[data-title]');
+      const firstCard = document.querySelector('.home-main .category-grid .lib-card[data-focusable]') || firstRow?.querySelector('.row-track .lib-card[data-title]') || document.querySelector('.row-track .lib-card[data-title]');
       if (firstCard) {
         firstCard.focus({ preventScroll: true });
         const scroller = document.querySelector('.home-main') || window;
@@ -191,6 +222,35 @@ function move(dir) {
       return;
     }
     if (dir === 'up') {
+      return;
+    }
+  }
+
+  // Navegación horizontal entre secciones de la Home, también con mando a distancia.
+  const curNav = cur.closest('.home-nav');
+  if (curNav) {
+    const tabs = [...curNav.querySelectorAll('.home-nav-item[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+    const idx = tabs.indexOf(cur);
+    if (dir === 'left' && idx > 0) {
+      tabs[idx - 1].focus();
+      tabs[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (dir === 'right' && idx >= 0 && idx < tabs.length - 1) {
+      tabs[idx + 1].focus();
+      tabs[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (dir === 'down') {
+      const firstCard = document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+      if (firstCard) {
+        firstCard.focus({ preventScroll: true });
+        firstCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+      return;
+    }
+    if (dir === 'up') {
+      curNav.closest('.home-header')?.querySelector('#btn-reload')?.focus();
       return;
     }
   }
