@@ -648,7 +648,12 @@ export async function playNative({
           sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
         }
       }
-      if (!nextFile || typeof onNext !== 'function') close();
+      if (!nextFile || typeof onNext !== 'function') {
+        close();
+      } else {
+        close();
+        onNext(nextFile);
+      }
     };
 
     video.onerror = () => {
@@ -1395,7 +1400,12 @@ export async function playArtplayer({
           sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
         }
       }
-      if (!nextFile || typeof onNext !== 'function') close();
+      if (!nextFile || typeof onNext !== 'function') {
+        close();
+      } else {
+        close();
+        onNext(nextFile);
+      }
     });
 
     art.on('video:error', () => {
