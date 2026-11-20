@@ -347,7 +347,7 @@ function sortTitles(items, sortType) {
   });
 }
 
-async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, selectedSection = ACTIVE_HOME_SECTION } = {}) {
+async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
   applyProfileScale(profile);
   setBackHandler(() => showProfileSelector(tg, sync));
   const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
@@ -572,15 +572,19 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     </div>`);
 
   document.querySelectorAll('.home-nav-item').forEach(button => {
-    button.onclick = () => showHome(tg, sync, profile, { selectedSection: button.dataset.section });
+    button.onclick = (e) => {
+      button.blur();
+      showHome(tg, sync, profile, { selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
+    };
   });
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = (e) => {
+      btn.blur();
       const newSort = btn.dataset.sort;
       const currentSort = getSectionSort(profile.id, selectedSection);
       if (newSort && newSort !== currentSort) {
         setSectionSort(profile.id, selectedSection, newSort);
-        showHome(tg, sync, profile, { selectedSection, focusSort: newSort });
+        showHome(tg, sync, profile, { selectedSection, focusSort: newSort, fromPointer: e.detail > 0 });
       }
     };
   });
@@ -625,7 +629,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
   setTimeout(() => {
     let el = null;
-    if (focusSort) {
+    if (focusSort && !fromPointer) {
       el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);
     }
     if (focusRowId && focusExpandBtn) {
@@ -640,22 +644,24 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     if (!el && focusTitleId) {
       el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
     }
-    if (!el) {
-      // Categorías enfocan su pestaña activa; Inicio mantiene el foco en la primera carátula.
+    if (!el && !fromPointer) {
+      // Categorías enfocan su pestaña activa en navegación D-Pad; Inicio mantiene el foco en la primera carátula.
       el = selectedSection !== 'inicio' ? document.querySelector('.home-nav-item.active') : null;
       el ||= document.querySelector('.row[data-row-id="continue"] .row-track .lib-card[data-title]')
         || document.querySelector('.row-track .lib-card[data-title]');
     }
-    if (!el) {
+    if (!el && !fromPointer) {
       el = document.querySelector('.home-nav-item.active, [data-focusable]');
     }
     if (el) {
-      el.focus();
+      el.focus({ preventScroll: true });
       const parentRow = el.closest('.row');
       if (parentRow) {
         parentRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
       }
-      el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      if (!fromPointer) {
+        el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      }
     }
   }, 80);
   metadataController?.abort();
