@@ -2,7 +2,7 @@
 // Imágenes elegidas por el usuario (cartel / fondo / logo) para cada título.
 // - Por perfil: profile.image_prefs[titleId] (viaja en la sincronización del perfil).
 // - Caché del dispositivo: localStorage `tgvideo_imgprefs_<perfil>` (funciona sin conexión).
-import { loadProgress } from '../player/progress.js';
+import { loadProgress, loadFavorites } from '../player/progress.js';
 
 export const IMAGE_KINDS = { poster: 'Cartel', backdrop: 'Fondo', logo: 'Logo' };
 
@@ -17,10 +17,18 @@ export function writeLocal(profile, data) {
 }
 
 export function readImagePrefs(profile) {
-  if (profile?.image_prefs && typeof profile.image_prefs === 'object') {
-    return profile.image_prefs;
+  const local = readLocal(profile);
+  const inMem = profile?.image_prefs && typeof profile.image_prefs === 'object' ? profile.image_prefs : {};
+  // Combinar memoria y local priorizando la marca temporal más reciente
+  const merged = { ...local };
+  for (const [k, v] of Object.entries(inMem)) {
+    if (!v) continue;
+    const l = merged[k];
+    if (!l || (v.updated_at || 0) >= (l.updated_at || 0)) {
+      merged[k] = v;
+    }
   }
-  return readLocal(profile);
+  return merged;
 }
 
 export function saveLocalImagePrefs(profile, prefs) {
@@ -31,12 +39,40 @@ export function saveLocalImagePrefs(profile, prefs) {
   return prefs;
 }
 
-export function getImagePrefs(profile, titleId) {
-  const id = String(titleId);
-  const fromProfile = profile?.image_prefs?.[id] || {};
-  const fromLocal = readLocal(profile)[id] || {};
-  // Gana la más reciente
-  return (fromLocal.updated_at || 0) > (fromProfile.updated_at || 0) ? fromLocal : fromProfile;
+export function getImagePrefs(profile, titleOrId) {
+  if (!profile || !titleOrId) return {};
+  const allProfile = profile?.image_prefs && typeof profile.image_prefs === 'object' ? profile.image_prefs : {};
+  const allLocal = readLocal(profile);
+
+  const getBest = (key) => {
+    if (!key) return {};
+    const k = String(key);
+    const p = allProfile[k] || {};
+    const l = allLocal[k] || {};
+    return (l.updated_at || 0) > (p.updated_at || 0) ? l : p;
+  };
+
+  if (typeof titleOrId === 'string' || typeof titleOrId === 'number') {
+    return getBest(titleOrId);
+  }
+
+  const t = titleOrId;
+  let res = getBest(t.id);
+  if (res.poster && res.backdrop && res.logo) return res;
+
+  if (t.tmdbId) {
+    const byTmdb = getBest(t.tmdbId);
+    res = { ...byTmdb, ...res };
+    const byTmdbPrefixed = getBest(`tmdb:${t.tmdbId}`);
+    res = { ...byTmdbPrefixed, ...res };
+  }
+  if (t.archivos) {
+    for (const f of t.archivos) {
+      const byFile = getBest(`${f.channel}:${f.messageId}`);
+      res = { ...byFile, ...res };
+    }
+  }
+  return res;
 }
 
 export function getTitleImagePrefs(profile, titleId) {
@@ -60,18 +96,18 @@ export function syncImagePrefsWithRemote(profile, remotePrefs) {
         merged[titleId] = {
           ...lPref,
           ...rPref,
-          poster: rPref.poster || lPref.poster,
-          backdrop: rPref.backdrop || lPref.backdrop,
-          logo: rPref.logo || lPref.logo,
+          poster: rPref.poster !== undefined ? rPref.poster : lPref.poster,
+          backdrop: rPref.backdrop !== undefined ? rPref.backdrop : lPref.backdrop,
+          logo: rPref.logo !== undefined ? rPref.logo : lPref.logo,
           updated_at: rTime || Date.now(),
         };
       } else {
         merged[titleId] = {
           ...rPref,
           ...lPref,
-          poster: lPref.poster || rPref.poster,
-          backdrop: lPref.backdrop || rPref.backdrop,
-          logo: lPref.logo || rPref.logo,
+          poster: lPref.poster !== undefined ? lPref.poster : rPref.poster,
+          backdrop: lPref.backdrop !== undefined ? lPref.backdrop : rPref.backdrop,
+          logo: lPref.logo !== undefined ? lPref.logo : rPref.logo,
           updated_at: lTime || Date.now(),
         };
       }
@@ -83,17 +119,23 @@ export function syncImagePrefsWithRemote(profile, remotePrefs) {
 }
 
 // kind: 'poster' | 'backdrop' | 'logo'; url = '' restaura la imagen original.
-export function setImagePref(profile, titleId, kind, url, sync) {
-  const id = String(titleId);
-  const next = { ...getImagePrefs(profile, id), updated_at: Date.now() };
+export function setImagePref(profile, title, kind, url, sync) {
+  const titleId = String(typeof title === 'object' && title ? title.id : title);
+  const next = { ...getImagePrefs(profile, titleId), updated_at: Date.now() };
   if (url) next[kind] = url; else delete next[kind];
 
   if (profile) {
     if (!profile.image_prefs) profile.image_prefs = {};
-    profile.image_prefs[id] = next;
+    profile.image_prefs[titleId] = next;
+    if (typeof title === 'object' && title?.tmdbId) {
+      profile.image_prefs[String(title.tmdbId)] = next;
+    }
   }
   const local = readLocal(profile);
-  local[id] = next;
+  local[titleId] = next;
+  if (typeof title === 'object' && title?.tmdbId) {
+    local[String(title.tmdbId)] = next;
+  }
   writeLocal(profile, local);
 
   try {
@@ -101,6 +143,7 @@ export function setImagePref(profile, titleId, kind, url, sync) {
       sync.schedulePush({
         profile,
         progress: loadProgress(profile.id),
+        favorites: loadFavorites(profile.id),
         image_prefs: profile.image_prefs
       });
     }
@@ -111,7 +154,7 @@ export function setImagePref(profile, titleId, kind, url, sync) {
 // Aplica las imágenes elegidas sobre t.metadata (devuelve true si cambió algo).
 export function applyImagePrefs(t, profile) {
   if (!t || !profile) return false;
-  const prefs = getImagePrefs(profile, t.id);
+  const prefs = getImagePrefs(profile, t);
   let changed = false;
 
   if (prefs.poster) {
