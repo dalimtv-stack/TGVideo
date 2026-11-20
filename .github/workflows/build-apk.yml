@@ -75,7 +75,7 @@ jobs:
           import os, re, shutil
           from PIL import Image
 
-          src_path = "public/icon-landscape.alt2.png"
+          src_path = "public/icon-512.png"
           res_base = "android/app/src/main/res"
 
           if os.path.exists(src_path):
