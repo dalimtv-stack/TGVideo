@@ -785,6 +785,54 @@ export function initDpad() {
 
     // Si el reproductor de vídeo está abierto y no hay un modal encima, delegar control al reproductor
     if (activePlayerController && !document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up')) {
+      // 1. Tecla PLAY / PAUSE física del mando a distancia
+      const isPlayPauseKey = e.key === 'MediaPlayPause' || e.key === 'MediaPlay' || e.key === 'MediaPause' ||
+        e.key === 'Play' || e.key === 'Pause' || e.key === 'ToggleMediaPlayPause' ||
+        e.keyCode === 179 || e.keyCode === 85 || e.keyCode === 126 || e.keyCode === 127 || e.keyCode === 250 || e.keyCode === 19;
+
+      if (isPlayPauseKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof activePlayerController.onPlayPause === 'function') {
+          activePlayerController.onPlayPause();
+        } else {
+          activePlayerController.onSelect?.();
+        }
+        return;
+      }
+
+      // 2. Tecla FORWARD física del mando (adelantar segundos configurados)
+      const isForwardKey = e.key === 'MediaFastForward' || e.key === 'FastForward' ||
+        e.key === 'MediaTrackNext' || e.key === 'MediaSkipForward' || e.key === 'MediaStepForward' ||
+        e.keyCode === 228 || e.keyCode === 90 || e.keyCode === 178 || e.keyCode === 87 || e.keyCode === 176 || e.keyCode === 272 || e.keyCode === 274;
+
+      if (isForwardKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof activePlayerController.onForward === 'function') {
+          activePlayerController.onForward();
+        } else {
+          activePlayerController.onRight?.();
+        }
+        return;
+      }
+
+      // 3. Tecla REWIND física del mando (retroceder segundos configurados)
+      const isRewindKey = e.key === 'MediaRewind' || e.key === 'Rewind' ||
+        e.key === 'MediaTrackPrevious' || e.key === 'MediaSkipBackward' || e.key === 'MediaStepBackward' ||
+        e.keyCode === 227 || e.keyCode === 89 || e.keyCode === 177 || e.keyCode === 88 || e.keyCode === 273 || e.keyCode === 275;
+
+      if (isRewindKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof activePlayerController.onRewind === 'function') {
+          activePlayerController.onRewind();
+        } else {
+          activePlayerController.onLeft?.();
+        }
+        return;
+      }
+
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         activePlayerController.onLeft?.();
@@ -805,7 +853,7 @@ export function initDpad() {
         activePlayerController.onDown?.();
         return;
       }
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'MediaPlayPause' || e.key === 'Play' || e.key === 'Pause') {
+      if (e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 23) {
         e.preventDefault();
         activePlayerController.onSelect?.();
         return;
