@@ -273,7 +273,8 @@ export async function playNative({
           }
         }
         video.pause();
-        video.src = '';
+        video.removeAttribute('src');
+        video.load();
       } catch (_) {}
     }
     if (stream) stream.close();
@@ -542,7 +543,7 @@ export async function playNative({
     const targetChannel = file?.channel || title?.channel;
     if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
     if (status) status.textContent = 'Localizando archivo…';
-    await ensureConnected(client);
+    await ensureConnected(client, { forceResetSenders: true });
     const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
@@ -837,7 +838,14 @@ export async function playArtplayer({
             sync.pushProfile({ profile, progress: loadProgress(profile.id) }).catch(() => {});
           }
         }
-        art.destroy(false);
+        if (art.template?.$video) {
+          try {
+            art.template.$video.pause();
+            art.template.$video.removeAttribute('src');
+            art.template.$video.load();
+          } catch (_) {}
+        }
+        art.destroy(true);
       } catch (_) {}
     }
     if (stream) stream.close();
@@ -859,7 +867,14 @@ export async function playArtplayer({
     if (art) {
       try {
         if (art.duration) saveProgress(profile.id, file.key, art.currentTime, art.duration);
-        art.destroy(false);
+        if (art.template?.$video) {
+          try {
+            art.template.$video.pause();
+            art.template.$video.removeAttribute('src');
+            art.template.$video.load();
+          } catch (_) {}
+        }
+        art.destroy(true);
       } catch (_) {}
     }
     if (stream) stream.close();
@@ -1134,7 +1149,7 @@ export async function playArtplayer({
     const targetChannel = file?.channel || title?.channel;
     if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
     if (status) status.textContent = 'Localizando archivo…';
-    await ensureConnected(client);
+    await ensureConnected(client, { forceResetSenders: true });
     const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
