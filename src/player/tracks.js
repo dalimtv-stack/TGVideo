@@ -4,10 +4,10 @@ export function applyCenteredCueFix(video) {
     if (!cue) return;
     try {
       cue.align = 'center';
-      cue.snapToLines = true;
-      cue.line = -2;
-      try { cue.position = 'auto'; } catch (_) {}
-      try { cue.size = 100; } catch (_) {}
+      cue.snapToLines = false;
+      cue.line = 83;
+      try { cue.lineAlign = 'end'; } catch (_) {}
+      try { cue.positionAlign = 'center'; } catch (_) {}
     } catch (_) {}
   };
 
