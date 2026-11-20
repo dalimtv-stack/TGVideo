@@ -115,6 +115,9 @@ export function mergeMoviesByTmdb(titles) {
       }
       existing.ultimoMensajeFecha = Math.max(existing.ultimoMensajeFecha || 0, t.ultimoMensajeFecha || 0);
       if (!existing.metadata && t.metadata) existing.metadata = t.metadata;
+      else if (existing.metadata && t.metadata?.collection && !existing.metadata.collection) {
+        existing.metadata.collection = t.metadata.collection;
+      }
       if (!existing.tmdbId && tmdbKey) existing.tmdbId = tmdbKey;
       sortFiles(existing.archivos, 'pelicula');
     }
@@ -124,6 +127,97 @@ export function mergeMoviesByTmdb(titles) {
 }
 
 /** cache: { [channelId]: { top, title, files } } */
+
+/**
+ * Detecta películas que pertenecen a una saga/colección (vía metadata TMDB)
+ * y, si hay al menos 2 películas de la misma saga en la biblioteca,
+ * genera/actualiza la ficha agrupada de Colección con grupo "Sagas",
+ * asegurando que aparezca en "Películas · Sagas" y en la pestaña "Colecciones",
+ * mientras las películas individuales continúan existiendo de forma suelta en "Películas" y "Novedades".
+ */
+export function attachAutoCollections(titles) {
+  if (!Array.isArray(titles)) return [];
+
+  // Excluir colecciones virtuales previas para recalcularlas limpiamente
+  const baseTitles = titles.filter(t => !t.isVirtualSaga);
+  const standaloneMovies = baseTitles.filter(t => t.tipo === 'pelicula' && !t.isSaga);
+
+  // Mapear colecciones de TMDB por su ID
+  const colMap = new Map(); // colId -> { collection, movies: [] }
+  for (const m of standaloneMovies) {
+    const col = m.metadata?.collection || (m.metadata?.belongs_to_collection ? {
+      id: m.metadata.belongs_to_collection.id,
+      name: m.metadata.belongs_to_collection.name,
+      poster: m.metadata.belongs_to_collection.poster || null,
+      backdrop: m.metadata.belongs_to_collection.backdrop || null,
+    } : null);
+
+    if (col && col.id) {
+      const key = String(col.id);
+      if (!colMap.has(key)) {
+        colMap.set(key, { collection: col, movies: [] });
+      }
+      colMap.get(key).movies.push(m);
+    }
+  }
+
+  const result = [...baseTitles];
+
+  for (const [colId, { collection, movies }] of colMap.entries()) {
+    // Si pertenecen a una saga y hay otra de su saga (mínimo 2 películas distintas)
+    if (movies.length < 2) continue;
+
+    // Comprobar si ya existe una saga física (por canal) que cubra esta colección
+    const existingSaga = baseTitles.find(t => t.isSaga && (
+      String(t.tmdbId) === String(colId) ||
+      String(t.metadata?.id) === String(colId) ||
+      (t.nombre && collection.name && normalizeMovieKey(t.nombre) === normalizeMovieKey(collection.name))
+    ));
+
+    if (!existingSaga) {
+      const allFiles = [];
+      const seenFiles = new Set();
+      for (const m of movies) {
+        for (const f of (m.archivos || [])) {
+          if (!seenFiles.has(f.key)) {
+            seenFiles.add(f.key);
+            allFiles.push({
+              ...f,
+              sagaName: m.metadata?.name || m.nombre || f.label,
+              metadata: m.metadata || f.metadata,
+            });
+          }
+        }
+      }
+
+      const sagaTitle = {
+        id: `collection_${colId}`,
+        tipo: 'pelicula',
+        isSaga: true,
+        isVirtualSaga: true,
+        grupo: 'Sagas',
+        nombre: collection.name || `Colección ${movies[0].nombre}`,
+        channel: movies[0].channel,
+        origen: { tipo: 'auto_collection', collectionId: colId },
+        archivos: allFiles,
+        ultimoMensajeFecha: Math.max(...movies.map(m => m.ultimoMensajeFecha || 0)),
+        tmdbId: String(colId),
+        metadata: {
+          id: Number(colId),
+          type: 'collection',
+          name: collection.name,
+          poster: collection.poster || null,
+          backdrop: collection.backdrop || null,
+        },
+      };
+
+      result.push(sagaTitle);
+    }
+  }
+
+  return result;
+}
+
 export async function buildTitles(client, channels, peerOf, onProgress, cache = {}) {
   const titles = [];
   const newCache = {};
@@ -190,14 +284,52 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
         });
       }
     } else if (ch.isSaga) {
-      // La saga permanece agrupada como una tarjeta única.
+      // La saga permanece agrupada como una tarjeta única en 'Sagas'
       const sagaFiles = files.map(f => ({ ...f, sagaName: movieName(f) }));
       titles.push({
-        id: String(ch.id), tipo: 'pelicula', isSaga: true, grupo: ch.group || 'Sagas',
+        id: String(ch.id), tipo: 'pelicula', isSaga: true, grupo: 'Sagas',
         nombre: ch.name, origen: { tipo: 'saga', channelId: String(ch.id) }, channel: ch,
         archivos: sagaFiles, ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
         tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
       });
+
+      // Y además, cada película de la saga aparece suelta en Películas y Novedades
+      const movieMap = new Map();
+      for (const f of files) {
+        const parsedFile = extractTitleAndYear(f.fileName || f.label);
+        const yearHint = parsedFile.year || f.fileName.match(YEAR_RE)?.[1] || null;
+        const baseName = parsedFile.title || movieName(f);
+        const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
+        if (!movieMap.has(normKey)) {
+          movieMap.set(normKey, {
+            id: `${ch.id}:${f.messageId}`,
+            nombre: baseName,
+            yearHint,
+            files: [f],
+            tmdbId: f.tmdbId || null,
+          });
+        } else {
+          const grp = movieMap.get(normKey);
+          grp.files.push(f);
+          if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+          if (baseName.length < grp.nombre.length && baseName.length > 2) {
+            grp.nombre = baseName;
+          }
+        }
+      }
+      for (const grp of movieMap.values()) {
+        sortFiles(grp.files, 'pelicula');
+        titles.push({
+          id: String(grp.id), tipo: 'pelicula', isSaga: false,
+          grupo: ch.name || 'Películas',
+          nombre: grp.nombre, yearHint: grp.yearHint,
+          origen: { tipo: 'saga_pelicula', channelId: String(ch.id), messageId: grp.files[0].messageId },
+          channel: ch, archivos: grp.files,
+          ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date), 0),
+          tmdbId: grp.tmdbId,
+          sagaChannelId: String(ch.id),
+        });
+      }
     } else if (ch.macro) {
       const isSeries = ch.category === 'Series';
       const keyed = files.map(f => (f.section || !isSeries) ? f : { ...f, section: seriesNameFromFile(f.fileName) });
@@ -217,6 +349,6 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
   }));
 
   // Consolidar películas con el mismo ID de TMDB detectado previamente
-  const finalTitles = mergeMoviesByTmdb(titles.filter(t => t.archivos && t.archivos.length > 0));
+  const finalTitles = attachAutoCollections(mergeMoviesByTmdb(titles.filter(t => t.archivos && t.archivos.length > 0)));
   return { titles: finalTitles, cache: newCache };
 }
