@@ -113,24 +113,26 @@ jobs:
                   b_src = Image.open(landscape_src).convert("RGBA")
 
                   banner_densities = {
-                      "drawable": (320, 180),
-                      "drawable-mdpi": (160, 90),
-                      "drawable-hdpi": (240, 135),
-                      "drawable-tvdpi": (213, 120),
-                      "drawable-xhdpi": (320, 180),
-                      "drawable-xxhdpi": (480, 270),
-                      "drawable-xxxhdpi": (640, 360),
-                      "mipmap-mdpi": (160, 90),
-                      "mipmap-hdpi": (240, 135),
-                      "mipmap-xhdpi": (320, 180),
-                      "mipmap-xxhdpi": (480, 270),
-                      "mipmap-xxxhdpi": (640, 360),
+                      "drawable": (640, 360),
+                      "drawable-mdpi": (320, 180),
+                      "drawable-tvdpi": (426, 240),
+                      "drawable-hdpi": (480, 270),
+                      "drawable-xhdpi": (640, 360),
+                      "drawable-xxhdpi": (960, 540),
+                      "drawable-xxxhdpi": (1280, 720),
+                      "mipmap-mdpi": (320, 180),
+                      "mipmap-tvdpi": (426, 240),
+                      "mipmap-hdpi": (480, 270),
+                      "mipmap-xhdpi": (640, 360),
+                      "mipmap-xxhdpi": (960, 540),
+                      "mipmap-xxxhdpi": (1280, 720),
                   }
                   for folder, (bw, bh) in banner_densities.items():
                       b_path = os.path.join(res_base, folder)
                       os.makedirs(b_path, exist_ok=True)
                       b_res = b_src.resize((bw, bh), Image.Resampling.LANCZOS)
                       b_res.save(os.path.join(b_path, "banner.png"))
+                      b_res.save(os.path.join(b_path, "tv_banner.png"))
               else:
                   from PIL import ImageOps
                   banner = ImageOps.fit(src, (320, 180), Image.Resampling.LANCZOS)
@@ -177,7 +179,9 @@ jobs:
               def inject_activity_banner(match):
                   tag = match.group(0)
                   if 'android:banner=' not in tag:
-                      return re.sub(r'>$', ' android:banner="@drawable/banner" android:logo="@drawable/banner">', tag)
+                      tag = re.sub(r'>$', ' android:banner="@drawable/banner" android:icon="@drawable/banner" android:logo="@drawable/banner">', tag)
+                  elif 'android:icon=' not in tag:
+                      tag = re.sub(r'>$', ' android:icon="@drawable/banner">', tag)
                   return tag
 
               m = re.sub(r'<activity\b[^>]*MainActivity[^>]*>', inject_activity_banner, m, count=1)
