@@ -268,7 +268,7 @@ function showUpdateDialog({ onQuick, onFull }) {
       <div class="update-options-list" style="display:flex;flex-direction:column;gap:0.8rem;">
         <button class="btn btn-update-option" id="btn-update-quick" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
           <div style="font-weight:700;font-size:1.05rem;color:#fff;">⚡ Actualización rápida</div>
-          <div style="font-size:0.85rem;color:#bbb;margin-top:0.25rem;">Comprueba únicamente canales con nuevos mensajes o vídeos desde la última lectura.</div>
+          <div style="font-size:0.85rem;color:#bbb;margin-top:0.25rem;">Sincroniza perfil (favoritos, carátulas y fondos), metadatos de TMDB y canales con nuevos vídeos.</div>
         </button>
         <button class="btn btn-secondary btn-update-option" id="btn-update-full" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
           <div style="font-weight:700;font-size:1.05rem;color:#fff;">🔄 Forzar actualización completa</div>
@@ -352,9 +352,48 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   setBackHandler(() => showProfileSelector(tg, sync));
   const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
   if (reload) {
-    showLoading(force ? 'Reescaneando toda la biblioteca…' : 'Buscando nuevos vídeos…');
-    try { TITLES_CACHE = (await refreshLibrary(tg, { force, onProgress })).titles; CHECKED = true; }
-    catch (err) { console.error('Error cargando biblioteca', err); TITLES_CACHE = TITLES_CACHE || []; }
+    showLoading(force ? 'Reescaneando toda la biblioteca y sincronizando…' : 'Sincronizando perfil, metadatos y vídeos…');
+    try {
+      // 1. Sincronizar identificaciones manuales desde Telegram (metadata_overrides_*.json)
+      if (sync) {
+        await loadOverrides(sync).catch(e => console.warn('[overrides] sync error', e));
+      }
+      // 2. Sincronizar perfil completo desde Telegram (favoritos, carátulas/logos/fondos, progreso)
+      if (sync && profile?.id) {
+        const remote = await sync.pullProfile(profile.id).catch(e => { console.warn('[sync] pullProfile error', e); return null; });
+        if (remote) {
+          if (remote.progress) {
+            const mergedPrg = sync.mergeProgress(loadProgress(profile.id), remote.progress);
+            writeFullProgress(profile.id, mergedPrg);
+          }
+          const remoteFavs = mergeFavorites(remote.favorites || [], remote.profile?.favorites || []);
+          const localFavs = loadFavorites(profile.id);
+          const mergedFavs = mergeFavorites(localFavs, remoteFavs);
+          saveFavorites(profile.id, mergedFavs);
+          profile.favorites = mergedFavs;
+
+          const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
+          const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
+          profile.image_prefs = mergedImg;
+
+          // Si el local aportó favoritos o imágenes que faltaban en el remoto, subir el snapshot unificado
+          if (mergedFavs.length > remoteFavs.length || Object.keys(mergedImg).length > Object.keys(remoteImg).length) {
+            sync.pushProfile({
+              profile,
+              progress: loadProgress(profile.id),
+              favorites: mergedFavs,
+              image_prefs: mergedImg,
+            }).catch(e => console.warn('[sync] push merged error', e));
+          }
+        }
+      }
+
+      TITLES_CACHE = (await refreshLibrary(tg, { force, onProgress })).titles;
+      CHECKED = true;
+    } catch (err) {
+      console.error('Error cargando biblioteca', err);
+      TITLES_CACHE = TITLES_CACHE || [];
+    }
   } else if (!TITLES_CACHE) {
     const saved = await kv.get(LIB_KEY).catch(() => null);
     if (saved?.cache && saved.channels) {
@@ -372,10 +411,38 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       catch (err) { console.error('Error cargando biblioteca', err); TITLES_CACHE = []; }
     }
   }
-  // Una vez por sesión: comprobar en segundo plano si algún canal ha cambiado
+  // Una vez por sesión: comprobar en segundo plano si algún canal ha cambiado y sincronizar perfil
   if (!CHECKED) {
     CHECKED = true;
     const before = (await kv.get(LIB_KEY).catch(() => null))?.sig;
+    if (sync && profile?.id) {
+      loadOverrides(sync).catch(() => {});
+      sync.pullProfile(profile.id).then(remote => {
+        if (!remote) return;
+        const remoteFavs = mergeFavorites(remote.favorites || [], remote.profile?.favorites || []);
+        const localFavs = loadFavorites(profile.id);
+        const mergedFavs = mergeFavorites(localFavs, remoteFavs);
+        saveFavorites(profile.id, mergedFavs);
+        profile.favorites = mergedFavs;
+
+        const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
+        const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
+        profile.image_prefs = mergedImg;
+
+        if (mergedFavs.length > remoteFavs.length || Object.keys(mergedImg).length > Object.keys(remoteImg).length) {
+          sync.pushProfile({
+            profile,
+            progress: loadProgress(profile.id),
+            favorites: mergedFavs,
+            image_prefs: mergedImg,
+          }).catch(() => {});
+        }
+
+        if (document.querySelector('.home-screen')) {
+          showHome(tg, sync, profile);
+        }
+      }).catch(() => {});
+    }
     refreshLibrary(tg).then(({ titles, sig }) => {
       if (sig === before) return;
       const existingMeta = new Map();
@@ -411,8 +478,30 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
   const progress = loadProgress(profile.id);
   const rows = buildHomeRows(titles, progress);
-  const titleById = new Map(titles.map(t => [String(t.id), t]));
-  const favoriteTitles = loadFavorites(profile.id).map(id => titleById.get(String(id))).filter(Boolean);
+  const titleById = new Map();
+  for (const t of titles) {
+    titleById.set(String(t.id), t);
+    if (t.tmdbId) {
+      if (!titleById.has(String(t.tmdbId))) titleById.set(String(t.tmdbId), t);
+      if (!titleById.has(`tmdb:${t.tmdbId}`)) titleById.set(`tmdb:${t.tmdbId}`, t);
+    }
+    if (t.archivos) {
+      for (const f of t.archivos) {
+        const fileKey = `${f.channel}:${f.messageId}`;
+        if (!titleById.has(fileKey)) titleById.set(fileKey, t);
+      }
+    }
+  }
+  const favIds = loadFavorites(profile.id);
+  const seenFavs = new Set();
+  const favoriteTitles = [];
+  for (const id of favIds) {
+    const t = titleById.get(String(id));
+    if (t && !seenFavs.has(t.id)) {
+      seenFavs.add(t.id);
+      favoriteTitles.push(t);
+    }
+  }
   const collectionTitles = titles.filter(t => t.isSaga || t.metadata?.tipo === 'collection');
   const movieTitles = titles.filter(t => t.tipo === 'pelicula' && !t.isSaga && t.metadata?.tipo !== 'collection');
   const seriesTitles = titles.filter(t => t.tipo === 'serie');
@@ -691,6 +780,8 @@ async function showProfileSelector(tg, sync) {
       if (profile) {
         showLoading('Sincronizando perfil…');
         try {
+          await loadOverrides(sync).catch(e => console.warn('[overrides] sync error', e));
+
           const remote = await sync.pullProfile(profile.id);
           if (remote) {
             if (remote.progress) {
@@ -698,18 +789,25 @@ async function showProfileSelector(tg, sync) {
               writeFullProgress(profile.id, merged);
             }
             // Sincronizar Favoritos por perfil
-            const remoteFavs = remote.favorites || remote.profile?.favorites || [];
-            if (Array.isArray(remoteFavs)) {
-              const localFavs = loadFavorites(profile.id);
-              const mergedFavs = mergeFavorites(localFavs, remoteFavs);
-              saveFavorites(profile.id, mergedFavs);
-              profile.favorites = mergedFavs;
-            }
+            const remoteFavs = mergeFavorites(remote.favorites || [], remote.profile?.favorites || []);
+            const localFavs = loadFavorites(profile.id);
+            const mergedFavs = mergeFavorites(localFavs, remoteFavs);
+            saveFavorites(profile.id, mergedFavs);
+            profile.favorites = mergedFavs;
+
             // Sincronizar Carteles, Fondos y Logos por perfil
-            const remoteImg = remote.image_prefs || remote.profile?.image_prefs || {};
-            if (remoteImg && typeof remoteImg === 'object') {
-              const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
-              profile.image_prefs = mergedImg;
+            const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
+            const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
+            profile.image_prefs = mergedImg;
+
+            // Re-enviar snapshot si el local aportó favoritos o imágenes no presentes en el remoto
+            if (mergedFavs.length > remoteFavs.length || Object.keys(mergedImg).length > Object.keys(remoteImg).length) {
+              sync.pushProfile({
+                profile,
+                progress: loadProgress(profile.id),
+                favorites: mergedFavs,
+                image_prefs: mergedImg,
+              }).catch(() => {});
             }
           }
         } catch (err) {
