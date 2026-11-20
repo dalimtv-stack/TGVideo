@@ -165,10 +165,15 @@ export function attachAutoCollections(titles) {
 
   for (const [colId, { collection, movies }] of colMap.entries()) {
     // Si pertenecen a una saga y hay otra de su saga (mínimo 2 películas distintas)
-    if (movies.length < 2) continue;
+    const distinctMovies = new Map();
+    for (const m of movies) {
+      const mId = String(m.metadata?.id || m.tmdbId || m.nombre);
+      if (!distinctMovies.has(mId)) distinctMovies.set(mId, m);
+    }
+    if (distinctMovies.size < 2) continue;
 
     // Comprobar si ya existe una saga física (por canal) que cubra esta colección
-    const existingSaga = baseTitles.find(t => t.isSaga && (
+    const existingSaga = baseTitles.find(t => t.isSaga && !t.isVirtualSaga && (
       String(t.tmdbId) === String(colId) ||
       String(t.metadata?.id) === String(colId) ||
       (t.nombre && collection.name && normalizeMovieKey(t.nombre) === normalizeMovieKey(collection.name))
@@ -185,6 +190,7 @@ export function attachAutoCollections(titles) {
               ...f,
               sagaName: m.metadata?.name || m.nombre || f.label,
               metadata: m.metadata || f.metadata,
+              tmdbId: m.metadata?.id || f.tmdbId || m.tmdbId || null,
             });
           }
         }
@@ -250,7 +256,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       const movieMap = new Map();
       for (const f of files) {
         const parsedFile = extractTitleAndYear(f.fileName || f.label);
-        const yearHint = parsedFile.year || f.fileName.match(YEAR_RE)?.[1] || channelYear;
+        const yearHint = parsedFile.year || channelYear;
         const baseName = parsedFile.title || movieName(f);
         const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
         if (!movieMap.has(normKey)) {
@@ -297,7 +303,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       const movieMap = new Map();
       for (const f of files) {
         const parsedFile = extractTitleAndYear(f.fileName || f.label);
-        const yearHint = parsedFile.year || f.fileName.match(YEAR_RE)?.[1] || null;
+        const yearHint = parsedFile.year || null;
         const baseName = parsedFile.title || movieName(f);
         const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
         if (!movieMap.has(normKey)) {
@@ -336,7 +342,8 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       for (const [sec, fs] of splitBySection(keyed)) {
         if (fs && fs.length > 0) {
           const parsedSec = extractTitleAndYear(sec);
-          const titleYearHint = parsedSec.year || fs.find(f => f.fileName?.match(YEAR_RE))?.fileName?.match(YEAR_RE)?.[1] || null;
+          const fileYear = fs.map(f => extractTitleAndYear(f.fileName || f.label).year).find(Boolean) || null;
+          const titleYearHint = parsedSec.year || fileYear;
           const t = makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs });
           if (titleYearHint) t.yearHint = titleYearHint;
           titles.push(t);
