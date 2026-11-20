@@ -403,3 +403,410 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   }
   titles = mergeMoviesByTmdb(titles);
   TITLES_CACHE = titles;
+  // Carteles/fondos/logos elegidos por el usuario (por perfil + caché del dispositivo)
+  titles.forEach(t => applyImagePrefs(t, profile));
+
+  // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
+  await prewarmPosterCache(titles);
+
+  const progress = loadProgress(profile.id);
+  const rows = buildHomeRows(titles, progress);
+  const titleById = new Map(titles.map(t => [String(t.id), t]));
+  const favoriteTitles = loadFavorites(profile.id).map(id => titleById.get(String(id))).filter(Boolean);
+  const collectionTitles = titles.filter(t => t.isSaga || t.metadata?.tipo === 'collection');
+  const movieTitles = titles.filter(t => t.tipo === 'pelicula' && !t.isSaga && t.metadata?.tipo !== 'collection');
+  const seriesTitles = titles.filter(t => t.tipo === 'serie');
+  const sportTitles = titles.filter(t => t.tipo === 'deporte');
+  const musicTitles = titles.filter(t => t.tipo === 'musica');
+
+  const sectionDefs = [
+    ...(titles.length ? [{ id: 'inicio', label: 'Inicio', items: titles }] : []),
+    ...(favoriteTitles.length ? [{ id: 'favoritos', label: 'Favoritos', items: favoriteTitles }] : []),
+    ...(movieTitles.length ? [{ id: 'peliculas', label: 'Películas', items: movieTitles }] : []),
+    ...(seriesTitles.length ? [{ id: 'series', label: 'Series', items: seriesTitles }] : []),
+    ...(sportTitles.length ? [{ id: 'deportes', label: 'Deportes', items: sportTitles }] : []),
+    ...(musicTitles.length ? [{ id: 'musica', label: 'Música', items: musicTitles }] : []),
+    ...(collectionTitles.length ? [{ id: 'colecciones', label: 'Colecciones', items: collectionTitles }] : []),
+  ];
+  if (!sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
+  ACTIVE_HOME_SECTION = selectedSection;
+  const activeSection = sectionDefs.find(section => section.id === selectedSection);
+
+  const body = !titles.length ? `
+      <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
+        <p>No se han encontrado canales de vídeo.</p>
+        <p style="opacity:.6;margin-top:.5rem">Los canales deben terminar en <code>::Series::tgstorage</code> o <code>::Películas::tgstorage</code></p></div>`
+    : selectedSection !== 'inicio' ? (() => {
+        const currentSort = getSectionSort(profile.id, selectedSection);
+        const sortedItems = sortTitles(activeSection?.items || [], currentSort);
+        return `
+      <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
+        <div class="category-header">
+          <h1 class="category-title">${esc(activeSection?.label || '')}</h1>
+          <div class="category-sort-bar" role="group" aria-label="Ordenar por">
+            <span class="category-sort-label">Ordenar:</span>
+            <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
+            <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
+            <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
+          </div>
+        </div>
+        <div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>
+      </section>`;
+      })()
+    : rows.map(r => `
+      <section class="row" data-row-id="${esc(r.id)}">
+        <div class="row-header">
+          <h2 class="row-title">${esc(r.title)}</h2>
+        </div>
+        <div class="row-track">
+          <div class="lib-card row-expand-card" tabindex="0" data-focusable data-row-id="${esc(r.id)}" title="Ver todos en cuadrícula" aria-label="Ver todos ${esc(r.title)}">
+            <div class="row-expand-card-inner">
+              <span class="row-expand-plus">+</span>
+            </div>
+          </div>
+          ${r.items.map(t => cardHtml(t, progress)).join('')}
+        </div>
+      </section>`).join('');
+
+  showScreen(`
+    <div class="screen home-screen">
+      <header class="home-header">
+        <div class="home-logo">TGVideo</div>
+        ${sectionDefs.length ? `<nav class="home-nav" aria-label="Secciones">${sectionDefs.map(section => `<button class="home-nav-item ${section.id === selectedSection ? 'active' : ''}" data-focusable data-section="${esc(section.id)}" type="button" aria-current="${section.id === selectedSection ? 'page' : 'false'}">${esc(section.label)}</button>`).join('')}</nav>` : ''}
+        <div class="home-actions">
+          <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
+          <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile" title="${esc(profile.name)}" aria-label="Perfil: ${esc(profile.name)}">
+            <div class="avatar small">${profileAvatar(profile)}</div>
+          </div>
+        </div>
+      </header>
+      <main class="home-main">${body}</main>
+    </div>`);
+
+  document.querySelectorAll('.home-nav-item').forEach(button => {
+    button.onclick = () => showHome(tg, sync, profile, { selectedSection: button.dataset.section });
+  });
+  document.querySelectorAll('.category-sort-btn').forEach(btn => {
+    btn.onclick = () => {
+      const newSort = btn.dataset.sort;
+      const currentSort = getSectionSort(profile.id, selectedSection);
+      if (newSort && newSort !== currentSort) {
+        setSectionSort(profile.id, selectedSection, newSort);
+        showHome(tg, sync, profile, { selectedSection, focusSort: newSort });
+      }
+    };
+  });
+  document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
+    onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
+    onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
+  document.getElementById('btn-reload').onclick = () => {
+    showUpdateDialog({
+      onQuick: () => showHome(tg, sync, profile, { reload: true, force: false }),
+      onFull: () => showHome(tg, sync, profile, { reload: true, force: true }),
+    });
+  };
+
+  document.querySelectorAll('#app .row-expand-card').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const rowId = btn.dataset.rowId;
+      const r = rows.find(x => x.id === rowId);
+      if (r) libraryViews.showGroupGrid(tg, sync, profile, r);
+    };
+  });
+  document.querySelectorAll('#app .category-grid .lib-card[data-title]').forEach(card => {
+    card.onclick = () => {
+      const t = titles.find(x => String(x.id) === String(card.dataset.title));
+      if (t) libraryViews.showDetail(tg, sync, profile, t);
+    };
+  });
+  document.querySelectorAll('#app .row').forEach(rowEl => {
+    const rowId = rowEl.dataset.rowId;
+    rowEl.querySelectorAll('.lib-card[data-title]').forEach((card, idx) => {
+      card.onclick = () => {
+        const t = titles.find(x => String(x.id) === String(card.dataset.title));
+        if (t) libraryViews.showDetail(tg, sync, profile, t, { fromRowId: rowId, fromCardIndex: idx + 1 });
+      };
+    });
+  });
+  document.querySelectorAll('.lib-card-poster img.poster-image').forEach(img => {
+    const url = img.getAttribute('data-poster-url') || img.src;
+    if (url) loadPoster(img, url);
+  });
+
+
+  setTimeout(() => {
+    let el = null;
+    if (focusSort) {
+      el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);
+    }
+    if (focusRowId && focusExpandBtn) {
+      el = document.querySelector(`.row[data-row-id="${focusRowId}"] .row-expand-card`);
+    } else if (focusRowId && focusTitleId) {
+      el = document.querySelector(`.row[data-row-id="${focusRowId}"] .lib-card[data-title="${focusTitleId}"]`);
+    }
+    if (!el && focusRowId && typeof focusCardIndex === "number") {
+      const row = document.querySelector(`.row[data-row-id="${focusRowId}"]`);
+      el = row?.querySelectorAll(".row-track > [data-focusable]")?.[focusCardIndex];
+    }
+    if (!el && focusTitleId) {
+      el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
+    }
+    if (!el) {
+      // Categorías enfocan su pestaña activa; Inicio mantiene el foco en la primera carátula.
+      el = selectedSection !== 'inicio' ? document.querySelector('.home-nav-item.active') : null;
+      el ||= document.querySelector('.row[data-row-id="continue"] .row-track .lib-card[data-title]')
+        || document.querySelector('.row-track .lib-card[data-title]');
+    }
+    if (!el) {
+      el = document.querySelector('.home-nav-item.active, [data-focusable]');
+    }
+    if (el) {
+      el.focus();
+      const parentRow = el.closest('.row');
+      if (parentRow) {
+        parentRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+      }
+      el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    }
+  }, 80);
+  metadataController?.abort();
+  metadataController = new AbortController();
+
+  let metaSaveTimer = null;
+  const saveMetaDebounced = () => {
+    clearTimeout(metaSaveTimer);
+    metaSaveTimer = setTimeout(async () => {
+      try {
+        const saved = await kv.get(LIB_KEY).catch(() => null);
+        if (saved) {
+          saved.metadataMap = saved.metadataMap || {};
+          for (const t of (TITLES_CACHE || [])) {
+            if (t.metadata) saved.metadataMap[t.id] = t.metadata;
+          }
+          await kv.set(LIB_KEY, saved);
+        }
+      } catch (_) {}
+    }, 1500);
+  };
+
+  enrichTitles(titles, { signal: metadataController.signal, onUpdate: title => {
+    applyImagePrefs(title, profile);
+    saveMetaDebounced();
+    document.querySelectorAll('.lib-card').forEach(card => {
+      if (String(card.dataset.title) !== String(title.id)) return;
+      const displayName = title.metadata?.name || title.metadata?.title || title.nombre;
+      const nameEl = card.querySelector('.lib-card-name');
+      if (nameEl && displayName) nameEl.textContent = displayName;
+      const posterNameEl = card.querySelector('.poster-name');
+      if (posterNameEl && displayName) posterNameEl.textContent = displayName;
+
+      if (!title.metadata?.poster) return;
+      const poster = card.querySelector('.lib-card-poster');
+      if (!poster) return;
+      let image = poster.querySelector('img.poster-image');
+      if (!image) {
+        image = document.createElement('img');
+        image.className = 'poster-image';
+        image.alt = displayName;
+        image.loading = 'lazy';
+        image.setAttribute('data-poster-url', title.metadata.poster);
+        poster.prepend(image);
+      }
+      loadPoster(image, title.metadata.poster);
+    });
+    if (String(document.querySelector('.detail')?.dataset.title) === String(title.id)) {
+      libraryViews.applyDetailMetadata(title, profile);
+      if (title.isSaga) libraryViews.applySagaFilmMetadata(title);
+    }
+  } }).then(() => {
+    // Tras enriquecer, re-agrupar películas con el mismo TMDB
+    if (!metadataController.signal.aborted && TITLES_CACHE) {
+      const before = TITLES_CACHE.length;
+      TITLES_CACHE = mergeMoviesByTmdb(TITLES_CACHE);
+      if (TITLES_CACHE.length !== before && document.querySelector('.home-screen')) {
+        showHome(tg, sync, profile);
+      }
+    }
+  }).catch(() => {});
+}
+
+// ---------- Selector de perfiles ----------
+async function showProfileSelector(tg, sync) {
+  showLoading('Cargando perfiles…');
+
+  let profiles = [];
+  try {
+    profiles = await sync.listProfiles();
+  } catch (err) {
+    console.warn('No se pudieron cargar perfiles', err);
+  }
+
+  const cards = profiles.map(p => `
+    <div class="profile-card" tabindex="0" data-focusable data-id="${p.id}">
+      <div class="avatar">${profileAvatar(p)}</div>
+      <div class="profile-name">${esc(p.name)}</div>
+    </div>
+  `).join('');
+
+  const addCard = `
+    <div class="profile-card add-profile" tabindex="0" data-focusable id="btn-add-profile">
+      <div class="avatar add">+</div>
+      <div class="profile-name">Añadir perfil</div>
+    </div>
+  `;
+
+  showScreen(`
+    <div class="screen profiles-screen">
+      <h1 class="profiles-title">¿Quién está ahí?</h1>
+      <div class="profiles-grid">
+        ${cards}
+        ${addCard}
+      </div>
+      <button id="btn-logout" data-focusable class="logout-btn">Cerrar sesión</button>
+    </div>
+  `);
+
+  const lastProfileId = localStorage.getItem('tgvideo_last_profile_id') || profiles[0]?.id;
+  setTimeout(() => {
+    let target = null;
+    if (lastProfileId) {
+      target = document.querySelector(`.profile-card[data-id="${lastProfileId}"]`);
+    }
+    if (!target) {
+      target = document.querySelector('.profile-card[data-id], #btn-add-profile');
+    }
+    if (target) {
+      target.focus();
+      target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }, 60);
+
+  document.querySelectorAll('.profile-card[data-id]').forEach(card => {
+    card.addEventListener('click', async () => {
+      const id = card.dataset.id;
+      const profile = profiles.find(p => p.id === id);
+      if (profile) {
+        localStorage.setItem('tgvideo_last_profile_id', profile.id);
+      }
+      if (profile) {
+        showLoading('Sincronizando perfil…');
+        try {
+          const remote = await sync.pullProfile(profile.id);
+          if (remote) {
+            if (remote.progress) {
+              const merged = sync.mergeProgress(loadProgress(profile.id), remote.progress);
+              writeFullProgress(profile.id, merged);
+            }
+            // Sincronizar Favoritos por perfil
+            const remoteFavs = remote.favorites || remote.profile?.favorites || [];
+            if (Array.isArray(remoteFavs)) {
+              const localFavs = loadFavorites(profile.id);
+              const mergedFavs = mergeFavorites(localFavs, remoteFavs);
+              saveFavorites(profile.id, mergedFavs);
+              profile.favorites = mergedFavs;
+            }
+            // Sincronizar Carteles, Fondos y Logos por perfil
+            const remoteImg = remote.image_prefs || remote.profile?.image_prefs || {};
+            if (remoteImg && typeof remoteImg === 'object') {
+              const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
+              profile.image_prefs = mergedImg;
+            }
+          }
+        } catch (err) {
+          console.warn('[sync] Error sincronizando perfil', err);
+        }
+
+        if (isDevLogEnabled()) {
+          startDevLogging({
+            getClient: () => tg.getClient(),
+            peerOf: tg.peerOf,
+            profile,
+            sync,
+          });
+        }
+
+        showHome(tg, sync, profile);
+      }
+    });
+  });
+
+  document.getElementById('btn-add-profile')?.addEventListener('click', async () => {
+    const name = await promptUI('Nombre del perfil', 'Ej: Papá, Niños…');
+    if (!name) return showProfileSelector(tg, sync);
+
+    const profileId = name
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'perfil';
+
+    const newProfile = {
+      v: 1,
+      profile: {
+        id: profileId,
+        name: name.trim(),
+        avatar: null,
+        age_limit: '+18',
+        pin: null,
+        is_kids: false,
+        player: 'artplayer',
+      },
+      progress: {},
+      recent: [],
+      prefs: {},
+    };
+
+    showLoading('Creando perfil…');
+    try {
+      await sync.pushProfile(newProfile);
+      await showProfileSelector(tg, sync);
+    } catch (err) {
+      showError(err?.message || String(err));
+    }
+  });
+
+  document.getElementById('btn-logout')?.addEventListener('click', async () => {
+    await tg.logout();
+    initDpad();
+    start();
+  });
+}
+
+// ---------- Arranque ----------
+async function start() {
+  showLoading('Conectando con Telegram…');
+
+  const tg = createTelegramClient({
+    promptPhone: () => promptPhoneUI(),
+    promptCode: () => promptCodeUI(),
+    promptPassword: () => promptUI('Contraseña 2FA', 'Tu contraseña', 'password'),
+    promptApiCredentials: () => promptApiCredentialsUI(),
+    onError: (err) => showError(err?.message || String(err)),
+  });
+
+  try {
+    await tg.ready();
+
+    const sync = createTelegramSync({
+      getClient: async () => {
+        await tg.ready();
+        return tg.getClient();
+      },
+      peerOf: tg.peerOf,
+    });
+
+    window.tg = tg;
+    window.sync = sync;
+
+    await loadGlobalConfig(sync);
+    await loadOverrides(sync).catch(e => console.warn('[overrides]', e));
+    await showProfileSelector(tg, sync);
+
+  } catch (err) {
+    console.error(err);
+    showError(err?.message || String(err));
+  }
+}
+
+hookConsole();
+initDpad();
+start();
