@@ -351,8 +351,11 @@ function move(dir) {
   if (detailScreen && !modalEl) {
     const backBtn = detailScreen.querySelector('#d-back');
     const fixMetaBtn = detailScreen.querySelector('#d-fix-meta');
+    const imagesBtn = detailScreen.querySelector('#d-images');
     const synToggle = detailScreen.querySelector('.btn-syn-toggle:not([hidden])');
     const playBtn = detailScreen.querySelector('#d-play');
+    const favBtn = detailScreen.querySelector('#d-fav');
+    const watchedBtn = detailScreen.querySelector('#d-watched');
     const seasonActive = detailScreen.querySelector('.seasons-track .season-btn.active') || detailScreen.querySelector('.seasons-track .season-btn');
     const curSeasonTrack = cur.closest('.seasons-track');
     const curEpList = cur.closest('#ep-list');
@@ -360,14 +363,15 @@ function move(dir) {
     // 3.1 Botón Volver (#d-back)
     if (cur === backBtn) {
       if (dir === 'right') {
-        if (fixMetaBtn) {
-          fixMetaBtn.focus();
-          fixMetaBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        const target = fixMetaBtn || imagesBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
       if (dir === 'down') {
-        const target = synToggle || playBtn || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        const target = synToggle || playBtn || favBtn || watchedBtn || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -386,8 +390,36 @@ function move(dir) {
         }
         return;
       }
+      if (dir === 'right') {
+        if (imagesBtn) {
+          imagesBtn.focus();
+          imagesBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
       if (dir === 'down') {
-        const target = synToggle || playBtn || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        const target = watchedBtn || favBtn || playBtn || synToggle || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      return;
+    }
+
+    // 3.25 Botón Imágenes (#d-images)
+    if (cur === imagesBtn) {
+      if (dir === 'left') {
+        const target = fixMetaBtn || backBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'down') {
+        const target = watchedBtn || favBtn || playBtn || synToggle || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -400,7 +432,7 @@ function move(dir) {
     // 3.3 Botón sinopsis "más" / "menos" (.btn-syn-toggle)
     if (cur === synToggle) {
       if (dir === 'up') {
-        const target = backBtn || fixMetaBtn;
+        const target = backBtn || fixMetaBtn || imagesBtn;
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -408,7 +440,7 @@ function move(dir) {
         return;
       }
       if (dir === 'down') {
-        const target = playBtn || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        const target = playBtn || favBtn || watchedBtn || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -423,9 +455,10 @@ function move(dir) {
         return;
       }
       if (dir === 'right') {
-        if (fixMetaBtn) {
-          fixMetaBtn.focus();
-          fixMetaBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        const target = fixMetaBtn || imagesBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
@@ -442,8 +475,8 @@ function move(dir) {
         }
         return;
       }
-      if (dir === 'down') {
-        const target = seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+      if (dir === 'right') {
+        const target = favBtn || watchedBtn || fixMetaBtn || imagesBtn;
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -457,10 +490,85 @@ function move(dir) {
         }
         return;
       }
+      if (dir === 'down') {
+        const target = seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      return;
+    }
+
+    // 3.42 Botón Favoritos (#d-fav)
+    if (cur === favBtn) {
+      if (dir === 'left') {
+        const target = playBtn || backBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
       if (dir === 'right') {
-        if (fixMetaBtn) {
-          fixMetaBtn.focus();
-          fixMetaBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        const target = watchedBtn || fixMetaBtn || imagesBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'up') {
+        const target = synToggle || backBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'down') {
+        const target = seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      return;
+    }
+
+    // 3.44 Botón Marcar como visto (#d-watched)
+    if (cur === watchedBtn) {
+      if (dir === 'left') {
+        const target = favBtn || playBtn || backBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'right') {
+        const target = imagesBtn || fixMetaBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'up') {
+        const target = imagesBtn || fixMetaBtn || synToggle || backBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'down') {
+        const target = seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         }
         return;
       }
@@ -482,7 +590,7 @@ function move(dir) {
         return;
       }
       if (dir === 'up') {
-        const target = playBtn || synToggle || backBtn;
+        const target = favBtn || watchedBtn || playBtn || synToggle || backBtn;
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -502,14 +610,61 @@ function move(dir) {
 
     // 3.6 Lista de episodios / archivos (#ep-list)
     if (curEpList) {
+      const isSagaMeta = cur.classList.contains('saga-film-btn-meta');
+      const curEp = isSagaMeta ? cur.closest('.ep') : cur;
       const epItems = [...curEpList.querySelectorAll('.ep[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
-      const epIdx = epItems.indexOf(cur);
+      const epIdx = epItems.indexOf(curEp);
+
+      if (isSagaMeta) {
+        if (dir === 'left') {
+          if (curEp) {
+            curEp.focus();
+            curEp.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          }
+          return;
+        }
+        if (dir === 'up') {
+          if (epIdx > 0) {
+            const prevMeta = epItems[epIdx - 1].querySelector('.saga-film-btn-meta');
+            const target = prevMeta || epItems[epIdx - 1];
+            target.focus();
+            target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          } else {
+            const target = watchedBtn || favBtn || playBtn || seasonActive || synToggle || backBtn;
+            if (target) {
+              target.focus();
+              target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+            }
+          }
+          return;
+        }
+        if (dir === 'down') {
+          if (epIdx !== -1 && epIdx < epItems.length - 1) {
+            const nextMeta = epItems[epIdx + 1].querySelector('.saga-film-btn-meta');
+            const target = nextMeta || epItems[epIdx + 1];
+            target.focus();
+            target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          }
+          return;
+        }
+        return;
+      }
+
+      if (dir === 'right') {
+        const sagaMetaBtn = cur.querySelector?.('.saga-film-btn-meta');
+        if (sagaMetaBtn) {
+          sagaMetaBtn.focus();
+          sagaMetaBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          return;
+        }
+      }
+
       if (dir === 'up') {
         if (epIdx > 0) {
           epItems[epIdx - 1].focus();
           epItems[epIdx - 1].scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         } else {
-          const target = seasonActive || playBtn || synToggle || backBtn;
+          const target = seasonActive || favBtn || watchedBtn || playBtn || synToggle || backBtn;
           if (target) {
             target.focus();
             target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
