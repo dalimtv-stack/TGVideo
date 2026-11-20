@@ -1025,5 +1025,5 @@ jobs:
           gh release create "$TAG_NAME" \
             android/app/build/outputs/apk/release/TGVideo.apk \
             --title "TGVideo $TAG_NAME" \
-            --notes "Versión oficial de TGVideo con ExoPlayer y soporte Android TV." \
+            --notes "Versión actualizada de TGVideo con ExoPlayer y soporte Android TV." \
             --latest
