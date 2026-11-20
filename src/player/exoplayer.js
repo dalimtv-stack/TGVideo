@@ -1,7 +1,7 @@
 // src/player/exoplayer.js
 // Integración de ExoPlayer nativo para Android TV / APK con túnel de streaming bajo demanda de Telegram
 import { getStream, readRange, openStream } from './stream.js';
-import { ensureConnected } from '../core/telegram.js';
+import { ensureConnected, resetExportedSenders } from '../core/telegram.js';
 import { formatTime, showToast } from './ui-helpers.js';
 import { saveProgress } from './progress.js';
 import { getDeviceSettings } from '../ui/settings.js';
@@ -275,10 +275,10 @@ export async function playExoPlayer(opts) {
 
     await ExoPlayerPlugin.stop().catch(() => {});
     if (stream) {
-      const sToClose = stream;
-      setTimeout(() => {
-        try { sToClose.close(); } catch (_) {}
-      }, 1200);
+      try { stream.close(); } catch (_) {}
+    }
+    if (client) {
+      try { await resetExportedSenders(client); } catch (_) {}
     }
 
     const fileKey = String(file?.id || file?.messageId || file?.key || '');
@@ -295,6 +295,7 @@ export async function playExoPlayer(opts) {
     const targetChannel = file?.channel || title?.channel;
     if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
     if (statusEl) statusEl.textContent = 'Localizando archivo…';
+    await ensureConnected(client, { forceResetSenders: true });
     const peer = await peerOf(targetChannel);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (destroyed) return;
