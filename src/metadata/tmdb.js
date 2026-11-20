@@ -384,7 +384,7 @@ export async function enrichTitles(titles, { signal, onUpdate } = {}) {
         if (title.isSaga && Array.isArray(title.archivos)) {
           for (const file of title.archivos) {
             if (signal?.aborted) break;
-            const parsedFilm = extractTitleAndYear(file.fileName || file.label);
+            const parsedFilm = extractTitleAndYear(file.captionFileName || file.fileName || file.label);
             const fileKey = file.key || `${title.channel?.id || title.id}:${file.messageId}`;
             const film = {
               id: fileKey,
