@@ -340,17 +340,20 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
   };
 
-  const play = (f) => {
+  const play = (f, targetTitle = t) => {
     const p = loadProgress(profile.id)[f.key];
     setBackHandler(null);
     // Siguiente archivo en la lista (episodio / saga / versiones)
     let nextFile = null;
-    if (t.isSaga) {
-      const yearOf = (x) => Number(x.metadata?.date?.slice(0, 4) || x.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
-      const sortedSaga = [...(t.archivos || [])].sort((a, b) => (
+    let nextTitle = targetTitle;
+    const allTitles = getTitles() || [];
+
+    if (targetTitle.isSaga) {
+      const yearOf = (x) => Number(x.metadata?.date?.slice(0, 4) || x.fileName?.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
+      const sortedSaga = [...(targetTitle.archivos || [])].sort((a, b) => (
         yearOf(a) - yearOf(b) ||
         (Number(b.size) || 0) - (Number(a.size) || 0) ||
-        a.label.localeCompare(b.label, 'es', { numeric: true })
+        (a.label || '').localeCompare(b.label || '', 'es', { numeric: true })
       ));
       const curFilmId = f.metadata?.id || f.tmdbId || f.sagaName || f.label;
       nextFile = sortedSaga.find(x => {
@@ -358,8 +361,13 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
         if (xFilmId === curFilmId) return false;
         return yearOf(x) > yearOf(f) || (yearOf(x) === yearOf(f) && sortedSaga.indexOf(x) > sortedSaga.indexOf(f));
       }) || null;
-    } else if (t.tipo === 'serie') {
-      let list = t.archivos || [];
+
+      if (nextFile) {
+        const standaloneNext = allTitles.find(x => !x.isSaga && !x.isVirtualSaga && x.archivos?.some(a => a.key === nextFile.key));
+        if (standaloneNext) nextTitle = standaloneNext;
+      }
+    } else if (targetTitle.tipo === 'serie') {
+      let list = targetTitle.archivos || [];
       if (f.season != null) {
         list = list.filter(x => Number(x.season) === Number(f.season));
         list = [...list].sort((a, b) => (a.episode || 0) - (b.episode || 0));
@@ -367,18 +375,46 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       const idx = list.findIndex(x => String(x.key) === String(f.key));
       nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
     } else {
-      let list = t.archivos || [];
-      const idx = list.findIndex(x => String(x.key) === String(f.key));
-      nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+      // Película individual: verificar si pertenece a una saga física o colección TMDB
+      const sagaTitle = allTitles.find(x => (x.isSaga || x.isVirtualSaga) && (
+        (targetTitle.sagaChannelId && String(x.channel?.id) === String(targetTitle.sagaChannelId)) ||
+        (targetTitle.channel?.id && String(x.channel?.id) === String(targetTitle.channel.id)) ||
+        (targetTitle.metadata?.collection?.id && (String(x.tmdbId) === String(targetTitle.metadata.collection.id) || String(x.metadata?.id) === String(targetTitle.metadata.collection.id))) ||
+        (x.archivos?.some(a => a.key === f.key))
+      ));
+
+      if (sagaTitle && Array.isArray(sagaTitle.archivos) && sagaTitle.archivos.length > 1) {
+        const yearOf = (x) => Number(x.metadata?.date?.slice(0, 4) || x.fileName?.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
+        const sortedSaga = [...sagaTitle.archivos].sort((a, b) => (
+          yearOf(a) - yearOf(b) ||
+          (Number(b.size) || 0) - (Number(a.size) || 0) ||
+          (a.label || '').localeCompare(b.label || '', 'es', { numeric: true })
+        ));
+        const curFilmId = f.metadata?.id || f.tmdbId || f.sagaName || f.label;
+        nextFile = sortedSaga.find(x => {
+          const xFilmId = x.metadata?.id || x.tmdbId || x.sagaName || x.label;
+          if (xFilmId === curFilmId) return false;
+          return yearOf(x) > yearOf(f) || (yearOf(x) === yearOf(f) && sortedSaga.indexOf(x) > sortedSaga.indexOf(f));
+        }) || null;
+
+        if (nextFile) {
+          const standaloneNext = allTitles.find(x => !x.isSaga && !x.isVirtualSaga && x.archivos?.some(a => a.key === nextFile.key));
+          if (standaloneNext) nextTitle = standaloneNext;
+        }
+      } else {
+        let list = targetTitle.archivos || [];
+        const idx = list.findIndex(x => String(x.key) === String(f.key));
+        nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+      }
     }
 
     playFile({
-      client: tg.getClient(), peerOf: tg.peerOf, file: f, title: t, profile,
+      client: tg.getClient(), peerOf: tg.peerOf, file: f, title: targetTitle, profile,
       resumeAt: p && !p.is_completed ? p.current_time : 0, mount: app,
-      onClose: () => showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid }),
+      onClose: () => showDetail(tg, sync, profile, targetTitle, { fromRowId, fromCardIndex, fromGrid }),
       sync,
       nextFile,
-      onNext: (nf) => play(nf),
+      onNext: (nf) => play(nf, nextTitle),
     });
   };
 
@@ -443,7 +479,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           e.preventDefault();
           const f = t.archivos.find(x => x.key === metaBtn.dataset.key);
           if (!f) return;
-          const parsedFilm = extractTitleAndYear(f.fileName || f.label);
+          const parsedFilm = extractTitleAndYear(f.captionFileName || f.fileName || f.label);
           const fileKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
           const filmTitleObj = {
             id: fileKey,
