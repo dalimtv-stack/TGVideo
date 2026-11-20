@@ -1,9 +1,9 @@
-import { createKV } from '../core/kv.js';
-import { getTmdbKey } from '../settings/global.js';
-import { getOverride, getOverrideByTmdbId, setOverride, removeOverride } from './overrides.js';
+import { createKV } from "../core/kv.js";
+import { getTmdbKey } from "../settings/global.js";
+import { getOverride, getOverrideByTmdbId, setOverride, removeOverride } from "./overrides.js";
 const kv = createKV();
-const API = 'https://api.themoviedb.org/3';
-const IMAGE = 'https://image.tmdb.org/t/p/';
+const API = "https://api.themoviedb.org/3";
+const IMAGE = "https://image.tmdb.org/t/p/";
 
 const VALID_YEAR_RE = /(?:19\d{2}|20[0-2]\d|2030)/;
 
@@ -14,108 +14,107 @@ export function extractTitleAndYear(name = "") {
   // 1. Quitar extensiones de vídeo
   str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, "").trim();
 
-  // Reemplazar puntos y guiones bajos por espacios para aislar palabras
-  let strClean = str.replace(/[._]/g, " ");
-
-  // 2. Extraer año explícito entre paréntesis o corchetes: (2026), [1999]
+  // 2. Extraer año explícito entre paréntesis o corchetes: (1996), [2026], etc.
+  // Es la convención principal: las fechas van entre paréntesis habitualmente tras el título.
   let year = null;
-  const parenYearMatch = strClean.match(/[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/);
-  if (parenYearMatch) {
-    year = parenYearMatch[1];
-    strClean = strClean.slice(0, parenYearMatch.index) + " " + strClean.slice(parenYearMatch.index + parenYearMatch[0].length);
+  const parenMatches = [...str.matchAll(/[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/g)];
+  if (parenMatches.length > 0) {
+    const lastMatch = parenMatches[parenMatches.length - 1];
+    year = lastMatch[1];
+    str = str.slice(0, lastMatch.index) + " " + str.slice(lastMatch.index + lastMatch[0].length);
   }
 
   // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis: [BlurayRip], [480p], [Dual], etc.
   const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
-  const bracketQualityRe = new RegExp('\\[[^\\]]*' + qualityKw + '[^\\]]*\\]', 'gi');
-  const parenQualityRe = new RegExp('\\([^\\)]*' + qualityKw + '[^\\)]*\\)', 'gi');
-  strClean = strClean.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
+  const bracketQualityRe = new RegExp("\\[[^\\]]*" + qualityKw + "[^\\]]*\\]", "gi");
+  const parenQualityRe = new RegExp("\\([^\\)]*" + qualityKw + "[^\\)]*\\)", "gi");
+  str = str.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
 
   // 4. Eliminar códigos de episodios: S01E02, 1x02
-  strClean = strClean.replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, " ");
-  strClean = strClean.replace(/\d{1,2}x\d{1,3}.*/i, " ");
+  str = str.replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, " ");
+  str = str.replace(/\d{1,2}x\d{1,3}.*/i, " ");
 
   // 5. Eliminar desde la primera palabra clave suelta de calidad hasta el final
   const bareQualityRe = new RegExp(`\\b${qualityKw}\\b.*`, "i");
-  strClean = strClean.replace(bareQualityRe, " ");
+  str = str.replace(bareQualityRe, " ");
 
-  // 6. Si aún no hay año, buscar año suelto al final o en el texto
+  // 6. Si aún no hay año entre paréntesis, buscar año suelto estrictamente al FINAL del texto
+  // (nunca al inicio ni en medio, para no romper títulos como "2013 - Rescate en L.A.", "Blade Runner 2049" o "1984")
   if (!year) {
-    const trailingYearMatch = strClean.match(/(?:^|\s)\b((?:19\d{2}|20[0-3]\d))\b\s*$/);
+    const trailingYearMatch = str.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
     if (trailingYearMatch) {
-      year = trailingYearMatch[1];
-      strClean = strClean.slice(0, trailingYearMatch.index);
-    } else {
-      const midYearMatch = strClean.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
-      if (midYearMatch) {
-        year = midYearMatch[1];
-        strClean = strClean.slice(0, midYearMatch.index) + " " + strClean.slice(midYearMatch.index + midYearMatch[0].length);
+      const candidateTitle = str.slice(0, trailingYearMatch.index).trim();
+      if (candidateTitle.length > 1) {
+        year = trailingYearMatch[1];
+        str = candidateTitle;
       }
     }
   }
 
   // 7. Limpiar corchetes o paréntesis residuales y espacios
-  strClean = strClean.replace(/\[[^\]]*\]/g, " ");
-  strClean = strClean.replace(/\([^)]*\)/g, " ");
-  strClean = strClean.replace(/[\[\]\(\)]/g, " ");
-  strClean = strClean.replace(/[-–—\s]+$/, "").replace(/^\s*[-–—]+/, "").replace(/\s+/g, " ").trim();
+  str = str.replace(/\[[^\]]*\]/g, " ").replace(/\([^)]*\)/g, " ").replace(/[\[\]\(\)]/g, " ");
 
-  return { title: strClean || str, year };
+  // 8. Normalizar separadores sin destruir puntos en siglas/abreviaturas como "L.A."
+  str = str.replace(/([a-zA-Z0-9]{2,})\.([a-zA-Z0-9]{2,})/g, "$1 $2");
+  str = str.replace(/_/g, " ");
+  str = str.replace(/[-–—\s]+$/, "").replace(/^\s*[-–—]+/, "").replace(/\s+/g, " ").trim();
+
+  return { title: str || name, year };
 }
 
-export function cleanSearchName(name = '') {
+export function cleanSearchName(name = "") {
   return extractTitleAndYear(name).title;
 }
 
 export function parseTmdbId(value) {
-  const m = String(value || '').match(/(?:themoviedb\.org\/(?:tv|movie|collection)\/|^(?:(?:tv|movie|collection)[:/])?)(\d+)/i);
+  const m = String(value || "").match(/(?:themoviedb\.org\/(?:tv|movie|collection)\/|^(?:(?:tv|movie|collection)[:/])?)(\d+)/i);
   return m ? Number(m[1]) : null;
 }
-export function imageUrl(path, size = 'w342') { return path?.startsWith('/') ? IMAGE + size + path : ''; }
+export function imageUrl(path, size = "w342") { return path?.startsWith("/") ? IMAGE + size + path : ""; }
 async function request(path, params = {}, signal) {
   const key = getTmdbKey();
-  if (!key) throw new Error('Introduce tu clave de TMDB en Ajustes globales.');
+  if (!key) throw new Error("Introduce tu clave de TMDB en Ajustes globales.");
   const url = new URL(API + path);
-  url.searchParams.set('language', 'es-ES');
+  url.searchParams.set("language", "es-ES");
   for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
   const headers = {};
-  if (key.includes('.')) headers.Authorization = `Bearer ${key}`;
-  else url.searchParams.set('api_key', key);
+  if (key.includes(".")) headers.Authorization = `Bearer ${key}`;
+  else url.searchParams.set("api_key", key);
   const response = await fetch(url, { headers, signal });
-  if (!response.ok) throw new Error(response.status === 401 ? 'La clave de TMDB no es válida.' : `TMDB no disponible (${response.status}).`);
+  if (!response.ok) throw new Error(response.status === 401 ? "La clave de TMDB no es válida." : `TMDB no disponible (${response.status}).`);
   return response.json();
 }
 // Imágenes disponibles en TMDB para un título: { poster: [...], backdrop: [...], logo: [...] }
 export async function fetchTmdbImages(type, id, signal) {
-  const endpoint = type === 'collection' ? 'collection' : (type === 'serie' || type === 'tv' ? 'tv' : 'movie');
-  const data = await request(`/${endpoint}/${id}/images`, { include_image_language: 'es,en,null' }, signal);
-  const rank = (x) => (x.iso_639_1 === 'es' ? 0 : x.iso_639_1 === 'en' ? 1 : 2);
+  const endpoint = type === "collection" ? "collection" : (type === "serie" || type === "tv" ? "tv" : "movie");
+  const data = await request(`/${endpoint}/${id}/images`, { include_image_language: "es,en,null" }, signal);
+  const rank = (x) => (x.iso_639_1 === "es" ? 0 : x.iso_639_1 === "en" ? 1 : 2);
   const build = (list = [], thumb, full) => [...list]
     .sort((a, b) => rank(a) - rank(b) || (b.vote_average || 0) - (a.vote_average || 0))
     .slice(0, 40)
-    .map((x) => ({ thumb: imageUrl(x.file_path, thumb), url: imageUrl(x.file_path, full), lang: x.iso_639_1 || '' }));
+    .map((x) => ({ thumb: imageUrl(x.file_path, thumb), url: imageUrl(x.file_path, full), lang: x.iso_639_1 || "" }));
   return {
-    poster: build(data.posters, 'w185', 'w500'),
-    backdrop: build(data.backdrops, 'w300', 'w1280'),
-    logo: build(data.logos, 'w300', 'w500'),
+    poster: build(data.posters, "w185", "w500"),
+    backdrop: build(data.backdrops, "w300", "w1280"),
+    logo: build(data.logos, "w300", "w500"),
   };
 }
 
-export async function validateTmdbKey() { return request('/configuration'); }
+export async function validateTmdbKey() { return request("/configuration"); }
 
-const normalize = s => String(s || '')
-  .replace(/ñ/g, 'n').replace(/Ñ/g, 'N')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
+const normalize = s => String(s || "")
+  .replace(/ñ/g, "n").replace(/Ñ/g, "N")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
   .toLowerCase()
-  .replace(/[^a-z0-9]/g, '');
+  .replace(/[^a-z0-9]/g, "");
 
 export async function setManualMetadata(title, metadata) {
   if (!title || !metadata) return null;
   const key = `manual_tmdb:${title.id}`;
-  await kv.set(key, metadata).catch(e => console.warn('[tmdb] Error guardando identificación manual', e));
+  await kv.set(key, metadata).catch(e => console.warn("[tmdb] Error guardando identificación manual", e));
   // Sincronizar con otros dispositivos (sirve también para mensajes reenviados)
-  await setOverride(title.id, metadata).catch(e => console.warn('[tmdb] Error guardando override', e));
+  await setOverride(title.id, metadata).catch(e => console.warn("[tmdb] Error guardando override", e));
   title.metadata = metadata;
   title.tmdbId = metadata.id;
   return metadata;
@@ -131,23 +130,23 @@ export async function clearManualMetadata(title) {
 }
 
 export async function fetchTmdbFullDetails(type, id, signal) {
-  const endpoint = type === 'collection' ? 'collection' : (type === 'serie' || type === 'tv' ? 'tv' : 'movie');
-  if (endpoint === 'collection') return {};
-  const append = endpoint === 'tv' ? 'credits,external_ids,content_ratings' : 'credits,external_ids,release_dates';
+  const endpoint = type === "collection" ? "collection" : (type === "serie" || type === "tv" ? "tv" : "movie");
+  if (endpoint === "collection") return {};
+  const append = endpoint === "tv" ? "credits,external_ids,content_ratings" : "credits,external_ids,release_dates";
   try {
     const data = await request(`/${endpoint}/${id}`, { append_to_response: append }, signal);
     const crew = data.credits?.crew || [];
-    const director = crew.find(c => c.job === 'Director')?.name || '';
-    const writer = crew.find(c => c.job === 'Screenplay' || c.job === 'Writer' || c.job === 'Story')?.name || '';
-    const cast = (data.credits?.cast || []).slice(0, 5).map(c => c.name).join(', ');
-    const imdbId = data.external_ids?.imdb_id || data.imdb_id || '';
-    let ageRating = '';
-    if (endpoint === 'movie') {
-      const esRelease = data.release_dates?.results?.find(r => r.iso_3166_1 === 'ES');
+    const director = crew.find(c => c.job === "Director")?.name || "";
+    const writer = crew.find(c => c.job === "Screenplay" || c.job === "Writer" || c.job === "Story")?.name || "";
+    const cast = (data.credits?.cast || []).slice(0, 5).map(c => c.name).join(", ");
+    const imdbId = data.external_ids?.imdb_id || data.imdb_id || "";
+    let ageRating = "";
+    if (endpoint === "movie") {
+      const esRelease = data.release_dates?.results?.find(r => r.iso_3166_1 === "ES");
       const cert = esRelease?.release_dates?.find(d => d.certification)?.certification;
       if (cert) ageRating = cert;
     } else {
-      const esRating = data.content_ratings?.results?.find(r => r.iso_3166_1 === 'ES');
+      const esRating = data.content_ratings?.results?.find(r => r.iso_3166_1 === "ES");
       if (esRating?.rating) ageRating = esRating.rating;
     }
     const col = data.belongs_to_collection;
@@ -155,7 +154,7 @@ export async function fetchTmdbFullDetails(type, id, signal) {
       id: col.id,
       name: col.name,
       poster: imageUrl(col.poster_path),
-      backdrop: imageUrl(col.backdrop_path, 'w1280'),
+      backdrop: imageUrl(col.backdrop_path, "w1280"),
     } : null;
     return {
       director,
@@ -164,52 +163,61 @@ export async function fetchTmdbFullDetails(type, id, signal) {
       imdbId,
       ageRating,
       rating: data.vote_average != null ? Number(data.vote_average) : 0,
-      overview: data.overview || '',
+      overview: data.overview || "",
+      runtime: data.runtime || 0,
       collection,
     };
 
   } catch (e) {
-    console.warn('[tmdb] Error fetching full details:', e);
+    console.warn("[tmdb] Error fetching full details:", e);
     return {};
   }
 }
 
-export async function searchTmdbManual({ query, type = 'movie', year = '', directId = null }, signal) {
-  const endpoint = type === 'collection' ? 'collection' : type === 'serie' || type === 'tv' ? 'tv' : 'movie';
+export async function searchTmdbManual({ query, type = "movie", year = "", directId = null }, signal) {
+  const endpoint = type === "collection" ? "collection" : type === "serie" || type === "tv" ? "tv" : "movie";
   const id = parseTmdbId(directId);
   if (id) {
     const data = await request(`/${endpoint}/${id}`, {}, signal);
+    const col = data.belongs_to_collection;
+    const collection = col ? {
+      id: col.id,
+      name: col.name,
+      poster: imageUrl(col.poster_path),
+      backdrop: imageUrl(col.backdrop_path, "w1280"),
+    } : null;
     return [{
       id: data.id,
       type: endpoint,
       name: data.name || data.title,
-      overview: data.overview || '',
-      date: data.first_air_date || data.release_date || '',
+      overview: data.overview || "",
+      date: data.first_air_date || data.release_date || "",
       poster: imageUrl(data.poster_path),
-      backdrop: imageUrl(data.backdrop_path, 'w1280'),
+      backdrop: imageUrl(data.backdrop_path, "w1280"),
       rating: data.vote_average || 0,
+      collection,
     }];
   }
 
   const parsed = extractTitleAndYear(query);
-  const q = String(parsed.title || query || '').trim();
-  const searchYear = String(year || parsed.year || '').trim();
+  const q = String(parsed.title || query || "").trim();
+  const searchYear = String(year || parsed.year || "").trim();
 
   if (!q) return [];
   const params = { query: q };
-  if (searchYear && endpoint !== 'collection') {
-    params[endpoint === 'tv' ? 'first_air_date_year' : 'year'] = searchYear;
+  if (searchYear && endpoint !== "collection") {
+    params[endpoint === "tv" ? "first_air_date_year" : "year"] = searchYear;
   }
   let search = await request(`/search/${endpoint}`, params, signal);
-  if ((!search.results || search.results.length === 0) && searchYear && endpoint !== 'collection') {
+  if ((!search.results || search.results.length === 0) && searchYear && endpoint !== "collection") {
     search = await request(`/search/${endpoint}`, { query: q }, signal).catch(() => search);
   }
 
   // Fallback si contiene caracteres especiales o "ñ": probar búsqueda transliterada
   if (!search.results || search.results.length === 0) {
     const unaccented = q
-      .replace(/ñ/g, 'n').replace(/Ñ/g, 'N')
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      .replace(/ñ/g, "n").replace(/Ñ/g, "N")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
     if (unaccented && unaccented.toLowerCase() !== q.toLowerCase()) {
       search = await request(`/search/${endpoint}`, { query: unaccented }, signal).catch(() => search);
     }
@@ -219,10 +227,10 @@ export async function searchTmdbManual({ query, type = 'movie', year = '', direc
     id: r.id,
     type: endpoint,
     name: r.name || r.title,
-    overview: r.overview || '',
-    date: r.first_air_date || r.release_date || '',
+    overview: r.overview || "",
+    date: r.first_air_date || r.release_date || "",
     poster: imageUrl(r.poster_path),
-    backdrop: imageUrl(r.backdrop_path, 'w1280'),
+    backdrop: imageUrl(r.backdrop_path, "w1280"),
     rating: r.vote_average || 0,
   }));
 }
@@ -244,11 +252,11 @@ async function enrichSaga(title, { signal } = {}) {
   let data;
   if (directId) data = await request(`/collection/${directId}`, {}, signal);
   else {
-    let search = await request('/search/collection', { query }, signal);
+    let search = await request("/search/collection", { query }, signal);
     if (!search.results || search.results.length === 0) {
-      const unaccented = query.replace(/ñ/g, 'n').replace(/Ñ/g, 'N').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      const unaccented = query.replace(/ñ/g, "n").replace(/Ñ/g, "N").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
       if (unaccented && unaccented.toLowerCase() !== query.toLowerCase()) {
-        search = await request('/search/collection', { query: unaccented }, signal).catch(() => search);
+        search = await request("/search/collection", { query: unaccented }, signal).catch(() => search);
       }
     }
     const match = search.results?.find(r => normalize(r.name) === normalize(query)) || search.results?.[0];
@@ -256,40 +264,81 @@ async function enrichSaga(title, { signal } = {}) {
     data = await request(`/collection/${match.id}`, {}, signal);
   }
   const metadata = {
-    id: data.id, type: 'collection', name: data.name || title.nombre,
-    overview: data.overview || '', poster: imageUrl(data.poster_path),
-    backdrop: imageUrl(data.backdrop_path, 'w1280'),
+    id: data.id, type: "collection", name: data.name || title.nombre,
+    overview: data.overview || "", poster: imageUrl(data.poster_path),
+    backdrop: imageUrl(data.backdrop_path, "w1280"),
   };
-  await kv.set(cacheKey, metadata).catch(error => console.warn('[tmdb] Caché no disponible', error));
+  await kv.set(cacheKey, metadata).catch(error => console.warn("[tmdb] Caché no disponible", error));
   title.metadata = metadata;
   return metadata;
 }
 
 export async function enrichTitle(title, { signal } = {}) {
-  if (!['pelicula', 'serie'].includes(title?.tipo)) return null;
+  if (!["pelicula", "serie"].includes(title?.tipo)) return null;
   const ov = getOverride(title.id);
-  if (ov) { title.metadata = ov; title.tmdbId = ov.id; return ov; }
+  if (ov) {
+    if (title.tipo === "pelicula" && ov.id && ov.collection === undefined && getTmdbKey()) {
+      fetchTmdbFullDetails("movie", ov.id, signal).then(full => {
+        if (full?.collection !== undefined) {
+          ov.collection = full.collection;
+          setOverride(title.id, ov).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    title.metadata = ov; title.tmdbId = ov.id; return ov;
+  }
   // Reenvío u otro mensaje: mismo TMDB en caption o ya conocido
   const byTmdb = title.tmdbId ? getOverrideByTmdbId(title.tmdbId) : null;
-  if (byTmdb) { title.metadata = byTmdb; title.tmdbId = byTmdb.id; return byTmdb; }
+  if (byTmdb) {
+    if (title.tipo === "pelicula" && byTmdb.id && byTmdb.collection === undefined && getTmdbKey()) {
+      fetchTmdbFullDetails("movie", byTmdb.id, signal).then(full => {
+        if (full?.collection !== undefined) {
+          byTmdb.collection = full.collection;
+          setOverride(title.id, byTmdb).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    title.metadata = byTmdb; title.tmdbId = byTmdb.id; return byTmdb;
+  }
   const manual = await kv.get(`manual_tmdb:${title.id}`).catch(() => null);
-  if (manual) { title.metadata = manual; title.tmdbId = manual.id; return manual; }
+  if (manual) {
+    if (title.tipo === "pelicula" && manual.id && manual.collection === undefined && getTmdbKey()) {
+      fetchTmdbFullDetails("movie", manual.id, signal).then(full => {
+        if (full?.collection !== undefined) {
+          manual.collection = full.collection;
+          setManualMetadata(title, manual).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    title.metadata = manual; title.tmdbId = manual.id; return manual;
+  }
 
   if (title.isSaga) return enrichSaga(title, { signal });
-  const type = title.tipo === 'serie' ? 'tv' : 'movie';
+  const type = title.tipo === "serie" ? "tv" : "movie";
   const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
   const parsed = extractTitleAndYear(title.nombre);
   const query = parsed.title;
-  const year = parsed.year || title.yearHint;
-  const cacheKey = `tmdb_v2:${type}:${directId || `${query.toLowerCase()}:${year || ''}`}`;
+  // Priorizar siempre el año explícito entre paréntesis extraído inicialmente en yearHint
+  const year = title.yearHint || parsed.year;
+  const cacheKey = `tmdb_v2:${type}:${directId || `${query.toLowerCase()}:${year || ""}`}`;
   const cached = await kv.get(cacheKey).catch(() => null);
-  if (cached) { title.metadata = cached; return cached; }
+  if (cached) {
+    if (type === "movie" && cached.id && cached.collection === undefined && getTmdbKey()) {
+      try {
+        const full = await fetchTmdbFullDetails("movie", cached.id, signal);
+        cached.collection = full?.collection || null;
+        await kv.set(cacheKey, cached).catch(() => {});
+      } catch (_) {}
+    }
+    title.metadata = cached;
+    return cached;
+  }
   if (!getTmdbKey()) return null;
   let id = directId;
   if (!id) {
     const params = { query };
     if (year) {
-      params[type === 'tv' ? 'first_air_date_year' : 'year'] = year;
+      params[type === "tv" ? "first_air_date_year" : "year"] = year;
     }
     let search = await request(`/search/${type}`, params, signal);
     if ((!search.results || search.results.length === 0) && year) {
@@ -297,7 +346,7 @@ export async function enrichTitle(title, { signal } = {}) {
     }
     // Fallback para caracteres con "ñ" o tildes que puedan no coincidir exactamente en TMDB
     if (!search.results || search.results.length === 0) {
-      const unaccented = query.replace(/ñ/g, 'n').replace(/Ñ/g, 'N').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      const unaccented = query.replace(/ñ/g, "n").replace(/Ñ/g, "N").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
       if (unaccented && unaccented.toLowerCase() !== query.toLowerCase()) {
         search = await request(`/search/${type}`, { query: unaccented }, signal).catch(() => search);
       }
@@ -314,12 +363,12 @@ export async function enrichTitle(title, { signal } = {}) {
     id: col.id,
     name: col.name,
     poster: imageUrl(col.poster_path),
-    backdrop: imageUrl(col.backdrop_path, 'w1280'),
+    backdrop: imageUrl(col.backdrop_path, "w1280"),
   } : null;
   const metadata = { id: data.id, type, name: data.name || data.title, overview: data.overview, rating: data.vote_average,
-    date: data.first_air_date || data.release_date, poster: imageUrl(data.poster_path), backdrop: imageUrl(data.backdrop_path, 'w1280'),
+    date: data.first_air_date || data.release_date, poster: imageUrl(data.poster_path), backdrop: imageUrl(data.backdrop_path, "w1280"),
     collection };
-  await kv.set(cacheKey, metadata).catch(error => console.warn('[tmdb] Caché no disponible', error));
+  await kv.set(cacheKey, metadata).catch(error => console.warn("[tmdb] Caché no disponible", error));
   title.metadata = metadata;
   return metadata;
 }
@@ -331,24 +380,34 @@ export async function enrichTitles(titles, { signal, onUpdate } = {}) {
       const title = titles[index++];
       try {
         if (await enrichTitle(title, { signal })) onUpdate?.(title);
-        // Cada película dentro de una saga obtiene metadatos propios, además de la portada de colección.
-        if (title.isSaga) {
+        // Cada película dentro de una saga obtiene metadatos propios con clave individual para respetar overrides
+        if (title.isSaga && Array.isArray(title.archivos)) {
           for (const file of title.archivos) {
             if (signal?.aborted) break;
             const parsedFilm = extractTitleAndYear(file.fileName || file.label);
+            const fileKey = file.key || `${title.channel?.id || title.id}:${file.messageId}`;
             const film = {
-              tipo: 'pelicula', nombre: parsedFilm.title, tmdbId: file.tmdbId,
-              yearHint: file.fileName?.match(/\b((?:19\d{2}|20[0-2]\d|2030))\b/)?.[1] || parsedFilm.year, archivos: [file],
+              id: fileKey,
+              tipo: "pelicula",
+              nombre: parsedFilm.title || file.label,
+              tmdbId: file.tmdbId,
+              yearHint: parsedFilm.year || file.yearHint,
+              archivos: [file],
             };
             try {
               const metadata = await enrichTitle(film, { signal });
-              if (metadata) { file.metadata = metadata; onUpdate?.(title); }
+              if (metadata) {
+                file.metadata = metadata;
+                file.tmdbId = metadata.id;
+                if (metadata.name) file.sagaName = metadata.name;
+                onUpdate?.(title);
+              }
             } catch (error) {
-              if (error.name !== 'AbortError') console.warn('[tmdb saga film]', error.message);
+              if (error.name !== "AbortError") console.warn("[tmdb saga film]", error.message);
             }
           }
         }
-      } catch (error) { if (error.name !== 'AbortError') console.warn('[tmdb]', error.message); }
+      } catch (error) { if (error.name !== "AbortError") console.warn("[tmdb]", error.message); }
     }
   }));
 }
