@@ -4,10 +4,13 @@ export function applyCenteredCueFix(video) {
     if (!cue) return;
     try {
       cue.align = 'center';
+      // Caja del cue centrada y a todo el ancho (en iOS/WebKit, sin position/size quedaba pegada a la derecha)
+      try { cue.position = 50; } catch (_) {}
+      try { cue.positionAlign = 'center'; } catch (_) {}
+      try { cue.size = 100; } catch (_) {}
       cue.snapToLines = false;
       cue.line = 83;
       try { cue.lineAlign = 'end'; } catch (_) {}
-      try { cue.positionAlign = 'center'; } catch (_) {}
     } catch (_) {}
   };
 

@@ -501,6 +501,11 @@ export async function playExoPlayer(opts) {
       let result = null;
       try {
         result = await ExoPlayerPlugin.getTracks();
+        // Las pistas llegan tras preparar el vídeo: reintentar unos instantes si aún no hay ninguna
+        for (let attempt = 0; attempt < 4 && !(result?.audio?.length || result?.text?.length); attempt++) {
+          await new Promise((r) => setTimeout(r, 700));
+          result = await ExoPlayerPlugin.getTracks();
+        }
       } catch (error) {
         console.warn('[exoplayer] getTracks error', error);
         showToast(playerEl, `No se pudieron leer las pistas: ${error?.message || 'error'}`);
