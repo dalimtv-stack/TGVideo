@@ -23,13 +23,34 @@ export function buildHomeRows(titles, progress) {
 
   const groupRows = (list, label) => {
     const m = new Map();
-    list.forEach(t => { if (!m.has(t.grupo)) m.set(t.grupo, []); m.get(t.grupo).push(t); });
+    list.forEach(t => {
+      const g = (t.grupo || '').trim();
+      if (!g) return;
+      if (!m.has(g)) m.set(g, []);
+      m.get(g).push(t);
+    });
     [...m.keys()].sort((a, b) => a.localeCompare(b)).forEach(g =>
-      rows.push({ id: `${label}-${g}`, title: `${label} · ${g}`,
-        items: m.get(g).sort((a, b) => (a.metadata?.name || a.nombre).localeCompare(b.metadata?.name || b.nombre, 'es', { numeric: true })) }));
+      rows.push({
+        id: `${label}-${g}`,
+        title: `${label} · ${g}`,
+        items: m.get(g).sort((a, b) => (a.metadata?.name || a.nombre).localeCompare(b.metadata?.name || b.nombre, 'es', { numeric: true }))
+      })
+    );
   };
   groupRows(series, 'Series');
-  groupRows(movies, 'Películas');
+
+  // En la Home, solo canales habituales de películas:
+  // Se excluyen las sagas completas (isSaga), las colecciones virtuales,
+  // el grupo 'Sagas' y las películas sueltas cuyo origen sea un canal de saga (origen: saga_pelicula o channel.isSaga).
+  const channelMovies = movies.filter(t =>
+    !t.isSaga &&
+    !t.isVirtualSaga &&
+    t.metadata?.tipo !== 'collection' &&
+    t.origen?.tipo !== 'saga_pelicula' &&
+    !t.channel?.isSaga &&
+    (t.grupo || '').trim().toLowerCase() !== 'sagas'
+  );
+  groupRows(channelMovies, 'Películas');
   return rows;
 }
 
