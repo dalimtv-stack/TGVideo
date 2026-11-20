@@ -138,8 +138,46 @@ export function bindNextUp({ getTime, getDuration, playerEl, nextFile, title, on
 
   const onKey = (e) => {
     if (!el) return;
+    const isBack = e.key === 'Escape' || e.key === 'Back' || e.key === 'GoBack' || e.keyCode === 4;
+    if (isBack) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      cancel();
+      return;
+    }
+
+    // Permitir navegación con flechas directa dentro del diálogo saga
+    if (!isSerie) {
+      const playBtn = el.querySelector('.player-next-up-play');
+      const cancelBtn = el.querySelector('.player-next-up-cancel');
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        if (cancelBtn && document.activeElement !== cancelBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          cancelBtn.focus();
+          return;
+        }
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        if (playBtn && document.activeElement !== playBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          playBtn.focus();
+          return;
+        }
+      }
+    }
+
     const ok = e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 23;
     if (!ok) return;
+
+    // Si el foco está sobre uno de los botones del diálogo, dejamos que el evento click del botón actúe
+    const active = document.activeElement;
+    if (active && el.contains(active)) {
+      return;
+    }
+
+    // Fallback si ningún botón del diálogo tiene el foco directo
     e.preventDefault();
     e.stopImmediatePropagation();
     if (!isSerie) {
