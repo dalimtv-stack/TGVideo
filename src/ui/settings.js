@@ -1,6 +1,7 @@
 import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
 // src/ui/settings.js
-import { getGlobalConfig, getTmdbKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
+import { getGlobalConfig, getTmdbKey, getFanartKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
+import { validateFanartKey } from '../metadata/fanart.js';
 import { loadProgress } from '../player/progress.js';
 import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../metadata/posterCache.js';
 import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js';
@@ -460,6 +461,8 @@ function globalSettings(sync, onChanged, libraryTitles = []) {
   const ownKey = !!getGlobalConfig().tmdb?.apiKey;
   const demoAvailable = !!import.meta.env?.VITE_TMDB_DEMO_API_KEY;
   const status = ownKey ? 'Usando tu clave personalizada de TMDB.' : demoAvailable ? 'Usando clave demo integrada.' : 'No hay clave demo configurada. Introduce tu clave de TMDB.';
+  const ownFanartKey = !!getGlobalConfig().fanart?.apiKey;
+  const fanartStatus = ownFanartKey ? 'Clave de Fanart.tv configurada y activa.' : 'Opcional. Introduce tu clave de Fanart.tv para logos, carteles y fondos alternativos.';
   const currentMaxMb = getCacheMaxMb() || 100;
 
   const { overlay, close } = modal('Ajustes globales', `
@@ -471,6 +474,15 @@ function globalSettings(sync, onChanged, libraryTitles = []) {
           <input name="apiKey" type="password" autocomplete="off" data-focusable placeholder="${ownKey ? 'Nueva clave (dejar vacío para conservar)' : 'API Key o token de lectura'}">
         </label>
         ${ownKey ? `<button class="btn-ghost btn-sm" data-focusable type="button" id="reset-tmdb">${demoAvailable ? 'Usar clave demo' : 'Eliminar clave personalizada'}</button>` : ''}
+      </fieldset>
+
+      <fieldset class="settings-section">
+        <legend class="settings-legend">Imágenes de Fanart.tv</legend>
+        <p class="settings-hint">${fanartStatus}</p>
+        <label>Clave de Fanart.tv
+          <input name="fanartApiKey" type="password" autocomplete="off" data-focusable placeholder="${ownFanartKey ? 'Nueva clave (dejar vacío para conservar)' : 'API Key de Fanart.tv'}">
+        </label>
+        ${ownFanartKey ? `<button class="btn-ghost btn-sm" data-focusable type="button" id="reset-fanart">Eliminar clave de Fanart.tv</button>` : ''}
       </fieldset>
 
       <fieldset class="settings-section">
@@ -553,7 +565,7 @@ function globalSettings(sync, onChanged, libraryTitles = []) {
     msg.textContent = '✓ Caché de portadas vaciada por completo.';
   });
 
-  async function save({ apiKey, cacheMaxMb }) {
+  async function save({ apiKey, fanartApiKey, cacheMaxMb }) {
     const buttons = overlay.querySelectorAll('button'); buttons.forEach(b => b.disabled = true);
     const message = overlay.querySelector('[role="status"]');
     message.textContent = 'Guardando configuración…';
@@ -566,7 +578,14 @@ function globalSettings(sync, onChanged, libraryTitles = []) {
         const response = await fetch(url, { headers });
         if (!response.ok) throw new Error('No se pudo validar la clave de TMDB. Comprueba la clave y tu conexión.');
       }
-      await saveGlobalConfig(sync, { apiKey, cacheMaxMb });
+      if (fanartApiKey) {
+        try {
+          await validateFanartKey(fanartApiKey);
+        } catch (err) {
+          throw new Error('No se pudo validar la clave de Fanart.tv: ' + (err?.message || err));
+        }
+      }
+      await saveGlobalConfig(sync, { apiKey, fanartApiKey, cacheMaxMb });
       close(); onChanged();
     } catch (error) { message.textContent = error.message; }
     finally { buttons.forEach(b => b.disabled = false); }
@@ -575,11 +594,20 @@ function globalSettings(sync, onChanged, libraryTitles = []) {
   overlay.querySelector('form').onsubmit = e => {
     e.preventDefault();
     const key = e.currentTarget.elements.apiKey.value.trim();
+    const fanartKey = e.currentTarget.elements.fanartApiKey.value.trim();
     const cacheMaxMb = Number(e.currentTarget.elements.cacheMaxMb.value) || 100;
-    save({ apiKey: key || (ownKey ? undefined : ''), cacheMaxMb });
+    save({
+      apiKey: key || (ownKey ? undefined : ''),
+      fanartApiKey: fanartKey || (ownFanartKey ? undefined : ''),
+      cacheMaxMb
+    });
   };
   overlay.querySelector('#reset-tmdb')?.addEventListener('click', () => {
     const cacheMaxMb = Number(overlay.querySelector('[name="cacheMaxMb"]').value) || 100;
     save({ apiKey: '', cacheMaxMb });
+  });
+  overlay.querySelector('#reset-fanart')?.addEventListener('click', () => {
+    const cacheMaxMb = Number(overlay.querySelector('[name="cacheMaxMb"]').value) || 100;
+    save({ fanartApiKey: '', cacheMaxMb });
   });
 }
