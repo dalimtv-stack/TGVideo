@@ -712,14 +712,18 @@
 
 /* Subtítulos nativos y WebKit: siempre Warm Amber (#FECB00), contorno 4px, sombra 3px/9px/50%, sin caja de fondo, abajo de todo */
 ::cue,
+::cue(*),
 video::cue,
+video::cue(*),
 .native-video::cue,
-.art-video-player video::cue {
+.native-video::cue(*),
+.art-video-player video::cue,
+.art-video-player video::cue(*) {
   background: transparent !important;
   background-color: transparent !important;
   color: #FECB00 !important;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
-  font-size: clamp(1rem, 2.6vw, 1.55rem) !important;
+  font-size: clamp(1rem, 2.4vw, 1.45rem) !important;
   font-weight: 700 !important;
   line-height: 1.35 !important;
   text-align: center !important;
@@ -732,52 +736,6 @@ video::cue,
   border-radius: 0 !important;
   box-shadow: none !important;
   padding: 0 !important;
-}
-
-/* Safari WebKit Text Track container & display overrides: obligan a colocar abajo de todo en iPhone */
-video::-webkit-media-text-track-container,
-.native-video::-webkit-media-text-track-container {
-  position: absolute !important;
-  left: 0 !important;
-  right: 0 !important;
-  top: auto !important;
-  bottom: 0 !important;
-  height: auto !important;
-  max-height: 40% !important;
-  width: 100% !important;
-  max-width: 100% !important;
-  box-sizing: border-box !important;
-  text-align: center !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: center !important;
-  justify-content: flex-end !important;
-  padding-bottom: max(1.8rem, calc(env(safe-area-inset-bottom, 0px) + 1.2rem)) !important;
-  padding-left: max(1rem, env(safe-area-inset-left, 0px)) !important;
-  padding-right: max(1rem, env(safe-area-inset-right, 0px)) !important;
-  pointer-events: none !important;
-  overflow: visible !important;
-}
-
-video::-webkit-media-text-track-display,
-.native-video::-webkit-media-text-track-display {
-  position: relative !important;
-  top: auto !important;
-  bottom: 0 !important;
-  margin-top: auto !important;
-  text-align: center !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  left: 0 !important;
-  right: 0 !important;
-  max-width: 90% !important;
-  box-sizing: border-box !important;
-}
-
-video::-webkit-media-text-track-region,
-.native-video::-webkit-media-text-track-region {
-  text-align: center !important;
-  margin: 0 auto !important;
 }
 
 /* ArtPlayer custom subtitle container */
