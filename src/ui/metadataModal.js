@@ -2,7 +2,7 @@
 import { Api } from 'telegram';
 import { modal } from './settings.js';
 import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata, enrichTitle, fetchTmdbFullDetails } from '../metadata/tmdb.js';
-import { buildStandardCaption } from '../library/parse.js';
+import { buildStandardCaption, parseCaption } from '../library/parse.js';
 import { loadPoster } from '../metadata/posterCache.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -14,7 +14,7 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
   const initialYear = parsed.year || title.yearHint || '';
   const currentType = title.isSaga ? 'collection' : title.tipo === 'serie' ? 'tv' : 'movie';
 
-  const telegramFileName = title.archivos?.[0]?.fileName || title.nombre || '';
+  const telegramFileName = title.archivos?.[0]?.captionFileName || title.archivos?.[0]?.fileName || title.nombre || '';
   const telegramChannel = title.channel?.title || title.channel?.name || title.grupo || '';
 
   const statusText = currentMeta
@@ -173,17 +173,21 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
                   for (const file of files) {
                     if (!file.messageId) continue;
                     try {
+                      // Si el caption original contenía "Nombre de archivo: ", respetarlo estrictamente ya que Telegram trunca nombres largos
+                      const existingCap = parseCaption(file.rawCaption || file.caption || '');
+                      const preservedFileName = existingCap.fileName || file.captionFileName || file.fileName || file.label;
+
                       const newCap = buildStandardCaption({
-                        fileName: file.fileName || file.label,
-                        section: file.section || title.origen?.seccion || null,
+                        fileName: preservedFileName,
+                        section: file.section || title.origen?.seccion || existingCap.section || null,
                         tmdbId: selected.id,
-                        imdbId: selected.imdbId || '',
-                        director: selected.director || '',
-                        writer: selected.writer || '',
-                        cast: selected.cast || '',
-                        rating: selected.rating || '',
-                        ageRating: selected.ageRating || '',
-                        synopsis: selected.overview || '',
+                        imdbId: selected.imdbId || existingCap.imdbId || '',
+                        director: selected.director || existingCap.director || '',
+                        writer: selected.writer || existingCap.writer || '',
+                        cast: selected.cast || existingCap.cast || '',
+                        rating: selected.rating || existingCap.rating || '',
+                        ageRating: selected.ageRating || existingCap.ageRating || '',
+                        synopsis: selected.overview || existingCap.synopsis || '',
                       });
 
                       // EditMessage al estilo TGComic con Api.messages.EditMessage
@@ -194,6 +198,8 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
                       }));
 
                       file.caption = newCap;
+                      file.rawCaption = newCap;
+                      file.captionFileName = preservedFileName;
                       if (!file.synopsis) file.synopsis = selected.overview || null;
                     } catch (mErr) {
                       const em = String(mErr?.errorMessage || mErr?.message || mErr || '');
