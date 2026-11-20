@@ -12,15 +12,24 @@ async function scanFiles(client, peer, ch) {
   const files = [];
   for await (const msg of client.iterMessages(peer)) {
     if (!isVideoMessage(msg)) continue;
-    const cap = parseCaption(msg.message || '');
-    const fileName = getFileName(msg) || cap.fileName || `video_${msg.id}`;
+    const rawCaption = msg.message || '';
+    const cap = parseCaption(rawCaption);
+    // Telegram habitualmente trunca los nombres largos en DocumentAttributeFilename.
+    // Si el caption incluye "Nombre de archivo: ", se respeta escrupulosamente.
+    const captionFileName = cap.fileName ? cap.fileName.trim() : null;
+    const rawFileName = getFileName(msg) || '';
+    const fileName = captionFileName || rawFileName || `video_${msg.id}`;
     const ep = parseEpisode(fileName);
     const doc = msg.document || msg.media?.document;
     const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
     files.push({
       key: `${ch.id}:${msg.id}`, channelId: String(ch.id), messageId: msg.id,
       channel: ch,
-      fileName, label: prettyName(fileName), section: cap.section || null,
+      fileName,
+      captionFileName,
+      rawFileName,
+      rawCaption,
+      label: prettyName(fileName), section: cap.section || null,
       synopsis: cap.synopsis || null, tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null,
       season: ep.season, episode: ep.episode,
       size: Number(doc?.size?.toString?.() || doc?.size || 0),
@@ -61,9 +70,10 @@ export function seriesNameFromFile(fileName = '') {
 }
 
 function movieName(file) {
-  const parsed = extractTitleAndYear(file.fileName || file.label || `video_${file.messageId}`);
+  const target = file.captionFileName || file.fileName || file.label || `video_${file.messageId}`;
+  const parsed = extractTitleAndYear(target);
   if (parsed.title) return parsed.title;
-  return String(file.fileName || file.label || `video_${file.messageId}`)
+  return String(target)
     .replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '')
     .replace(/[._]+/g, ' ')
     .replace(/\b(\d{3,4}p|[248]k|bluray|brrip|webrip|web[- ]?dl|hdtv|x26[45]|h26[45]|hevc)\b.*/i, '')
@@ -255,7 +265,8 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       const channelYear = /^\d{4}$/.test(String(ch.name || '').trim()) ? ch.name.trim() : null;
       const movieMap = new Map();
       for (const f of files) {
-        const parsedFile = extractTitleAndYear(f.fileName || f.label);
+        const targetFileName = f.captionFileName || f.fileName || f.label;
+        const parsedFile = extractTitleAndYear(targetFileName);
         const yearHint = parsedFile.year || channelYear;
         const baseName = parsedFile.title || movieName(f);
         const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
@@ -302,7 +313,8 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       // Y además, cada película de la saga aparece suelta en Películas y Novedades
       const movieMap = new Map();
       for (const f of files) {
-        const parsedFile = extractTitleAndYear(f.fileName || f.label);
+        const targetFileName = f.captionFileName || f.fileName || f.label;
+        const parsedFile = extractTitleAndYear(targetFileName);
         const yearHint = parsedFile.year || null;
         const baseName = parsedFile.title || movieName(f);
         const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
@@ -338,11 +350,11 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       }
     } else if (ch.macro) {
       const isSeries = ch.category === 'Series';
-      const keyed = files.map(f => (f.section || !isSeries) ? f : { ...f, section: seriesNameFromFile(f.fileName) });
+      const keyed = files.map(f => (f.section || !isSeries) ? f : { ...f, section: seriesNameFromFile(f.captionFileName || f.fileName) });
       for (const [sec, fs] of splitBySection(keyed)) {
         if (fs && fs.length > 0) {
           const parsedSec = extractTitleAndYear(sec);
-          const fileYear = fs.map(f => extractTitleAndYear(f.fileName || f.label).year).find(Boolean) || null;
+          const fileYear = fs.map(f => extractTitleAndYear(f.captionFileName || f.fileName || f.label).year).find(Boolean) || null;
           const titleYearHint = parsedSec.year || fileYear;
           const t = makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs });
           if (titleYearHint) t.yearHint = titleYearHint;
