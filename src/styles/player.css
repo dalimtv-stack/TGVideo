@@ -738,6 +738,43 @@ video::cue(*),
   padding: 0 !important;
 }
 
+/* Eliminación explícita del fondo gris/negro en Safari WebKit (display, backdrop y container) */
+video::-webkit-media-text-track-display-backdrop,
+.native-video::-webkit-media-text-track-display-backdrop,
+::-webkit-media-text-track-display-backdrop {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+video::-webkit-media-text-track-display,
+.native-video::-webkit-media-text-track-display,
+::-webkit-media-text-track-display {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+video::-webkit-media-text-track-background,
+.native-video::-webkit-media-text-track-background,
+::-webkit-media-text-track-background {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+video::-webkit-media-text-track-container,
+.native-video::-webkit-media-text-track-container,
+::-webkit-media-text-track-container {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 /* ArtPlayer custom subtitle container */
 .artplayer-app .art-subtitle,
 .art-video-player .art-subtitle,
@@ -756,6 +793,17 @@ video::cue(*),
   z-index: 25 !important;
   box-sizing: border-box !important;
   padding: 0 1rem !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.artplayer-app .art-subtitle *,
+.art-video-player .art-subtitle *,
+.art-subtitle * {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
 }
 
 .artplayer-app .art-subtitle p,
