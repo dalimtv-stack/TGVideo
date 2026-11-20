@@ -16,7 +16,7 @@ import './style.css';
 import { createTelegramClient } from './core/telegram.js';
 import { createTelegramSync } from './sync/telegramSync.js';
 import { loadLibrary } from './library/channels.js';
-import { buildTitles, mergeMoviesByTmdb } from './library/titles.js';
+import { buildTitles, mergeMoviesByTmdb, attachAutoCollections } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
 import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
 import { loadProgress, loadFavorites, saveFavorites, mergeFavorites, writeFullProgress, titleState, isFavorite, toggleFavorite, toggleAllWatched } from './player/progress.js';
@@ -233,7 +233,7 @@ const libraryViews = createLibraryViews({
   applyProfileScale, setBackHandler, getTitles: () => TITLES_CACHE, setTitles: value => { TITLES_CACHE = value; },
   loadProgress, titleState, formatPlayButtonLabel, esc, posterColor, memoryCache, showScreen, cardHtml,
   loadPoster, applyImagePrefs, getAutoLogo, fmtDur, fmtSize, enrichTitle, showImagePicker,
-  restoreOriginalImage, showMetadataModal, mergeMoviesByTmdb, playFile, fetchSeasonEpisodes,
+  restoreOriginalImage, showMetadataModal, mergeMoviesByTmdb, attachAutoCollections, playFile, fetchSeasonEpisodes,
   centerSeason, firstUncompleted, adjacentSeason, isFavorite, toggleFavorite, toggleAllWatched,
   focusFirst, showHome, app,
 });
@@ -468,7 +468,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       t.tmdbId = ov.id || t.tmdbId;
     }
   }
-  titles = mergeMoviesByTmdb(titles);
+  titles = attachAutoCollections(mergeMoviesByTmdb(titles));
   TITLES_CACHE = titles;
   // Carteles/fondos/logos elegidos por el usuario (por perfil + caché del dispositivo)
   titles.forEach(t => applyImagePrefs(t, profile));
@@ -571,9 +571,17 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       <main class="home-main">${body}</main>
     </div>`);
 
+  const activeNav = document.querySelector('.home-nav-item.active');
+  if (activeNav) {
+    requestAnimationFrame(() => {
+      activeNav.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
   document.querySelectorAll('.home-nav-item').forEach(button => {
     button.onclick = (e) => {
       button.blur();
+      button.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       showHome(tg, sync, profile, { selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
     };
   });
@@ -717,7 +725,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     // Tras enriquecer, re-agrupar películas con el mismo TMDB
     if (!metadataController.signal.aborted && TITLES_CACHE) {
       const before = TITLES_CACHE.length;
-      TITLES_CACHE = mergeMoviesByTmdb(TITLES_CACHE);
+      TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
       if (TITLES_CACHE.length !== before && document.querySelector('.home-screen')) {
         showHome(tg, sync, profile);
       }
