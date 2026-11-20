@@ -604,3 +604,18 @@
   background: rgba(255, 255, 255, 0.25) !important;
   box-shadow: 0 0 12px rgba(255, 255, 255, 0.5) !important;
 }
+
+/* ── Búsqueda ─────────────────────────────── */
+.nav-search-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 2.4em; padding-left: .7em; padding-right: .7em; }
+.nav-search-icon { font-size: 1em; line-height: 1; filter: grayscale(1) brightness(1.6); }
+.nav-search-btn.active .nav-search-icon { filter: none; }
+.search-bar { display: flex; align-items: center; gap: .6rem; width: 100%; max-width: 720px; margin: 0 auto;
+  padding: .35rem .5rem .35rem 1rem; border-radius: 999px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); }
+.search-bar:focus-within { border-color: rgba(255,255,255,.45); background: rgba(255,255,255,.12); }
+.search-bar-icon { opacity: .6; flex: none; }
+.search-input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; color: inherit; font: inherit; font-size: 1.05rem; padding: .45rem 0; }
+.search-input::-webkit-search-cancel-button { display: none; }
+.search-clear { flex: none; width: 2rem; height: 2rem; border-radius: 50%; border: 0; background: rgba(255,255,255,.12); color: inherit; cursor: pointer; }
+.search-clear:focus-visible, .search-clear.dpad-focused { outline: 2px solid currentColor; }
+.search-status { text-align: center; opacity: .6; font-size: .9rem; margin: .8rem 0 1rem; }
+@media (max-width: 600px) { .search-bar { max-width: none; } .search-input { font-size: 16px; } }

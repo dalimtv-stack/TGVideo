@@ -12,6 +12,7 @@ if (typeof window !== 'undefined') {
 }
 
 let LAST_OPENED_TITLE_ID = null;
+import { searchViewHtml, mountSearchView } from './ui/searchView.js';
 import './style.css';
 import { createTelegramClient } from './core/telegram.js';
 import { createTelegramSync } from './sync/telegramSync.js';
@@ -556,7 +557,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     ...(musicTitles.length ? [{ id: 'musica', label: 'Música', items: musicTitles }] : []),
     ...(collectionTitles.length ? [{ id: 'colecciones', label: 'Colecciones', items: collectionTitles }] : []),
   ];
-  if (!sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
+  const isSearch = selectedSection === 'buscar' && titles.length > 0;
+  if (!isSearch && !sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
   ACTIVE_HOME_SECTION = selectedSection;
   const activeSection = sectionDefs.find(section => section.id === selectedSection);
 
@@ -564,6 +566,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
         <p style="opacity:.6;margin-top:.5rem">Los canales deben terminar en <code>::Series::tgstorage</code> o <code>::Películas::tgstorage</code></p></div>`
+    : isSearch ? searchViewHtml()
     : selectedSection !== 'inicio' ? (() => {
         const currentSort = getSectionSort(profile.id, selectedSection);
         const sortedItems = sortTitles(activeSection?.items || [], currentSort);
@@ -599,7 +602,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     <div class="screen home-screen">
       <header class="home-header">
         <div class="home-logo">TGVideo</div>
-        ${sectionDefs.length ? `<nav class="home-nav" aria-label="Secciones">${sectionDefs.map(section => `<button class="home-nav-item ${section.id === selectedSection ? 'active' : ''}" data-focusable data-section="${esc(section.id)}" type="button" aria-current="${section.id === selectedSection ? 'page' : 'false'}">${esc(section.label)}</button>`).join('')}</nav>` : ''}
+        ${sectionDefs.length ? `<nav class="home-nav" aria-label="Secciones"><button class="home-nav-item nav-search-btn ${isSearch ? 'active' : ''}" data-focusable data-section="buscar" type="button" aria-label="Buscar" title="Buscar" aria-current="${isSearch ? 'page' : 'false'}"><span class="nav-search-icon" aria-hidden="true">🔍</span></button>${sectionDefs.map(section => `<button class="home-nav-item ${section.id === selectedSection ? 'active' : ''}" data-focusable data-section="${esc(section.id)}" type="button" aria-current="${section.id === selectedSection ? 'page' : 'false'}">${esc(section.label)}</button>`).join('')}</nav>` : ''}
         <div class="home-actions">
           <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
           <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile" title="${esc(profile.name)}" aria-label="Perfil: ${esc(profile.name)}">
@@ -624,6 +627,18 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       showHome(tg, sync, profile, { selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
     };
   });
+  if (isSearch) {
+    mountSearchView({
+      titles,
+      cardHtml: t => cardHtml(t, progress),
+      onOpen: t => libraryViews.showDetail(tg, sync, profile, t),
+      afterRender: root => root.querySelectorAll('.lib-card-poster img.poster-image').forEach(img => {
+        const url = img.getAttribute('data-poster-url') || img.src;
+        if (url) loadPoster(img, url);
+      }),
+    });
+    setBackHandler(() => showHome(tg, sync, profile, { selectedSection: 'inicio' }));
+  }
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
     btn.onclick = (e) => {
       btn.blur();
@@ -690,6 +705,11 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     }
     if (!el && focusTitleId) {
       el = document.querySelector(`.lib-card[data-title="${focusTitleId}"]`);
+    }
+    if (!el && isSearch) {
+      el = focusTitleId ? document.querySelector(`#search-results .lib-card[data-title="${focusTitleId}"]`) : null;
+      el ||= document.getElementById('search-input');
+      if (el) { el.focus({ preventScroll: true }); return; }
     }
     if (!el && !fromPointer) {
       // Categorías enfocan su pestaña activa en navegación D-Pad; Inicio mantiene el foco en la primera carátula.
