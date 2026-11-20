@@ -18,7 +18,6 @@ export function showNewsSettings(profile, sync, onChanged) {
         <button type="button" class="settings-radio-label news-option ${prefs[s.kind] === mode ? 'is-checked' : ''}" data-focusable data-kind="${s.kind}" data-mode="${mode}" role="radio" aria-checked="${prefs[s.kind] === mode}">
           <div class="settings-radio-info">
             <strong>${mode === 'upload' ? NEWS_MODES.upload : s.release}</strong>
-            <small>${mode === 'upload' ? 'Más recientes primero' : 'Más recientes primero (estreno o emisión)'}</small>
           </div>
         </button>`).join('')}
     </fieldset>`;
@@ -26,8 +25,7 @@ export function showNewsSettings(profile, sync, onChanged) {
   const { overlay } = modal('Configurar Novedades', `
     <div class="news-settings">
       ${SECTIONS.map(sectionHtml).join('')}
-      <p class="settings-status">La fila muestra hasta 30 títulos; con "+" se ven hasta 60.</p>
-    </div>`, 'Elige cómo se ordenan las novedades de la home', () => { if (changed) onChanged?.(); });
+    </div>`, 'Más recientes primero · fila: 30 títulos, con «+»: 60', () => { if (changed) onChanged?.(); });
 
   overlay.querySelectorAll('.news-option').forEach((btn) => {
     btn.onclick = () => {
