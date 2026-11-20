@@ -1,6 +1,7 @@
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
 import { extractTitleAndYear } from '../metadata/tmdb.js';
+import { getSagaMovieGroups } from './home.js';
 
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
@@ -375,33 +376,33 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       const idx = list.findIndex(x => String(x.key) === String(f.key));
       nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
     } else {
-      // Película individual: verificar si pertenece a una saga física o colección TMDB
-      const sagaTitle = allTitles.find(x => (x.isSaga || x.isVirtualSaga) && (
-        (targetTitle.sagaChannelId && String(x.channel?.id) === String(targetTitle.sagaChannelId)) ||
-        (targetTitle.channel?.id && String(x.channel?.id) === String(targetTitle.channel.id)) ||
-        (targetTitle.metadata?.collection?.id && (String(x.tmdbId) === String(targetTitle.metadata.collection.id) || String(x.metadata?.id) === String(targetTitle.metadata.collection.id))) ||
-        (x.archivos?.some(a => a.key === f.key))
-      ));
+      // Película individual (ej. Scream 1 seleccionada desde Películas, Seguir viendo o Novedades):
+      // Buscar si pertenece a una saga (canal físico o colección virtual TMDB) para reproducir la siguiente parte (ej. Scream 2)
+      const sagaGroups = getSagaMovieGroups(allTitles);
+      const targetGroup = sagaGroups.find(g =>
+        g.movies.some(m => String(m.id) === String(targetTitle.id) || m.archivos?.some(a => a.key === f.key))
+      );
 
-      if (sagaTitle && Array.isArray(sagaTitle.archivos) && sagaTitle.archivos.length > 1) {
-        const yearOf = (x) => Number(x.metadata?.date?.slice(0, 4) || x.fileName?.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
-        const sortedSaga = [...sagaTitle.archivos].sort((a, b) => (
-          yearOf(a) - yearOf(b) ||
-          (Number(b.size) || 0) - (Number(a.size) || 0) ||
-          (a.label || '').localeCompare(b.label || '', 'es', { numeric: true })
-        ));
-        const curFilmId = f.metadata?.id || f.tmdbId || f.sagaName || f.label;
-        nextFile = sortedSaga.find(x => {
-          const xFilmId = x.metadata?.id || x.tmdbId || x.sagaName || x.label;
-          if (xFilmId === curFilmId) return false;
-          return yearOf(x) > yearOf(f) || (yearOf(x) === yearOf(f) && sortedSaga.indexOf(x) > sortedSaga.indexOf(f));
-        }) || null;
-
-        if (nextFile) {
-          const standaloneNext = allTitles.find(x => !x.isSaga && !x.isVirtualSaga && x.archivos?.some(a => a.key === nextFile.key));
-          if (standaloneNext) nextTitle = standaloneNext;
+      if (targetGroup && targetGroup.movies.length > 1) {
+        const curIdx = targetGroup.movies.findIndex(m =>
+          String(m.id) === String(targetTitle.id) || m.archivos?.some(a => a.key === f.key)
+        );
+        if (curIdx >= 0 && curIdx < targetGroup.movies.length - 1) {
+          const nextMovie = targetGroup.movies[curIdx + 1];
+          nextTitle = nextMovie;
+          nextFile = nextMovie.archivos?.[0] || null;
+          if (nextFile) {
+            nextFile = {
+              ...nextFile,
+              sagaName: nextMovie.metadata?.name || nextMovie.nombre || nextFile.label,
+              titleName: nextMovie.metadata?.name || nextMovie.nombre,
+            };
+          }
         }
-      } else {
+      }
+
+      // Si no pertenece a saga o es la última parte, buscar entre versiones del mismo título si existen
+      if (!nextFile) {
         let list = targetTitle.archivos || [];
         const idx = list.findIndex(x => String(x.key) === String(f.key));
         nextFile = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
