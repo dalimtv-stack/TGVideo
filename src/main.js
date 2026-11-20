@@ -442,7 +442,6 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         return `
       <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
         <div class="category-header">
-          <h1 class="category-title">${esc(activeSection?.label || '')}</h1>
           <div class="category-sort-bar" role="group" aria-label="Ordenar por">
             <span class="category-sort-label">Ordenar:</span>
             <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
