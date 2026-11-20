@@ -106,11 +106,35 @@ export function formatNextLabel(title, nextFile) {
 export function bindNextUp({ getTime, getDuration, playerEl, nextFile, title, onNext, onCancel }) {
   if (!nextFile || typeof onNext !== 'function') return { check: () => {}, remove: () => {} };
   const COUNT = 10;
-  const windowSec = 45;
+  const isSerie = title?.tipo === 'serie';
+  // Para series: 45 segundos antes del final. Para sagas de películas: 5 minutos (300 segundos) antes.
+  const windowSec = isSerie ? 45 : 300;
   let shown = false;
   let done = false;
   let tickTimer = null;
+  let autoDismissTimer = null;
   let el = null;
+
+  const triggerNext = () => {
+    done = true;
+    remove();
+    onNext(nextFile);
+  };
+
+  const cancel = () => {
+    done = true;
+    remove();
+    onCancel?.();
+  };
+
+  const remove = () => {
+    clearInterval(tickTimer);
+    clearTimeout(autoDismissTimer);
+    document.removeEventListener('keydown', onKey, true);
+    el?.remove();
+    el = null;
+    shown = false;
+  };
 
   const onKey = (e) => {
     if (!el) return;
@@ -118,19 +142,11 @@ export function bindNextUp({ getTime, getDuration, playerEl, nextFile, title, on
     if (!ok) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    cancel();
-  };
-  const cancel = () => {
-    done = true;
-    remove();
-    onCancel?.();
-  };
-  const remove = () => {
-    clearInterval(tickTimer);
-    document.removeEventListener('keydown', onKey, true);
-    el?.remove();
-    el = null;
-    shown = false;
+    if (!isSerie) {
+      triggerNext();
+    } else {
+      cancel();
+    }
   };
 
   const startCountdown = () => {
@@ -138,37 +154,60 @@ export function bindNextUp({ getTime, getDuration, playerEl, nextFile, title, on
     shown = true;
     el = document.createElement('div');
     el.className = 'player-next-up';
-    el.innerHTML = `
-      <div class="player-next-up-inner">
-        <div class="player-next-up-label">Siguiente en <span class="player-next-up-count">${COUNT}</span>s</div>
-        <div class="player-next-up-title">${escapeHtml(formatNextLabel(title, nextFile))}</div>
-        <button type="button" class="player-next-up-cancel" data-focusable>Cancelar</button>
-      </div>
-    `;
-    playerEl.appendChild(el);
-    let left = COUNT;
-    const countEl = el.querySelector('.player-next-up-count');
-    const cancelBtn = el.querySelector('.player-next-up-cancel');
-    cancelBtn?.addEventListener('click', (e) => { e.stopPropagation(); cancel(); });
-    document.addEventListener('keydown', onKey, true);
-    setTimeout(() => cancelBtn?.focus({ preventScroll: true }), 30);
-    tickTimer = setInterval(() => {
-      left -= 1;
-      if (countEl) countEl.textContent = String(Math.max(0, left));
-      if (left <= 0) {
-        clearInterval(tickTimer);
-        done = true;
+
+    if (isSerie) {
+      el.innerHTML = `
+        <div class="player-next-up-inner">
+          <div class="player-next-up-label">Siguiente en <span class="player-next-up-count">${COUNT}</span>s</div>
+          <div class="player-next-up-title">${escapeHtml(formatNextLabel(title, nextFile))}</div>
+          <button type="button" class="player-next-up-cancel" data-focusable>Cancelar</button>
+        </div>
+      `;
+      playerEl.appendChild(el);
+      let left = COUNT;
+      const countEl = el.querySelector('.player-next-up-count');
+      const cancelBtn = el.querySelector('.player-next-up-cancel');
+      cancelBtn?.addEventListener('click', (e) => { e.stopPropagation(); cancel(); });
+      document.addEventListener('keydown', onKey, true);
+      setTimeout(() => cancelBtn?.focus({ preventScroll: true }), 30);
+      tickTimer = setInterval(() => {
+        left -= 1;
+        if (countEl) countEl.textContent = String(Math.max(0, left));
+        if (left <= 0) {
+          triggerNext();
+        }
+      }, 1000);
+    } else {
+      el.innerHTML = `
+        <div class="player-next-up-inner">
+          <div class="player-next-up-label">Ver siguiente película de la saga</div>
+          <div class="player-next-up-title">${escapeHtml(formatNextLabel(title, nextFile))}</div>
+          <div class="player-next-up-actions" style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+            <button type="button" class="player-next-up-play" style="background:#e50914;border:none;color:#fff;border-radius:4px;padding:0.35rem 0.8rem;font-size:0.82rem;font-weight:600;cursor:pointer;" data-focusable>Ver ahora</button>
+            <button type="button" class="player-next-up-cancel" data-focusable>Cerrar</button>
+          </div>
+        </div>
+      `;
+      playerEl.appendChild(el);
+      const playBtn = el.querySelector('.player-next-up-play');
+      const cancelBtn = el.querySelector('.player-next-up-cancel');
+      playBtn?.addEventListener('click', (e) => { e.stopPropagation(); triggerNext(); });
+      cancelBtn?.addEventListener('click', (e) => { e.stopPropagation(); cancel(); });
+      document.addEventListener('keydown', onKey, true);
+      setTimeout(() => playBtn?.focus({ preventScroll: true }), 30);
+      // Se oculta a los 25s si no se pulsa, para permitir ver el final de la película tranquilamente
+      autoDismissTimer = setTimeout(() => {
         remove();
-        onNext(nextFile);
-      }
-    }, 1000);
+      }, 25000);
+    }
   };
 
   const check = () => {
     if (done) return;
     const dur = Number(getDuration()) || 0;
     const cur = Number(getTime()) || 0;
-    if (dur > 30 && cur >= dur - windowSec) startCountdown();
+    if (dur > (windowSec + 10) && cur >= dur - windowSec) startCountdown();
+    else if (dur <= (windowSec + 10) && dur > 30 && cur >= dur - 30) startCountdown();
   };
 
   return { check, remove };
