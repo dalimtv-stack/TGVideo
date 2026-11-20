@@ -1,3 +1,4 @@
+import { checkForUpdate } from './core/updateCheck.js';
 // Suprimir alerts intrusivos de GramJS (ej. TypeNotFoundError ID 0)
 if (typeof window !== 'undefined') {
   const _origAlert = window.alert;
@@ -607,6 +608,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
           <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
           <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile" title="${esc(profile.name)}" aria-label="Perfil: ${esc(profile.name)}">
             <div class="avatar small">${profileAvatar(profile)}</div>
+            <span class="profile-update-dot" id="profile-update-dot" style="display:none;" title="Nueva versión disponible"></span>
           </div>
         </div>
       </header>
@@ -653,6 +655,13 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
     onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
     onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
+    checkForUpdate().then(updateInfo => {
+    if (updateInfo?.hasUpdate) {
+      const dot = document.getElementById('profile-update-dot');
+      if (dot) dot.style.display = 'block';
+    }
+  }).catch(() => {});
+
   document.getElementById('btn-reload').onclick = () => {
     showUpdateDialog({
       onQuick: () => showHome(tg, sync, profile, { reload: true, force: false }),
