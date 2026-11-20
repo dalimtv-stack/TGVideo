@@ -1,4 +1,5 @@
-// Progreso local por perfil (current_time, duration, is_completed, updated_at)
+// src/player/progress.js
+// Progreso local y sincronización de favoritos y estado de reproducción por perfil
 const key = (pid) => `tgv_progress_${pid}`;
 
 export function loadProgress(pid) {
@@ -42,20 +43,46 @@ export function loadFavorites(pid) {
   try { return JSON.parse(localStorage.getItem(favKey(pid)) || '[]'); } catch { return []; }
 }
 
+export function saveFavorites(pid, list) {
+  const clean = Array.isArray(list) ? list.map(String) : [];
+  const unique = Array.from(new Set(clean));
+  try { localStorage.setItem(favKey(pid), JSON.stringify(unique)); } catch (_) {}
+  return unique;
+}
+
+export function mergeFavorites(local = [], remote = []) {
+  const arr1 = Array.isArray(local) ? local.map(String) : [];
+  const arr2 = Array.isArray(remote) ? remote.map(String) : [];
+  return Array.from(new Set([...arr1, ...arr2]));
+}
+
 export function isFavorite(pid, titleId) {
   if (!pid || !titleId) return false;
   return loadFavorites(pid).includes(String(titleId));
 }
 
-export function toggleFavorite(pid, titleId) {
+export function toggleFavorite(pid, titleId, sync, profile) {
   if (!pid || !titleId) return false;
   const list = loadFavorites(pid);
   const idStr = String(titleId);
   const idx = list.indexOf(idStr);
   if (idx >= 0) list.splice(idx, 1);
   else list.unshift(idStr);
-  try { localStorage.setItem(favKey(pid), JSON.stringify(list)); } catch (_) {}
-  return list.includes(idStr);
+  const updated = saveFavorites(pid, list);
+
+  if (profile) {
+    profile.favorites = updated;
+  }
+  if (sync?.schedulePush) {
+    try {
+      sync.schedulePush({
+        profile: profile || { id: pid },
+        progress: loadProgress(pid),
+        favorites: updated,
+      });
+    } catch (_) {}
+  }
+  return updated.includes(idStr);
 }
 
 export function toggleAllWatched(pid, title) {
