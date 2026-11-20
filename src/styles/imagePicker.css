@@ -11,3 +11,25 @@
 .imgpick-item img { width: 100%; height: auto; max-height: 220px; object-fit: contain; border-radius: 4px; }
 .imgpick-item.is-current { border-color: #e50914; }
 .imgpick-item:focus, .imgpick-item:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+/* Desplegable de proveedor de imágenes (TMDB / Fanart.tv) */
+.imgpick-provider-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #ccc;
+}
+.imgpick-select {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.imgpick-select:focus {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
