@@ -5,7 +5,7 @@ import { loadFavorites, mergeFavorites } from '../player/progress.js';
 import { readImagePrefs } from '../metadata/imagePrefs.js';
 
 const SYNC_CHANNEL_TITLE = 'Perfiles::TGVideo::tgstorage';
-const MAX_VERSIONS = 5;
+const MAX_VERSIONS = 5; // 1 versión activa + 4 backups (5 en total)
 
 function nowTimestamp() {
   const d = new Date();
@@ -20,9 +20,52 @@ function normalizeName(name) {
   return (name || 'perfil')
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9_-]/g, '_')
     .slice(0, 32);
+}
+
+/**
+ * Parsea nombres de archivo de sincronización soportando timestamps de 14 dígitos
+ * tanto continuos (YYYYMMDDHHMMSS) como con guion bajo (YYYYMMDD_HHMMSS) e IDs con guiones.
+ */
+function parseSyncFilename(filename) {
+  if (!filename || typeof filename !== 'string' || !filename.endsWith('.json')) return null;
+  const name = filename.slice(0, -5);
+
+  if (name.startsWith('config_global_')) {
+    const rawTs = name.slice('config_global_'.length);
+    const timestamp = rawTs.replace(/\D/g, '');
+    return { kind: 'global', timestamp, rawTs, filename };
+  }
+
+  if (name.startsWith('metadata_overrides_')) {
+    const rawTs = name.slice('metadata_overrides_'.length);
+    const timestamp = rawTs.replace(/\D/g, '');
+    return { kind: 'overrides', timestamp, rawTs, filename };
+  }
+
+  if (name.startsWith('perfil_')) {
+    const rest = name.slice('perfil_'.length);
+    // Timestamp al final: _YYYYMMDD_HHMMSS o _YYYYMMDDHHMMSS
+    const match = rest.match(/^(.*?)_(\d{8}_\d{6}|\d{14})$/);
+    if (match) {
+      const profileId = match[1];
+      const rawTs = match[2];
+      const timestamp = rawTs.replace(/\D/g, '');
+      return { kind: 'profile', profileId, timestamp, rawTs, filename };
+    }
+    const lastUnderscore = rest.lastIndexOf('_');
+    if (lastUnderscore > 0) {
+      const profileId = rest.slice(0, lastUnderscore);
+      const rawTs = rest.slice(lastUnderscore + 1);
+      const timestamp = rawTs.replace(/\D/g, '');
+      return { kind: 'profile', profileId, timestamp, rawTs, filename };
+    }
+    return { kind: 'profile', profileId: rest, timestamp: '', rawTs: '', filename };
+  }
+
+  return null;
 }
 
 export function createTelegramSync({ getClient, peerOf }) {
@@ -33,6 +76,7 @@ export function createTelegramSync({ getClient, peerOf }) {
     if (cachedChannel) return cachedChannel;
     const client = await getClient();
 
+    // 1. Buscar en diálogos activos
     for await (const dialog of client.iterDialogs({})) {
       const entity = dialog.entity;
       if (
@@ -48,22 +92,25 @@ export function createTelegramSync({ getClient, peerOf }) {
       }
     }
 
-    // Comprobar también diálogos archivados por si el canal fue archivado
-    for await (const dialog of client.iterDialogs({ archived: true })) {
-      const entity = dialog.entity;
-      if (
-        entity?.className === 'Channel' &&
-        entity.title === SYNC_CHANNEL_TITLE
-      ) {
-        cachedChannel = {
-          id: String(entity.id),
-          hash: String(entity.accessHash),
-          title: entity.title,
-        };
-        return cachedChannel;
+    // 2. Buscar en archivados si no se encontró en activos
+    try {
+      for await (const dialog of client.iterDialogs({ folder: 1 })) {
+        const entity = dialog.entity;
+        if (
+          entity?.className === 'Channel' &&
+          entity.title === SYNC_CHANNEL_TITLE
+        ) {
+          cachedChannel = {
+            id: String(entity.id),
+            hash: String(entity.accessHash),
+            title: entity.title,
+          };
+          return cachedChannel;
+        }
       }
-    }
+    } catch (_) {}
 
+    // 3. Crear el canal si no existe
     const created = await client.invoke(
       new Api.channels.CreateChannel({
         title: SYNC_CHANNEL_TITLE,
@@ -100,36 +147,29 @@ export function createTelegramSync({ getClient, peerOf }) {
       const filename = attr?.fileName;
       if (!filename) continue;
 
-      if (filename.startsWith('config_global_') && filename.endsWith('.json')) {
-        const parts = filename.replace('.json', '').split('_');
-        const ts = parts.slice(2).join('_');
-        files.push({ kind: 'global', timestamp: ts, messageId: msg.id, filename });
-      } else if (filename.startsWith('metadata_overrides_') && filename.endsWith('.json')) {
-        const parts = filename.replace('.json', '').split('_');
-        const ts = parts.slice(2).join('_');
-        files.push({ kind: 'overrides', timestamp: ts, messageId: msg.id, filename });
-      } else if (filename.startsWith('perfil_') && filename.endsWith('.json')) {
-        const raw = filename.replace('.json', '');
-        const match = raw.match(/^perfil_(.+)_\d{8}_\d{6}$/);
-        let profileId = '';
-        let ts = '';
-        if (match) {
-          profileId = match[1];
-          ts = raw.slice(`perfil_${profileId}_`.length);
-        } else {
-          const parts = raw.split('_');
-          ts = parts.slice(-2).join('_');
-          profileId = parts.slice(1, -2).join('_') || parts[1] || 'perfil';
-        }
-        files.push({ kind: 'profile', profileId, timestamp: ts, messageId: msg.id, filename });
-      }
+      const parsed = parseSyncFilename(filename);
+      if (!parsed) continue;
+
+      files.push({
+        ...parsed,
+        messageId: msg.id,
+        date: msg.date || 0,
+      });
     }
 
-    return files.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    // Ordenar de más reciente a más antiguo:
+    // Primero por timestamp normalizado (14 dígitos YYYYMMDDHHMMSS)
+    // Desempate por messageId de Telegram (los más recientes tienen mayor ID)
+    return files.sort((a, b) => {
+      if (b.timestamp !== a.timestamp) {
+        return b.timestamp.localeCompare(a.timestamp);
+      }
+      return (b.messageId || 0) - (a.messageId || 0);
+    });
   }
 
   async function pullGlobalConfig() {
-    const latest = (await listSyncFiles()).find(f => f.kind === 'global');
+    const latest = (await listSyncFiles()).find((f) => f.kind === 'global');
     if (!latest) return null;
     const client = await getClient();
     const peer = peerOf(await findOrCreateSyncChannel());
@@ -148,14 +188,30 @@ export function createTelegramSync({ getClient, peerOf }) {
       const client = await getClient();
       const peer = peerOf(await findOrCreateSyncChannel());
       const filename = `config_global_${nowTimestamp()}.json`;
-      const file = new File([JSON.stringify(snapshot)], filename, { type: 'application/json' });
+      const file = new File([JSON.stringify(snapshot)], filename, {
+        type: 'application/json',
+      });
       const uploaded = await client.uploadFile({ file, workers: 1 });
-      await client.sendFile(peer, { file: uploaded, caption: 'Configuración global TGVideo', forceDocument: true,
-        attributes: [new Api.DocumentAttributeFilename({ fileName: filename })] });
-      const old = (await listSyncFiles()).filter(f => f.kind === 'global').slice(MAX_VERSIONS);
-      for (const f of old) {
-        try { await client.deleteMessages(peer, [f.messageId], { revoke: true }); }
-        catch (error) { console.warn('[config] No se pudo borrar versión antigua', error); }
+      const sentMsg = await client.sendFile(peer, {
+        file: uploaded,
+        caption: 'Configuración global TGVideo',
+        forceDocument: true,
+        attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
+      });
+
+      // Conservar la versión recién subida y hasta 4 backups anteriores (5 en total)
+      const oldGlobals = (await listSyncFiles()).filter(
+        (f) => f.kind === 'global' && f.messageId !== sentMsg?.id
+      );
+      if (oldGlobals.length >= MAX_VERSIONS) {
+        const toDelete = oldGlobals.slice(MAX_VERSIONS - 1);
+        for (const f of toDelete) {
+          try {
+            await client.deleteMessages(peer, [f.messageId], { revoke: true });
+          } catch (error) {
+            console.warn('[config] No se pudo borrar versión antigua', error);
+          }
+        }
       }
     });
     globalQueue = task;
@@ -163,7 +219,7 @@ export function createTelegramSync({ getClient, peerOf }) {
   }
 
   async function pullMetadataOverrides() {
-    const latest = (await listSyncFiles()).find(f => f.kind === 'overrides');
+    const latest = (await listSyncFiles()).find((f) => f.kind === 'overrides');
     if (!latest) return null;
     const client = await getClient();
     const peer = peerOf(await findOrCreateSyncChannel());
@@ -182,14 +238,30 @@ export function createTelegramSync({ getClient, peerOf }) {
       const client = await getClient();
       const peer = peerOf(await findOrCreateSyncChannel());
       const filename = `metadata_overrides_${nowTimestamp()}.json`;
-      const file = new File([JSON.stringify(snapshot)], filename, { type: 'application/json' });
+      const file = new File([JSON.stringify(snapshot)], filename, {
+        type: 'application/json',
+      });
       const uploaded = await client.uploadFile({ file, workers: 1 });
-      await client.sendFile(peer, { file: uploaded, caption: 'Identificaciones TMDB TGVideo', forceDocument: true,
-        attributes: [new Api.DocumentAttributeFilename({ fileName: filename })] });
-      const old = (await listSyncFiles()).filter(f => f.kind === 'overrides').slice(MAX_VERSIONS);
-      for (const f of old) {
-        try { await client.deleteMessages(peer, [f.messageId], { revoke: true }); }
-        catch (error) { console.warn('[overrides] No se pudo borrar versión antigua', error); }
+      const sentMsg = await client.sendFile(peer, {
+        file: uploaded,
+        caption: 'Identificaciones TMDB TGVideo',
+        forceDocument: true,
+        attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
+      });
+
+      // Conservar la versión recién subida y hasta 4 backups anteriores (5 en total)
+      const oldOverrides = (await listSyncFiles()).filter(
+        (f) => f.kind === 'overrides' && f.messageId !== sentMsg?.id
+      );
+      if (oldOverrides.length >= MAX_VERSIONS) {
+        const toDelete = oldOverrides.slice(MAX_VERSIONS - 1);
+        for (const f of toDelete) {
+          try {
+            await client.deleteMessages(peer, [f.messageId], { revoke: true });
+          } catch (error) {
+            console.warn('[overrides] No se pudo borrar versión antigua', error);
+          }
+        }
       }
     });
     overridesQueue = task;
@@ -202,7 +274,8 @@ export function createTelegramSync({ getClient, peerOf }) {
 
     for (const f of files) {
       if (f.kind !== 'profile') continue;
-      if (!byId.has(f.profileId)) byId.set(f.profileId, f);
+      const key = normalizeName(f.profileId);
+      if (!byId.has(key)) byId.set(key, f);
     }
 
     const profiles = [];
@@ -212,10 +285,8 @@ export function createTelegramSync({ getClient, peerOf }) {
 
     for (const f of byId.values()) {
       try {
-        const msgs = await client.getMessages(peer, { ids: [f.messageId] });
-        const msg = msgs[0];
+        const [msg] = await client.getMessages(peer, { ids: [f.messageId] });
         if (!msg?.media) continue;
-
         const buffer = await client.downloadMedia(msg.media, {});
         const text = new TextDecoder().decode(buffer);
         const data = JSON.parse(text);
@@ -227,8 +298,18 @@ export function createTelegramSync({ getClient, peerOf }) {
           age_limit: data.profile?.age_limit || 'TP',
           pin: data.profile?.pin || null,
           is_kids: !!data.profile?.is_kids,
-          player: data.profile?.player || (typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${data.profile?.id || f.profileId}`) : null) || 'artplayer',
-          skip_seconds: data.profile?.skip_seconds || (typeof localStorage !== 'undefined' ? Number(localStorage.getItem(`tgvideo_skip_${data.profile?.id || f.profileId}`)) : null) || 10,
+          player:
+            data.profile?.player ||
+            (typeof localStorage !== 'undefined'
+              ? localStorage.getItem(`tgvideo_player_${data.profile?.id || f.profileId}`)
+              : null) ||
+            'artplayer',
+          skip_seconds:
+            data.profile?.skip_seconds ||
+            (typeof localStorage !== 'undefined'
+              ? Number(localStorage.getItem(`tgvideo_skip_${data.profile?.id || f.profileId}`))
+              : null) ||
+            10,
           favorites: mergeFavorites(data.profile?.favorites || [], data.favorites || []),
           image_prefs: { ...(data.image_prefs || {}), ...(data.profile?.image_prefs || {}) },
           lastSync: f.timestamp,
@@ -243,8 +324,14 @@ export function createTelegramSync({ getClient, peerOf }) {
           age_limit: 'TP',
           pin: null,
           is_kids: false,
-          player: (typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${f.profileId}`) : null) || 'artplayer',
-          skip_seconds: (typeof localStorage !== 'undefined' ? Number(localStorage.getItem(`tgvideo_skip_${f.profileId}`)) : null) || 10,
+          player:
+            (typeof localStorage !== 'undefined'
+              ? localStorage.getItem(`tgvideo_player_${f.profileId}`)
+              : null) || 'artplayer',
+          skip_seconds:
+            (typeof localStorage !== 'undefined'
+              ? Number(localStorage.getItem(`tgvideo_skip_${f.profileId}`))
+              : null) || 10,
           favorites: [],
           image_prefs: {},
           lastSync: f.timestamp,
@@ -260,11 +347,11 @@ export function createTelegramSync({ getClient, peerOf }) {
     const files = await listSyncFiles();
     const norm = normalizeName(profileId);
     const matching = files.filter(
-      (f) => f.kind === 'profile' && (
-        f.profileId === profileId ||
-        f.profileId === norm ||
-        normalizeName(f.profileId) === norm
-      )
+      (f) =>
+        f.kind === 'profile' &&
+        (f.profileId === profileId ||
+          f.profileId === norm ||
+          normalizeName(f.profileId) === norm)
     );
     if (!matching.length) return null;
 
@@ -358,7 +445,7 @@ export function createTelegramSync({ getClient, peerOf }) {
         workers: 1,
       });
 
-      await client.sendFile(peer, {
+      const sentMsg = await client.sendFile(peer, {
         file: inputFile,
         caption: `Sync ${snapshot.profile?.name || profileId}`,
         forceDocument: true,
@@ -367,18 +454,22 @@ export function createTelegramSync({ getClient, peerOf }) {
         ],
       });
 
-      // Limpiar versiones antiguas (dejar máximo MAX_VERSIONS)
+      // Limpiar versiones antiguas dejando exactamente MAX_VERSIONS (1 activa + 4 backups = 5 total)
       const norm = normalizeName(profileId);
       const files = await listSyncFiles();
       const mine = files.filter(
-        (f) => f.kind === 'profile' && (
-          f.profileId === profileId ||
-          f.profileId === norm ||
-          normalizeName(f.profileId) === norm
-        )
+        (f) =>
+          f.kind === 'profile' &&
+          (f.profileId === profileId ||
+            f.profileId === norm ||
+            normalizeName(f.profileId) === norm)
       );
-      if (mine.length > MAX_VERSIONS) {
-        const toDelete = mine.slice(MAX_VERSIONS);
+
+      // EXCLUIR explícitamente el mensaje que acabamos de enviar para NUNCA borrarlo
+      const older = mine.filter((f) => f.messageId !== sentMsg?.id);
+      if (older.length >= MAX_VERSIONS) {
+        // Dejar MAX_VERSIONS - 1 copias anteriores (4 backups)
+        const toDelete = older.slice(MAX_VERSIONS - 1);
         for (const f of toDelete) {
           try {
             await client.deleteMessages(peer, [f.messageId], { revoke: true });
@@ -408,10 +499,12 @@ export function createTelegramSync({ getClient, peerOf }) {
       if (remote.is_completed && !local.is_completed) {
         out[key] = remote;
       } else if (local.is_completed && !remote.is_completed) {
-        // local gana
-      } else if (remotePct > localPct) {
+        out[key] = local;
+      } else if ((remote.updated_at || 0) > (local.updated_at || 0)) {
         out[key] = remote;
-      } else if (remotePct === localPct && (remote.updated_at || 0) > (local.updated_at || 0)) {
+      } else if ((local.updated_at || 0) > (remote.updated_at || 0)) {
+        out[key] = local;
+      } else if (remotePct >= localPct) {
         out[key] = remote;
       }
     }
@@ -419,32 +512,16 @@ export function createTelegramSync({ getClient, peerOf }) {
     return out;
   }
 
-  let pendingPushData = null;
   function schedulePush(profileData, delayMs = 1500) {
-    pendingPushData = profileData;
     if (pushTimer) clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
-      const data = pendingPushData;
-      pendingPushData = null;
-      if (data) {
-        pushProfile(data).catch((err) => {
-          console.warn('[sync] push failed', err);
-        });
-      }
+      pushProfile(profileData);
     }, delayMs);
   }
 
-  if (typeof window !== 'undefined') {
-    window.addEventListener('beforeunload', () => {
-      if (pendingPushData) {
-        const d = pendingPushData;
-        pendingPushData = null;
-        pushProfile(d).catch(() => {});
-      }
-    });
-  }
-
   return {
+    findOrCreateSyncChannel,
+    listSyncFiles,
     pullGlobalConfig,
     pushGlobalConfig,
     pullMetadataOverrides,
@@ -452,8 +529,7 @@ export function createTelegramSync({ getClient, peerOf }) {
     listProfiles,
     pullProfile,
     pushProfile,
-    mergeProgress,
     schedulePush,
-    findOrCreateSyncChannel,
+    mergeProgress,
   };
 }
