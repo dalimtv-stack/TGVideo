@@ -249,12 +249,30 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   if (savedMeta) {
     for (const t of titles) {
       if (savedMeta[t.id]) t.metadata = savedMeta[t.id];
+      if (t.isSaga && Array.isArray(t.archivos)) {
+        for (const f of t.archivos) {
+          const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+          if (savedMeta[fKey]) {
+            f.metadata = savedMeta[fKey];
+            f.tmdbId = savedMeta[fKey].id;
+            if (savedMeta[fKey].name) f.sagaName = savedMeta[fKey].name;
+          }
+        }
+      }
     }
   }
   const sig = channels.map(c => `${c.id}:${c.top}:${c.title}`).sort().join('|');
   const metadataMap = { ...savedMeta };
   for (const t of titles) {
     if (t.metadata) metadataMap[t.id] = t.metadata;
+    if (t.isSaga && Array.isArray(t.archivos)) {
+      for (const f of t.archivos) {
+        if (f.metadata) {
+          const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+          metadataMap[fKey] = f.metadata;
+        }
+      }
+    }
   }
   await kv.set(LIB_KEY, { cache, channels, sig, metadataMap, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
   return { titles, sig };
@@ -402,9 +420,19 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       if (saved.metadataMap) {
         for (const t of titles) {
           if (saved.metadataMap[t.id]) t.metadata = saved.metadataMap[t.id];
+          if (t.isSaga && Array.isArray(t.archivos)) {
+            for (const f of t.archivos) {
+              const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+              if (saved.metadataMap[fKey]) {
+                f.metadata = saved.metadataMap[fKey];
+                f.tmdbId = saved.metadataMap[fKey].id;
+                if (saved.metadataMap[fKey].name) f.sagaName = saved.metadataMap[fKey].name;
+              }
+            }
+          }
         }
       }
-      TITLES_CACHE = titles;
+      TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(titles));
     } else {
       showLoading('Cargando biblioteca…');
       try { TITLES_CACHE = (await refreshLibrary(tg, { onProgress })).titles; CHECKED = true; }
@@ -466,6 +494,17 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     if (ov) {
       t.metadata = ov;
       t.tmdbId = ov.id || t.tmdbId;
+    }
+    if (t.isSaga && Array.isArray(t.archivos)) {
+      for (const f of t.archivos) {
+        const fileKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+        const fOv = getOverride(fileKey) || (f.tmdbId ? getOverrideByTmdbId(f.tmdbId) : null);
+        if (fOv) {
+          f.metadata = fOv;
+          f.tmdbId = fOv.id;
+          if (fOv.name) f.sagaName = fOv.name;
+        }
+      }
     }
   }
   titles = attachAutoCollections(mergeMoviesByTmdb(titles));
@@ -685,6 +724,14 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
           saved.metadataMap = saved.metadataMap || {};
           for (const t of (TITLES_CACHE || [])) {
             if (t.metadata) saved.metadataMap[t.id] = t.metadata;
+            if (t.isSaga && Array.isArray(t.archivos)) {
+              for (const f of t.archivos) {
+                if (f.metadata) {
+                  const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+                  saved.metadataMap[fKey] = f.metadata;
+                }
+              }
+            }
           }
           await kv.set(LIB_KEY, saved);
         }
@@ -692,9 +739,29 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     }, 1500);
   };
 
+  let reattachTimer = null;
+  const scheduleReattach = () => {
+    clearTimeout(reattachTimer);
+    reattachTimer = setTimeout(() => {
+      if (!metadataController.signal.aborted && TITLES_CACHE) {
+        const beforeCount = TITLES_CACHE.length;
+        const newTitles = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
+        if (newTitles.length !== beforeCount) {
+          TITLES_CACHE = newTitles;
+          if (document.querySelector('.home-screen')) {
+            showHome(tg, sync, profile, { focusSort: activeSort, fromPointer: true });
+          }
+        }
+      }
+    }, 2500);
+  };
+
   enrichTitles(titles, { signal: metadataController.signal, onUpdate: title => {
     applyImagePrefs(title, profile);
     saveMetaDebounced();
+    if (title.metadata?.collection || (title.isSaga && title.archivos?.some(f => f.metadata))) {
+      scheduleReattach();
+    }
     document.querySelectorAll('.lib-card').forEach(card => {
       if (String(card.dataset.title) !== String(title.id)) return;
       const displayName = title.metadata?.name || title.metadata?.title || title.nombre;
@@ -722,12 +789,12 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       if (title.isSaga) libraryViews.applySagaFilmMetadata(title);
     }
   } }).then(() => {
-    // Tras enriquecer, re-agrupar películas con el mismo TMDB
+    // Tras enriquecer, re-agrupar películas con el mismo TMDB y colecciones automáticas
     if (!metadataController.signal.aborted && TITLES_CACHE) {
       const before = TITLES_CACHE.length;
       TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
       if (TITLES_CACHE.length !== before && document.querySelector('.home-screen')) {
-        showHome(tg, sync, profile);
+        showHome(tg, sync, profile, { focusSort: activeSort, fromPointer: true });
       }
     }
   }).catch(() => {});
