@@ -1,90 +1,72 @@
-/**
- * Sincronización de perfiles y progreso mediante canal de Telegram.
- *
- * Canal: Perfiles::TGVideo::tgstorage
- * Archivos: perfil_{nombreNormalizado}_{YYYYMMDDHHmmss}.json
- * Máximo 5 versiones por perfil.
- *
- * Subida de archivos copiada del método que funciona en TGComic.
- */
-
+// src/sync/telegramSync.js
+// Sincronización bidireccional vía canal de Telegram (Perfiles::TGVideo::tgstorage)
 import { Api } from 'telegram';
+import { loadFavorites } from '../player/progress.js';
+import { readImagePrefs } from '../metadata/imagePrefs.js';
 
 const SYNC_CHANNEL_TITLE = 'Perfiles::TGVideo::tgstorage';
 const MAX_VERSIONS = 5;
-const CONFIG_RE = /^config_global_(\d{14})\.json$/i;
-const OVERRIDES_RE = /^metadata_overrides_(\d{14})\.json$/i;
-const FILE_RE = /^perfil_([a-z0-9_]+)_(\d{14})\.json$/i;
-
-function normalizeName(name) {
-  return String(name || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_|_$/g, '') || 'perfil';
-}
 
 function nowTimestamp() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   return (
-    d.getFullYear() +
-    pad(d.getMonth() + 1) +
-    pad(d.getDate()) +
-    pad(d.getHours()) +
-    pad(d.getMinutes()) +
-    pad(d.getSeconds())
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_` +
+    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
   );
 }
 
-function parseFilename(name) {
-  const m = String(name || '').match(FILE_RE);
-  if (!m) {
-    const ov = String(name || '').match(OVERRIDES_RE);
-    if (ov) return { kind: 'overrides', timestamp: ov[1] };
-    const config = String(name || '').match(CONFIG_RE);
-    return config ? { kind: 'global', timestamp: config[1] } : null;
-  }
-  return { profileId: m[1], timestamp: m[2] };
+function normalizeName(name) {
+  return (name || 'perfil')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9_-]/g, '_')
+    .slice(0, 32);
 }
 
 export function createTelegramSync({ getClient, peerOf }) {
-  let syncChannel = null;
-  let pushTimer = null;
+  let cachedChannel = null;
   let pushing = false;
+  let pushTimer = null;
 
   async function findOrCreateSyncChannel() {
+    if (cachedChannel) return cachedChannel;
     const client = await getClient();
-    if (syncChannel) return syncChannel;
 
     for await (const dialog of client.iterDialogs({})) {
       const entity = dialog.entity;
-      if (entity?.className === 'Channel' && entity.title === SYNC_CHANNEL_TITLE) {
-        syncChannel = {
+      if (
+        entity?.className === 'Channel' &&
+        entity.title === SYNC_CHANNEL_TITLE
+      ) {
+        cachedChannel = {
           id: String(entity.id),
           hash: String(entity.accessHash),
+          title: entity.title,
         };
-        return syncChannel;
+        return cachedChannel;
       }
     }
 
-    const result = await client.invoke(
+    const created = await client.invoke(
       new Api.channels.CreateChannel({
         title: SYNC_CHANNEL_TITLE,
-        about: 'Sincronización de perfiles TGVideo (no borrar)',
+        about: 'Almacenamiento de perfiles y progreso de TGVideo (no borrar)',
+        broadcast: true,
         megagroup: false,
       })
     );
 
-    const created = result.chats?.[0];
-    if (!created) throw new Error('No se pudo crear el canal de sincronización');
+    const chat = created.chats?.[0];
+    if (!chat) throw new Error('No se pudo crear el canal de sincronización');
 
-    syncChannel = {
-      id: String(created.id),
-      hash: String(created.accessHash),
+    cachedChannel = {
+      id: String(chat.id),
+      hash: String(chat.accessHash),
+      title: chat.title,
     };
-    return syncChannel;
+    return cachedChannel;
   }
 
   async function listSyncFiles() {
@@ -93,50 +75,51 @@ export function createTelegramSync({ getClient, peerOf }) {
     const peer = peerOf(ch);
     const files = [];
 
-    for await (const msg of client.iterMessages(peer, {
-      filter: new Api.InputMessagesFilterDocument(),
-    })) {
-      const doc = msg.document;
+    for await (const msg of client.iterMessages(peer, { limit: 100 })) {
+      const doc = msg.media?.document;
       if (!doc) continue;
-      const filename = doc.attributes?.find(
-        (a) => a.className === 'DocumentAttributeFilename'
-      )?.fileName;
-      const parsed = parseFilename(filename);
-      if (!parsed) continue;
 
-      files.push({
-        messageId: msg.id,
-        filename,
-        kind: parsed.kind || 'profile',
-        profileId: parsed.profileId,
-        timestamp: parsed.timestamp,
-        date: msg.date,
-        size: Number(doc.size?.toString?.() || doc.size || 0),
-      });
+      const attr = doc.attributes?.find(
+        (a) => a.className === 'DocumentAttributeFilename'
+      );
+      const filename = attr?.fileName;
+      if (!filename) continue;
+
+      if (filename.startsWith('config_global_') && filename.endsWith('.json')) {
+        const parts = filename.replace('.json', '').split('_');
+        const ts = parts.slice(2).join('_');
+        files.push({ kind: 'global', timestamp: ts, messageId: msg.id, filename });
+      } else if (filename.startsWith('metadata_overrides_') && filename.endsWith('.json')) {
+        const parts = filename.replace('.json', '').split('_');
+        const ts = parts.slice(2).join('_');
+        files.push({ kind: 'overrides', timestamp: ts, messageId: msg.id, filename });
+      } else if (filename.startsWith('perfil_') && filename.endsWith('.json')) {
+        const parts = filename.replace('.json', '').split('_');
+        const ts = parts.slice(2).join('_');
+        const profileId = parts[1];
+        files.push({ kind: 'profile', profileId, timestamp: ts, messageId: msg.id, filename });
+      }
     }
 
-    files.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-    return files;
+    return files.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
   async function pullGlobalConfig() {
-    const files = await listSyncFiles();
-    const latest = files.find(f => f.kind === 'global');
+    const latest = (await listSyncFiles()).find(f => f.kind === 'global');
     if (!latest) return null;
     const client = await getClient();
     const peer = peerOf(await findOrCreateSyncChannel());
     const [msg] = await client.getMessages(peer, { ids: [latest.messageId] });
-    if (!msg?.media) throw new Error('No se pudo leer la configuración global.');
+    if (!msg?.media) return null;
     const buffer = await client.downloadMedia(msg.media, {});
     const data = JSON.parse(new TextDecoder().decode(buffer));
-    if (!data || data.v !== 1 || typeof data.tmdb !== 'object') throw new Error('Configuración global no válida.');
+    if (!data || typeof data !== 'object') return null;
     return data;
   }
 
-  // Cola independiente: no descartar guardados si se están subiendo perfiles.
   let globalQueue = Promise.resolve();
-  function pushGlobalConfig(data) {
-    const snapshot = structuredClone(data);
+  function pushGlobalConfig(config) {
+    const snapshot = structuredClone(config);
     const task = globalQueue.catch(() => {}).then(async () => {
       const client = await getClient();
       const peer = peerOf(await findOrCreateSyncChannel());
@@ -222,6 +205,8 @@ export function createTelegramSync({ getClient, peerOf }) {
           is_kids: !!data.profile?.is_kids,
           player: data.profile?.player || (typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${data.profile?.id || f.profileId}`) : null) || 'artplayer',
           skip_seconds: data.profile?.skip_seconds || (typeof localStorage !== 'undefined' ? Number(localStorage.getItem(`tgvideo_skip_${data.profile?.id || f.profileId}`)) : null) || 10,
+          favorites: data.profile?.favorites || data.favorites || [],
+          image_prefs: data.profile?.image_prefs || data.image_prefs || {},
           lastSync: f.timestamp,
           messageId: f.messageId,
         });
@@ -236,6 +221,8 @@ export function createTelegramSync({ getClient, peerOf }) {
           is_kids: false,
           player: (typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_player_${f.profileId}`) : null) || 'artplayer',
           skip_seconds: (typeof localStorage !== 'undefined' ? Number(localStorage.getItem(`tgvideo_skip_${f.profileId}`)) : null) || 10,
+          favorites: [],
+          image_prefs: {},
           lastSync: f.timestamp,
           messageId: f.messageId,
         });
@@ -259,12 +246,16 @@ export function createTelegramSync({ getClient, peerOf }) {
 
     const buffer = await client.downloadMedia(msg.media, {});
     const text = new TextDecoder().decode(buffer);
-    return JSON.parse(text);
+    const data = JSON.parse(text);
+    return {
+      ...data,
+      favorites: data.profile?.favorites || data.favorites || [],
+      image_prefs: data.profile?.image_prefs || data.image_prefs || {},
+    };
   }
 
   /**
-   * Subida usando el mismo método que funciona en TGComic:
-   * Browser File → client.uploadFile → client.sendFile
+   * Subida de perfil hacia Telegram
    */
   async function pushProfile(profileData) {
     if (pushing) return;
@@ -275,20 +266,32 @@ export function createTelegramSync({ getClient, peerOf }) {
       const ch = await findOrCreateSyncChannel();
       const peer = peerOf(ch);
 
-      const profileId = normalizeName(profileData.profile?.id || profileData.profile?.name || 'perfil');
+      const pid = profileData.profile?.id || profileData.profile?.name || 'perfil';
+      const profileId = normalizeName(pid);
       const filename = `perfil_${profileId}_${nowTimestamp()}.json`;
+
+      // Asegurar que favoritos e image_prefs queden incluidos en el snapshot
+      if (!profileData.favorites && typeof loadFavorites === 'function') {
+        profileData.favorites = loadFavorites(pid);
+      }
+      if (profileData.profile && !profileData.profile.favorites && profileData.favorites) {
+        profileData.profile.favorites = profileData.favorites;
+      }
+      if (!profileData.image_prefs && typeof readImagePrefs === 'function' && profileData.profile) {
+        profileData.image_prefs = readImagePrefs(profileData.profile);
+      }
+      if (profileData.profile && !profileData.profile.image_prefs && profileData.image_prefs) {
+        profileData.profile.image_prefs = profileData.image_prefs;
+      }
+
       const json = JSON.stringify(profileData);
 
-      // 1. Crear File del navegador (igual que TGComic)
       const browserFile = new File([json], filename, { type: 'application/json' });
-
-      // 2. Subir con uploadFile
       const inputFile = await client.uploadFile({
         file: browserFile,
         workers: 1,
       });
 
-      // 3. Enviar el mensaje
       await client.sendFile(peer, {
         file: inputFile,
         caption: `Sync ${profileData.profile?.name || profileId}`,
