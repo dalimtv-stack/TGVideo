@@ -32,14 +32,31 @@
 .btn-icon:focus,
 .logout-btn:focus,
 .btn-syn-toggle:focus {
+  outline: none;
+}
+
+.btn:focus-visible,
+.btn.dpad-focused,
+.btn-ghost:focus-visible,
+.btn-ghost.dpad-focused,
+.btn-icon:focus-visible,
+.btn-icon.dpad-focused,
+.logout-btn:focus-visible,
+.logout-btn.dpad-focused,
+.btn-syn-toggle:focus-visible,
+.btn-syn-toggle.dpad-focused {
   outline: 3px solid #fff;
   outline-offset: 2px;
   border-radius: 6px;
   box-shadow: 0 0 16px rgba(255, 255, 255, 0.4);
 }
 
-.btn-icon-circle:focus,
-.btn-icon-circle:focus-visible {
+.btn-icon-circle:focus {
+  outline: none;
+}
+
+.btn-icon-circle:focus-visible,
+.btn-icon-circle.dpad-focused {
   outline: 3px solid #fff;
   outline-offset: 2px;
   border-radius: 50%;
@@ -101,5 +118,4 @@
 .btn-ghost:hover {
   background: rgba(255, 255, 255, 0.16);
 }
-
 
