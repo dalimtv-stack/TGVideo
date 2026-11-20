@@ -188,17 +188,29 @@ function move(dir) {
   const curHeader = cur.closest('.home-header');
   if (curHeader) {
     const nav = curHeader.querySelector('.home-nav');
+    const reloadBtn = curHeader.querySelector('#btn-reload');
+    const profileBtn = curHeader.querySelector('#btn-change-profile');
+
+    // 2.1 En las pestañas de navegación (.home-nav)
     if (nav && nav.contains(cur)) {
       const tabs = [...nav.querySelectorAll('.home-nav-item[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
       const idx = tabs.indexOf(cur);
-      if (dir === 'left' && idx > 0) {
-        tabs[idx - 1].focus();
-        tabs[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      if (dir === 'left') {
+        if (idx > 0) {
+          tabs[idx - 1].focus();
+          tabs[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        }
         return;
       }
-      if (dir === 'right' && idx >= 0 && idx < tabs.length - 1) {
-        tabs[idx + 1].focus();
-        tabs[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      if (dir === 'right') {
+        if (idx >= 0 && idx < tabs.length - 1) {
+          tabs[idx + 1].focus();
+          tabs[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        } else if (reloadBtn) {
+          reloadBtn.focus();
+        } else if (profileBtn) {
+          profileBtn.focus();
+        }
         return;
       }
       if (dir === 'down') {
@@ -210,78 +222,60 @@ function move(dir) {
         return;
       }
       if (dir === 'up') {
-        curHeader.querySelector('#btn-reload')?.focus();
         return;
       }
     }
-    if (dir === 'left') {
-      const reload = curHeader.querySelector('#btn-reload');
-      if (reload && cur !== reload) {
-        reload.focus();
-      }
-      return;
-    }
-    if (dir === 'right') {
-      const profile = curHeader.querySelector('#btn-change-profile');
-      if (profile && cur !== profile) {
-        profile.focus();
-      }
-      return;
-    }
-    if (dir === 'down') {
-      const firstRow = document.querySelector('.row');
-      const firstCard = document.querySelector('.home-main .category-grid .lib-card[data-focusable]') || firstRow?.querySelector('.row-track .lib-card[data-title]') || document.querySelector('.row-track .lib-card[data-title]');
-      if (firstCard) {
-        firstCard.focus({ preventScroll: true });
-        const scroller = document.querySelector('.home-main') || window;
-        scroller.scrollTo({ top: 0, behavior: 'smooth' });
-        const fTrack = firstCard.closest('.row-track');
-        if (fTrack) {
-          fTrack.scrollTo({
-            left: firstCard.offsetLeft - fTrack.offsetWidth / 2 + firstCard.offsetWidth / 2,
-            behavior: 'smooth'
-          });
+
+    // 2.2 En el botón Actualizar (#btn-reload)
+    if (cur === reloadBtn) {
+      if (dir === 'left') {
+        const tabs = nav ? [...nav.querySelectorAll('.home-nav-item[data-focusable]')].filter(e => e.offsetParent && !e.disabled) : [];
+        if (tabs.length) {
+          const lastTab = tabs[tabs.length - 1];
+          lastTab.focus();
+          lastTab.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
         }
+        return;
       }
-      return;
+      if (dir === 'right') {
+        if (profileBtn) profileBtn.focus();
+        return;
+      }
+      if (dir === 'down') {
+        const target = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]')
+          || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+        target?.focus({ preventScroll: true });
+        target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        return;
+      }
+      if (dir === 'up') return;
     }
-    if (dir === 'up') {
-      return;
+
+    // 2.3 En el botón Perfil (#btn-change-profile)
+    if (cur === profileBtn) {
+      if (dir === 'left') {
+        if (reloadBtn) reloadBtn.focus();
+        else {
+          const tabs = nav ? [...nav.querySelectorAll('.home-nav-item[data-focusable]')].filter(e => e.offsetParent && !e.disabled) : [];
+          tabs[tabs.length - 1]?.focus();
+        }
+        return;
+      }
+      if (dir === 'right') return;
+      if (dir === 'down') {
+        const target = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]')
+          || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+        target?.focus({ preventScroll: true });
+        target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        return;
+      }
+      if (dir === 'up') return;
     }
   }
 
-  // Navegación horizontal entre secciones de la Home, también con mando a distancia.
-  const curNav = cur.closest('.home-nav');
-  if (curNav) {
-    const tabs = [...curNav.querySelectorAll('.home-nav-item[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
-    const idx = tabs.indexOf(cur);
-    if (dir === 'left' && idx > 0) {
-      tabs[idx - 1].focus();
-      tabs[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-      return;
-    }
-    if (dir === 'right' && idx >= 0 && idx < tabs.length - 1) {
-      tabs[idx + 1].focus();
-      tabs[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-      return;
-    }
-    if (dir === 'down') {
-      const target = document.querySelector('.category-sort-bar [data-focusable].active')
-        || document.querySelector('.category-sort-bar [data-focusable]')
-        || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
-      if (target) {
-        target.focus({ preventScroll: true });
-        target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-      }
-      return;
-    }
-    if (dir === 'up') {
-      curNav.closest('.home-header')?.querySelector('#btn-reload')?.focus();
-      return;
-    }
-  }
-
-  // 2.5 Si está en la barra de ordenación de categorías (.category-sort-bar)
+  // 2.4 Si está en la barra de ordenación de categorías (.category-sort-bar)
   const curSortBar = cur.closest('.category-sort-bar');
   if (curSortBar) {
     const sortBtns = [...curSortBar.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
@@ -305,11 +299,49 @@ function move(dir) {
       }
     }
     if (dir === 'down') {
-      const firstCard = document.querySelector('.home-main .category-grid .lib-card[data-focusable]');
-      if (firstCard) {
-        firstCard.focus({ preventScroll: true });
-        firstCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      const gridCards = [...document.querySelectorAll('.home-main .category-grid .lib-card[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+      if (gridCards.length) {
+        const curRect = cur.getBoundingClientRect();
+        const curCenter = curRect.left + curRect.width / 2;
+        const target = gridCards.slice(0, 8).reduce((best, item) => {
+          const r = item.getBoundingClientRect();
+          const dist = Math.abs((r.left + r.width / 2) - curCenter);
+          return (!best || dist < best.dist) ? { item, dist } : best;
+        }, null)?.item || gridCards[0];
+        target?.focus({ preventScroll: true });
+        target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
         return;
+      }
+    }
+    return;
+  }
+
+  // 2.5 Si está dentro de la cuadrícula de categoría (.category-grid)
+  const curCatGrid = cur.closest('.category-grid');
+  if (curCatGrid) {
+    const cards = [...curCatGrid.querySelectorAll('.lib-card[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+    const idx = cards.indexOf(cur);
+    if (idx !== -1 && dir === 'up') {
+      const curRect = cur.getBoundingClientRect();
+      const isTopRow = !cards.some(other => {
+        if (other === cur) return false;
+        const oRect = other.getBoundingClientRect();
+        return oRect.bottom <= curRect.top + 10;
+      });
+      if (isTopRow) {
+        const sortActive = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]');
+        if (sortActive) {
+          sortActive.focus();
+          sortActive.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          return;
+        }
+        const activeNav = document.querySelector('.home-nav-item.active') || document.querySelector('.home-nav-item');
+        if (activeNav) {
+          activeNav.focus();
+          activeNav.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          return;
+        }
       }
     }
   }
