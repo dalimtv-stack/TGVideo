@@ -1,3 +1,4 @@
+import { checkForUpdate } from '../core/updateCheck.js';
 import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
 // src/ui/settings.js
 import { getGlobalConfig, getTmdbKey, getFanartKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
@@ -75,8 +76,25 @@ export function applyProfileScale(profile) {
   return validIdx;
 }
 
+export const AVAILABLE_AVATARS = [
+  { id: 'Carmen-sandiego.png', name: 'Carmen Sandiego', type: 'image', file: 'Carmen-sandiego.png' },
+  { id: 'Elfo-navidad.png', name: 'Elfo de Navidad', type: 'image', file: 'Elfo-navidad.png' },
+  { id: 'Lucifer.png', name: 'Lucifer', type: 'image', file: 'Lucifer.png' },
+  { id: '👤', name: 'Usuario', type: 'emoji' },
+  { id: '🙂', name: 'Sonrisa', type: 'emoji' },
+  { id: '🎬', name: 'Cine', type: 'emoji' },
+  { id: '🌟', name: 'Estrella', type: 'emoji' },
+  { id: '🐱', name: 'Gato', type: 'emoji' },
+];
+
 export function profileAvatar(profile) {
-  return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(profile.avatar) ? profile.avatar : esc((profile.name || '?')[0].toUpperCase());
+  const av = profile?.avatar;
+  if (!av) return esc((profile?.name || '?')[0].toUpperCase());
+  if (typeof av === 'string' && (av.endsWith('.png') || av.endsWith('.jpg') || av.endsWith('.jpeg') || av.endsWith('.webp') || av.includes('/'))) {
+    const cleanFile = av.replace(/^\\/?(avatares\\/)?/, '');
+    return `<img src="/avatares/${esc(cleanFile)}" class="avatar-img" alt="${esc(profile.name || '')}" onerror="this.style.display='none';this.parentElement.textContent='👤';" />`;
+  }
+  return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(av) ? av : esc((profile?.name || '?')[0].toUpperCase());
 }
 
 export function modal(title, body, subtitle = '', onClose = null) {
@@ -138,7 +156,19 @@ export function modal(title, body, subtitle = '', onClose = null) {
   return { overlay, close };
 }
 
-export function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalChanged, libraryTitles = [] }) {
+export async function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalChanged, libraryTitles = [] }) {
+  const updateInfo = await checkForUpdate().catch(() => null);
+
+  const updateBtnHtml = updateInfo?.hasUpdate ? `
+    <button class="btn-ghost btn-update-release" data-focusable data-action="update">
+      <span style="font-size:1.2rem;line-height:1;">⚡</span>
+      <span style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;">
+        <strong style="color:#fff;font-size:0.92rem;">Descargar y actualizar (${esc(updateInfo.latestVersion)})</strong>
+        <small style="color:#fca5a5;font-size:0.75rem;">Nueva versión oficial en GitHub</small>
+      </span>
+    </button>
+  ` : '';
+
   const { overlay, close } = modal(profile.name, `
     <nav class="profile-menu">
       <button class="btn-ghost" data-focusable data-action="switch">Cambiar de perfil</button>
@@ -146,6 +176,7 @@ export function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalCh
       <button class="btn-ghost" data-focusable data-action="device">Ajustes de dispositivo</button>
       <button class="btn-ghost" data-focusable data-action="global">Ajustes globales</button>
       <button class="btn-ghost" data-focusable data-action="developer">Desarrollador</button>
+      ${updateBtnHtml}
     </nav>
   `);
   overlay.querySelector('[data-action="switch"]').onclick = () => { close(); onSwitch(); };
@@ -153,6 +184,21 @@ export function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalCh
   overlay.querySelector('[data-action="device"]').onclick = () => { close(); deviceSettings(profile, sync, onChanged); };
   overlay.querySelector('[data-action="global"]').onclick = () => { close(); globalSettings(sync, onGlobalChanged, libraryTitles); };
   overlay.querySelector('[data-action="developer"]').onclick = () => { close(); developerSettings(profile, sync); };
+
+  const updateBtn = overlay.querySelector('[data-action="update"]');
+  if (updateBtn && updateInfo) {
+    updateBtn.onclick = () => {
+      close();
+      const isAndroidApp = typeof window !== 'undefined' &&
+        (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
+      const targetUrl = (isAndroidApp && updateInfo.downloadUrl) ? updateInfo.downloadUrl : (updateInfo.releaseUrl || updateInfo.downloadUrl);
+      if (isAndroidApp) {
+        window.open(targetUrl, '_system');
+      } else {
+        window.open(targetUrl, '_blank');
+      }
+    };
+  }
 }
 
 // 4. Ajustes de desarrollador: Registro de log en Telegram (cada 60 segundos)
@@ -231,7 +277,20 @@ function developerSettings(profile, sync) {
 
 // 1. Ajustes de perfil: Nombre y Avatar
 function profileSettings(profile, sync, onChanged) {
-  const avatars = ['👤', '🙂', '🎬', '🌟', '🐱'];
+  let selectedAvatar = profile.avatar || '👤';
+
+  const avatarOptionsHtml = AVAILABLE_AVATARS.map(a => {
+    const isSelected = a.id === selectedAvatar;
+    const previewHtml = a.type === 'image'
+      ? `<img src="/avatares/${esc(a.file)}" class="avatar-img" alt="${esc(a.name)}" />`
+      : `<span class="avatar-emoji">${a.id}</span>`;
+    return `
+      <button type="button" class="avatar-option ${isSelected ? 'is-selected' : ''}" data-focusable data-avatar="${esc(a.id)}" title="${esc(a.name)}" aria-label="${esc(a.name)}" aria-pressed="${isSelected}">
+        <div class="avatar-option-preview">${previewHtml}</div>
+        <span class="avatar-option-label">${esc(a.name)}</span>
+      </button>
+    `;
+  }).join('');
 
   const { overlay, close } = modal('Ajustes de perfil', `
     <form class="profile-settings-form">
@@ -239,27 +298,42 @@ function profileSettings(profile, sync, onChanged) {
         <label>Nombre
           <input name="name" value="${esc(profile.name)}" required maxlength="60" data-focusable autocomplete="off">
         </label>
-        <label>Avatar
-          <select name="avatar" data-focusable>
-            ${avatars.map(a => `<option ${a === profile.avatar ? 'selected' : ''}>${a}</option>`).join('')}
-          </select>
-        </label>
+        <div class="settings-avatar-section">
+          <span class="settings-avatar-title">Elige un avatar:</span>
+          <div class="avatar-grid">
+            ${avatarOptionsHtml}
+          </div>
+          <input type="hidden" name="avatar" value="${esc(selectedAvatar)}">
+        </div>
       </div>
 
       <p class="settings-status" role="status"></p>
-      <div class="settings-actions" style="margin-top:1.5rem;">
+      <div class="settings-actions" style="margin-top:1.25rem;">
         <button class="btn" data-focusable type="submit">Guardar perfil</button>
       </div>
     </form>
   `, 'Configura el nombre y el avatar de este perfil');
 
+  const avatarInput = overlay.querySelector('input[name="avatar"]');
+  overlay.querySelectorAll('.avatar-option').forEach(btn => {
+    btn.onclick = () => {
+      overlay.querySelectorAll('.avatar-option').forEach(b => {
+        b.classList.remove('is-selected');
+        b.setAttribute('aria-pressed', 'false');
+      });
+      btn.classList.add('is-selected');
+      btn.setAttribute('aria-pressed', 'true');
+      selectedAvatar = btn.dataset.avatar;
+      if (avatarInput) avatarInput.value = selectedAvatar;
+    };
+  });
 
   overlay.querySelector('form').onsubmit = async e => {
     e.preventDefault();
     const form = e.currentTarget;
     const name = form.elements.name.value.trim();
     if (!name) return;
-    const avatar = form.elements.avatar.value;
+    const avatar = selectedAvatar;
 
     profile.name = name;
     profile.avatar = avatar;
