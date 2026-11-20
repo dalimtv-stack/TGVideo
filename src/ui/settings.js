@@ -1,3 +1,4 @@
+import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
 // src/ui/settings.js
 import { getGlobalConfig, getTmdbKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
 import { loadProgress } from '../player/progress.js';
@@ -143,12 +144,88 @@ export function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalCh
       <button class="btn-ghost" data-focusable data-action="profile">Ajustes de perfil</button>
       <button class="btn-ghost" data-focusable data-action="device">Ajustes de dispositivo</button>
       <button class="btn-ghost" data-focusable data-action="global">Ajustes globales</button>
+      <button class="btn-ghost" data-focusable data-action="developer">Desarrollador</button>
     </nav>
   `);
   overlay.querySelector('[data-action="switch"]').onclick = () => { close(); onSwitch(); };
   overlay.querySelector('[data-action="profile"]').onclick = () => { close(); profileSettings(profile, sync, onChanged); };
   overlay.querySelector('[data-action="device"]').onclick = () => { close(); deviceSettings(profile, sync, onChanged); };
   overlay.querySelector('[data-action="global"]').onclick = () => { close(); globalSettings(sync, onGlobalChanged, libraryTitles); };
+  overlay.querySelector('[data-action="developer"]').onclick = () => { close(); developerSettings(profile, sync); };
+}
+
+// 4. Ajustes de desarrollador: Registro de log en Telegram (cada 60 segundos)
+function developerSettings(profile, sync) {
+  const isEnabled = isDevLogEnabled();
+
+  const { overlay, close } = modal('Desarrollador', `
+    <form class="developer-settings-form">
+      <fieldset class="settings-section">
+        <legend class="settings-legend">Depuración y Diagnóstico</legend>
+        <label class="settings-checkbox-label" data-focusable tabindex="0" style="display:flex;align-items:flex-start;gap:0.75rem;padding:0.85rem;cursor:pointer;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);">
+          <input type="checkbox" name="dev_log" ${isEnabled ? 'checked' : ''} style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
+          <div style="display:flex;flex-direction:column;gap:0.3rem;">
+            <strong style="color:#fff;font-size:0.95rem;">Log de depuración en Telegram</strong>
+            <small style="color:rgba(255,255,255,0.7);font-size:0.82rem;line-height:1.35;">
+              Guarda el log de la app cada 60 segundos en el canal de Telegram <code>Perfiles::TGVideo::tgstorage</code>. <em>Solo se guarda si esta casilla está marcada.</em>
+            </small>
+          </div>
+        </label>
+      </fieldset>
+
+      <p class="settings-status" role="status" style="margin-top:0.75rem;font-size:0.85rem;color:#4ade80;display:none;"></p>
+
+      <div class="settings-actions" style="margin-top:1.5rem;display:flex;gap:0.75rem;justify-content:flex-end;">
+        <button type="button" class="btn-ghost" data-focusable id="btn-send-log-now">Enviar log ahora</button>
+        <button type="submit" class="btn" data-focusable>Guardar</button>
+      </div>
+    </form>
+  `, 'Herramientas de depuración de TGVideo');
+
+  const form = overlay.querySelector('form');
+  const statusEl = overlay.querySelector('.settings-status');
+
+  overlay.querySelector('#btn-send-log-now').onclick = async () => {
+    if (statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.style.color = '#93c5fd';
+      statusEl.textContent = 'Enviando log a Telegram…';
+    }
+    try {
+      await uploadDevLog({
+        getClient: typeof window !== 'undefined' && window.tg?.getClient,
+        peerOf: typeof window !== 'undefined' && window.tg?.peerOf,
+        profile,
+        sync
+      });
+      if (statusEl) {
+        statusEl.style.color = '#4ade80';
+        statusEl.textContent = '✓ Log enviado con éxito al canal Perfiles::TGVideo::tgstorage';
+      }
+    } catch (err) {
+      if (statusEl) {
+        statusEl.style.color = '#f87171';
+        statusEl.textContent = 'Error al enviar log: ' + (err?.message || err);
+      }
+    }
+  };
+
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const enabled = form.elements.dev_log.checked;
+    setDevLogEnabled(enabled);
+    if (enabled) {
+      startDevLogging({
+        getClient: typeof window !== 'undefined' && window.tg?.getClient,
+        peerOf: typeof window !== 'undefined' && window.tg?.peerOf,
+        profile,
+        sync
+      });
+    } else {
+      stopDevLogging();
+    }
+    close();
+  };
 }
 
 // 1. Ajustes de perfil: Nombre y Avatar
