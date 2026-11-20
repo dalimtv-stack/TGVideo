@@ -87,8 +87,16 @@ function move(dir) {
     if (dir === 'left') {
       if (idx > 0) {
         const target = trackItems[idx - 1];
-        target.focus();
-        target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        target.focus({ preventScroll: true });
+        curTrack.scrollTo({
+          left: target.offsetLeft - curTrack.offsetWidth / 2 + target.offsetWidth / 2,
+          behavior: 'smooth'
+        });
+        const curRow = cur.closest('.row');
+        if (!curRow?.previousElementSibling?.matches('.row')) {
+          const scroller = document.querySelector('.home-main') || window;
+          if (scroller.scrollTop > 0) scroller.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       }
       return;
     }
@@ -96,8 +104,16 @@ function move(dir) {
     if (dir === 'right') {
       if (idx !== -1 && idx < trackItems.length - 1) {
         const target = trackItems[idx + 1];
-        target.focus();
-        target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        target.focus({ preventScroll: true });
+        curTrack.scrollTo({
+          left: target.offsetLeft - curTrack.offsetWidth / 2 + target.offsetWidth / 2,
+          behavior: 'smooth'
+        });
+        const curRow = cur.closest('.row');
+        if (!curRow?.previousElementSibling?.matches('.row')) {
+          const scroller = document.querySelector('.home-main') || window;
+          if (scroller.scrollTop > 0) scroller.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       }
       return;
     }
@@ -219,7 +235,13 @@ function move(dir) {
         firstCard.focus({ preventScroll: true });
         const scroller = document.querySelector('.home-main') || window;
         scroller.scrollTo({ top: 0, behavior: 'smooth' });
-        firstCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        const fTrack = firstCard.closest('.row-track');
+        if (fTrack) {
+          fTrack.scrollTo({
+            left: firstCard.offsetLeft - fTrack.offsetWidth / 2 + firstCard.offsetWidth / 2,
+            behavior: 'smooth'
+          });
+        }
       }
       return;
     }
