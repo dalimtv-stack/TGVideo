@@ -134,7 +134,18 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
             } catch (_) {}
           }
 
-          // Asignar metadatos básicos de inmediato
+          // Obtener los detalles completos (incluyendo collection, director, cast, runtime, overview)
+          // de inmediato ANTES de guardar y notificar para que la colección esté disponible al instante.
+          try {
+            const full = await fetchTmdbFullDetails(selected.type, selected.id);
+            if (full) {
+              Object.assign(selected, full);
+            }
+          } catch (err) {
+            console.warn('[metadataModal] Error obteniendo detalles TMDB:', err);
+          }
+
+          // Asignar metadatos completos
           title.metadata = selected;
           title.tmdbId = selected.id;
 
@@ -150,20 +161,8 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
           try { onUpdated?.(selected); } catch (e) { console.warn('[metadataModal] onUpdated error', e); }
           close();
 
-          // Enriquecimiento completo de metadatos y edición del caption en Telegram
+          // Edición del caption en Telegram en segundo plano
           (async () => {
-            try {
-              const full = await fetchTmdbFullDetails(selected.type, selected.id);
-              if (full) {
-                Object.assign(selected, full);
-                if (full.runtime && !title.metadata.runtime) {
-                  title.metadata.runtime = full.runtime;
-                }
-                await setManualMetadata(title, selected).catch(() => {});
-              }
-            } catch (err) {
-              console.warn('[metadataModal] Error obteniendo detalles TMDB:', err);
-            }
 
             if (client && peerOf) {
               try {
