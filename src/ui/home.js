@@ -1,5 +1,6 @@
 // Proveedor de filas de la Home (independiente del HTML / skin)
 import { titleState } from '../player/progress.js';
+import { sortNews, NEWS_HOME_LIMIT, NEWS_GRID_LIMIT } from '../library/newsPrefs.js';
 
 export function getSagaMovieGroups(titles) {
   const groups = [];
@@ -69,7 +70,7 @@ export function getSagaMovieGroups(titles) {
   return groups;
 }
 
-export function buildHomeRows(titles, progress) {
+export function buildHomeRows(titles, progress, newsPrefs = {}) {
   const rows = [];
 
   // En "Seguir viendo":
@@ -161,8 +162,11 @@ export function buildHomeRows(titles, progress) {
   const movies = titles.filter(t => t.tipo === 'pelicula').sort(byDate);
   const looseMovies = movies.filter(t => !t.isSaga);
   const series = titles.filter(t => t.tipo === 'serie').sort(byDate);
-  if (looseMovies.length) rows.push({ id: 'new-movies', title: 'Novedades · Películas', items: looseMovies });
-  if (series.length) rows.push({ id: 'new-series', title: 'Novedades · Series', items: series });
+  // Novedades: máx. 30 en la fila y 60 en la cuadrícula ("+"), con el orden configurado
+  const newsMovies = sortNews(looseMovies, newsPrefs.movies || 'upload');
+  const newsSeries = sortNews(series, newsPrefs.series || 'upload');
+  if (newsMovies.length) rows.push({ id: 'new-movies', title: 'Novedades · Películas', items: newsMovies.slice(0, NEWS_HOME_LIMIT), gridItems: newsMovies.slice(0, NEWS_GRID_LIMIT) });
+  if (newsSeries.length) rows.push({ id: 'new-series', title: 'Novedades · Series', items: newsSeries.slice(0, NEWS_HOME_LIMIT), gridItems: newsSeries.slice(0, NEWS_GRID_LIMIT) });
   const sports = titles.filter(t => t.tipo === 'deporte').sort(byDate);
   const music = titles.filter(t => t.tipo === 'musica').sort(byDate);
   if (sports.length) rows.push({ id: 'new-sports', title: 'Deportes', items: sports });

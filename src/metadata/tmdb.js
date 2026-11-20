@@ -374,7 +374,7 @@ export async function enrichTitle(title, { signal } = {}) {
     backdrop: imageUrl(col.backdrop_path, "w1280"),
   } : null;
   const metadata = { id: data.id, type, name: data.name || data.title, overview: data.overview, rating: data.vote_average,
-    date: data.first_air_date || data.release_date, poster: imageUrl(data.poster_path), backdrop: imageUrl(data.backdrop_path, "w1280"),
+    date: data.first_air_date || data.release_date, last_air_date: data.last_air_date || "", poster: imageUrl(data.poster_path), backdrop: imageUrl(data.backdrop_path, "w1280"),
     collection };
   await kv.set(cacheKey, metadata).catch(error => console.warn("[tmdb] Caché no disponible", error));
   title.metadata = metadata;

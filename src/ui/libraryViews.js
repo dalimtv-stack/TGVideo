@@ -22,7 +22,7 @@ export function createLibraryViews(deps) {
 
     const titles = getTitles() || [];
     const progress = loadProgress(profile.id);
-    const currentItems = row.items.map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+    const currentItems = (row.gridItems || row.items).map(it => titles.find(t => String(t.id) === String(it.id)) || it);
 
     showScreen(`
       <div class="screen grid-screen" data-grid-id="${esc(row.id)}">

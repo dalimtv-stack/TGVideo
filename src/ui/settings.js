@@ -132,6 +132,7 @@ export function profileAvatar(profile) {
 }
 
 import { pickAvatar } from './avatarCarousel.js';
+import { showNewsSettings } from './newsSettings.js';
 
 export function modal(title, body, subtitle = '', onClose = null) {
   const previousFocus = document.activeElement;
@@ -346,6 +347,7 @@ function profileSettings(profile, sync, onChanged) {
           </div>
           <input type="hidden" name="avatar" value="${esc(selectedAvatar)}">
         </div>
+        <button type="button" class="btn-ghost" data-focusable id="btn-news-settings" style="margin-top:0.6rem;">Configurar Novedades</button>
       </div>
 
       <p class="settings-status" role="status"></p>
@@ -356,6 +358,7 @@ function profileSettings(profile, sync, onChanged) {
   `, 'Configura el nombre y el avatar de este perfil');
 
   const avatarInput = overlay.querySelector('input[name="avatar"]');
+  overlay.querySelector('#btn-news-settings').onclick = () => showNewsSettings(profile, sync, onChanged);
   overlay.querySelector('#btn-change-avatar').onclick = async () => {
     const nameNow = overlay.querySelector('input[name="name"]').value.trim() || profile.name;
     const picked = await pickAvatar({ name: nameNow, current: selectedAvatar, title: 'Cambiar avatar', confirmLabel: 'Elegir' });

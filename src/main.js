@@ -20,6 +20,7 @@ import { createTelegramSync } from './sync/telegramSync.js';
 import { loadLibrary } from './library/channels.js';
 import { buildTitles, mergeMoviesByTmdb, attachAutoCollections } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
+import { getNewsPrefs } from './library/newsPrefs.js';
 import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
 import { loadProgress, loadFavorites, saveFavorites, mergeFavorites, writeFullProgress, titleState, isFavorite, toggleFavorite, toggleAllWatched } from './player/progress.js';
 import { playFile } from './player/player.js';
@@ -519,7 +520,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   await prewarmPosterCache(titles);
 
   const progress = loadProgress(profile.id);
-  const rows = buildHomeRows(titles, progress);
+  const rows = buildHomeRows(titles, progress, getNewsPrefs(profile));
   const titleById = new Map();
   for (const t of titles) {
     titleById.set(String(t.id), t);
