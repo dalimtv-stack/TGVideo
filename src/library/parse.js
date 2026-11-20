@@ -22,12 +22,12 @@ export function parseCaption(text = '') {
     const k = m[1].trim().toLowerCase();
     const v = m[2].trim();
     if (k === 'sección' || k === 'seccion') out.section = v;
-    else if (k === 'nombre de archivo') out.fileName = v;
-    else if (k === 'id tmdb') out.tmdbId = v;
-    else if (k === 'id imdb') out.imdbId = v;
+    else if (k === 'nombre de archivo' || k === 'nombre del archivo' || k === 'nombre archivo' || k === 'filename') out.fileName = v;
+    else if (k === 'id tmdb' || k === 'tmdb id' || k === 'tmdb') out.tmdbId = v;
+    else if (k === 'id imdb' || k === 'imdb id' || k === 'imdb') out.imdbId = v;
     else if (k === 'director') out.director = v;
-    else if (k === 'guionista') out.writer = v;
-    else if (k === 'casting') out.cast = v;
+    else if (k === 'guionista' || k === 'guion') out.writer = v;
+    else if (k === 'casting' || k === 'reparto') out.cast = v;
     else if (k === 'puntuación' || k === 'puntuacion') out.rating = v;
     else if (k === 'edad') out.ageRating = v;
     else if (k === 'sinopsis') out.synopsis = v;
