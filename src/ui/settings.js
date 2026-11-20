@@ -91,7 +91,7 @@ export function profileAvatar(profile) {
   const av = profile?.avatar;
   if (!av) return esc((profile?.name || '?')[0].toUpperCase());
   if (typeof av === 'string' && (av.endsWith('.png') || av.endsWith('.jpg') || av.endsWith('.jpeg') || av.endsWith('.webp') || av.includes('/'))) {
-    const cleanFile = av.replace(/^\\/?(avatares\\/)?/, '');
+    const cleanFile = av.replace(/^\/?(avatares\/)?/, '');
     return `<img src="/avatares/${esc(cleanFile)}" class="avatar-img" alt="${esc(profile.name || '')}" onerror="this.style.display='none';this.parentElement.textContent='👤';" />`;
   }
   return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(av) ? av : esc((profile?.name || '?')[0].toUpperCase());
