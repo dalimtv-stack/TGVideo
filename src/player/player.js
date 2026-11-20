@@ -187,9 +187,7 @@ export async function playNative({
     nextFile,
     title,
     onNext: (nf) => {
-      cancelled = true;
-      try { video.pause(); } catch (_) {}
-      try { nextUp.remove(); } catch (_) {}
+      close({ isNext: true });
       onNext?.(nf);
     },
   });
@@ -257,7 +255,7 @@ export async function playNative({
 
   const cleanupSkip = setupDoubleTapSkip({ container: playerEl, video, skipSeconds });
 
-  const close = () => {
+  const close = ({ isNext = false } = {}) => {
     if (cancelled) return;
     cancelled = true;
     unregisterPlayerController();
@@ -279,7 +277,7 @@ export async function playNative({
     }
     if (stream) stream.close();
     else if (url) URL.revokeObjectURL(url);
-    onClose?.();
+    if (!isNext) onClose?.();
   };
 
   mount.querySelector('#pl-btn-back').onclick = close;
@@ -651,7 +649,7 @@ export async function playNative({
       if (!nextFile || typeof onNext !== 'function') {
         close();
       } else {
-        close();
+        close({ isNext: true });
         onNext(nextFile);
       }
     };
@@ -828,7 +826,7 @@ export async function playArtplayer({
 
   goFullscreen();
 
-  const close = () => {
+  const close = ({ isNext = false } = {}) => {
     if (cancelled) return;
     cancelled = true;
     unregisterPlayerController();
@@ -855,7 +853,7 @@ export async function playArtplayer({
     }
     if (stream) stream.close();
     else if (url) URL.revokeObjectURL(url);
-    onClose?.();
+    if (!isNext) onClose?.();
   };
 
   mount.querySelector('#pl-btn-back').onclick = close;
@@ -1232,8 +1230,7 @@ export async function playArtplayer({
       nextFile,
       title,
       onNext: (nf) => {
-        cancelled = true;
-        try { art.destroy(false); } catch (_) {}
+        close({ isNext: true });
         onNext?.(nf);
       },
     });
@@ -1403,7 +1400,7 @@ export async function playArtplayer({
       if (!nextFile || typeof onNext !== 'function') {
         close();
       } else {
-        close();
+        close({ isNext: true });
         onNext(nextFile);
       }
     });
