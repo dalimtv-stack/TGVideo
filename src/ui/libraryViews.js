@@ -1,3 +1,4 @@
+import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
 import { extractTitleAndYear } from '../metadata/tmdb.js';
 
@@ -74,18 +75,26 @@ function applySagaFilmMetadata(t) {
     const row = [...detail.querySelectorAll('.ep[data-key]')].find(el => el.dataset.key === file.key);
     if (!row || !file.metadata) continue;
     const image = row.querySelector('.saga-film-poster');
-    if (image && file.metadata.poster && image.tagName !== 'IMG') {
-      const img = document.createElement('img');
-      img.className = 'saga-film-poster'; img.alt = ''; img.loading = 'lazy';
-      loadPoster(img, file.metadata.poster);
-      image.replaceWith(img);
+    if (image && file.metadata.poster) {
+      if (image.tagName !== 'IMG') {
+        const img = document.createElement('img');
+        img.className = 'saga-film-poster'; img.alt = ''; img.loading = 'lazy';
+        loadPoster(img, file.metadata.poster);
+        image.replaceWith(img);
+      } else {
+        loadPoster(image, file.metadata.poster);
+      }
     }
     const name = row.querySelector('.ep-name');
     if (name && file.metadata.name) name.textContent = file.metadata.name;
-    const synopsis = row.querySelector('.saga-film-synopsis');
-    if (!synopsis && file.metadata.overview) {
-      const el = document.createElement('div'); el.className = 'saga-film-synopsis'; el.textContent = file.metadata.overview;
-      row.querySelector('.ep-info')?.append(el);
+    let synopsis = row.querySelector('.saga-film-synopsis');
+    if (file.metadata.overview) {
+      if (!synopsis) {
+        synopsis = document.createElement('div');
+        synopsis.className = 'saga-film-synopsis';
+        row.querySelector('.ep-info')?.append(synopsis);
+      }
+      synopsis.textContent = file.metadata.overview;
     }
   }
 }
@@ -205,6 +214,25 @@ function applyDetailMetadata(t, profile) {
 
 function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = null, fromGrid = null } = {}) {
   lastOpenedTitleId = t.id;
+  if (t.isSaga && Array.isArray(t.archivos)) {
+    const allTitles = getTitles() || [];
+    for (const f of t.archivos) {
+      const fileKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+      const ov = getOverride(fileKey) || (f.tmdbId ? getOverrideByTmdbId(f.tmdbId) : null);
+      if (ov) {
+        f.metadata = ov;
+        f.tmdbId = ov.id;
+        if (ov.name) f.sagaName = ov.name;
+      } else {
+        const loose = allTitles.find(x => !x.isSaga && x.archivos?.some(a => a.key === f.key));
+        if (loose?.metadata) {
+          f.metadata = loose.metadata;
+          f.tmdbId = loose.tmdbId || loose.metadata.id;
+          if (loose.metadata.name) f.sagaName = loose.metadata.name;
+        }
+      }
+    }
+  }
   const back = () => {
     if (fromGrid) {
       showGroupGrid(tg, sync, profile, fromGrid, { focusTitleId: t.id });
@@ -416,8 +444,9 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           const f = t.archivos.find(x => x.key === metaBtn.dataset.key);
           if (!f) return;
           const parsedFilm = extractTitleAndYear(f.fileName || f.label);
+          const fileKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
           const filmTitleObj = {
-            id: `${t.channel?.id || t.id}:${f.messageId}`,
+            id: fileKey,
             tipo: 'pelicula',
             isSaga: false,
             nombre: f.sagaName || parsedFilm.title || f.label,
