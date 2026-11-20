@@ -425,6 +425,30 @@ export async function playNative({
       if (handleTracksOverlayDpad('close')) return;
       close();
     },
+    onPlayPause: () => {
+      if (handleTracksOverlayDpad('select')) return;
+      if (video.paused) {
+        video.play();
+        showToast(playerEl, '▶ Reproduciendo');
+      } else {
+        video.pause();
+        showToast(playerEl, '⏸ Pausa');
+      }
+      updatePlayIcons();
+      showOsd();
+    },
+    onForward: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      video.currentTime = Math.min(video.duration || Infinity, video.currentTime + skipSeconds);
+      showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(video.currentTime)})`);
+      showOsd();
+    },
+    onRewind: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      video.currentTime = Math.max(0, video.currentTime - skipSeconds);
+      showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(video.currentTime)})`);
+      showOsd();
+    },
     onLeft: () => {
       if (handleTracksOverlayDpad('left')) return;
       if (osd.classList.contains('is-hidden')) {
@@ -1023,6 +1047,36 @@ export async function playArtplayer({
     close: () => {
       if (handleTracksOverlayDpad('close')) return;
       close();
+    },
+    onPlayPause: () => {
+      if (handleTracksOverlayDpad('select')) return;
+      if (art) {
+        if (art.template.$video.paused) {
+          art.play();
+          showToast(playerEl, '▶ Reproduciendo');
+        } else {
+          art.pause();
+          showToast(playerEl, '⏸ Pausa');
+        }
+        updatePlayIcons();
+        showOsd();
+      }
+    },
+    onForward: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      if (art) {
+        art.currentTime = Math.min(art.duration || Infinity, art.currentTime + skipSeconds);
+        showToast(playerEl, `⏩ +${skipSeconds}s (${formatTime(art.currentTime)})`);
+        showOsd();
+      }
+    },
+    onRewind: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      if (art) {
+        art.currentTime = Math.max(0, art.currentTime - skipSeconds);
+        showToast(playerEl, `⏪ -${skipSeconds}s (${formatTime(art.currentTime)})`);
+        showOsd();
+      }
     },
     onLeft: () => {
       if (handleTracksOverlayDpad('left')) return;
