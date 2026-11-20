@@ -4,13 +4,10 @@ export function applyCenteredCueFix(video) {
     if (!cue) return;
     try {
       cue.align = 'center';
-      cue.position = 50;
-      if ('positionAlign' in cue) cue.positionAlign = 'center';
-      if ('lineAlign' in cue) cue.lineAlign = 'end';
-      // snapToLines = false con line = 90 sitúa el subtítulo abajo al 90% de pantalla en iOS/WebKit
-      cue.snapToLines = false;
-      cue.line = 90;
-      cue.size = 100;
+      cue.snapToLines = true;
+      cue.line = -2;
+      try { cue.position = 'auto'; } catch (_) {}
+      try { cue.size = 100; } catch (_) {}
     } catch (_) {}
   };
 
