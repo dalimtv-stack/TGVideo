@@ -27,6 +27,13 @@ export function handleBack() {
     else tracksOverlay.remove();
     return true;
   }
+  const nextUp = document.querySelector('.player-next-up');
+  if (nextUp) {
+    const cancelBtn = nextUp.querySelector('.player-next-up-cancel');
+    if (cancelBtn) cancelBtn.click();
+    else nextUp.remove();
+    return true;
+  }
   const overlay = document.querySelector('.settings-overlay');
   if (overlay) {
     const closeBtn = overlay.querySelector('[aria-label="Cerrar"]');
@@ -60,7 +67,7 @@ export function handleBack() {
 
 function move(dir) {
   // Si hay un modal abierto, limitar la navegación a los elementos dentro del modal
-  const modalEl = document.querySelector('.settings-overlay, .player-tracks-overlay');
+  const modalEl = document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up');
   const scope = modalEl || document;
   const items = [...scope.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
   if (!items.length) return;
@@ -777,7 +784,7 @@ export function initDpad() {
     if (e.defaultPrevented) return;
 
     // Si el reproductor de vídeo está abierto y no hay un modal encima, delegar control al reproductor
-    if (activePlayerController && !document.querySelector('.settings-overlay, .player-tracks-overlay')) {
+    if (activePlayerController && !document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up')) {
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         activePlayerController.onLeft?.();
