@@ -12,8 +12,9 @@ export function buildHomeRows(titles, progress) {
 
   const byDate = (a, b) => b.ultimoMensajeFecha - a.ultimoMensajeFecha;
   const movies = titles.filter(t => t.tipo === 'pelicula').sort(byDate);
+  const looseMovies = movies.filter(t => !t.isSaga);
   const series = titles.filter(t => t.tipo === 'serie').sort(byDate);
-  if (movies.length) rows.push({ id: 'new-movies', title: 'Novedades · Películas', items: movies });
+  if (looseMovies.length) rows.push({ id: 'new-movies', title: 'Novedades · Películas', items: looseMovies });
   if (series.length) rows.push({ id: 'new-series', title: 'Novedades · Series', items: series });
   const sports = titles.filter(t => t.tipo === 'deporte').sort(byDate);
   const music = titles.filter(t => t.tipo === 'musica').sort(byDate);
