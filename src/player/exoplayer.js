@@ -251,6 +251,7 @@ export async function playExoPlayer(opts) {
   let playingListener = null;
   let progressListener = null;
   let endedListener = null;
+  let nextUp = null;
 
   const closePlayer = async ({ isSwitching = false } = {}) => {
     if (destroyed) return;
@@ -390,10 +391,10 @@ export async function playExoPlayer(opts) {
       }
     });
 
-    const nextUp = bindNextUp({
+    nextUp = bindNextUp({
       getTime: () => currentPosition,
       getDuration: () => currentDuration,
-      playerEl: overlay,
+      playerEl, // o playerEl: playerEl
       nextFile,
       title,
       onNext: async (nf) => {
