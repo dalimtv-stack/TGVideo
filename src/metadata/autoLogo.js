@@ -1,10 +1,30 @@
 // src/metadata/autoLogo.js
-// Logo automático de TMDB para la ficha: se elige el mejor (es > en > sin idioma) y se cachea en el dispositivo.
+// Logo automático para la ficha (es > en > sin idioma), cacheado en el dispositivo.
+// Colecciones/sagas: primero Fanart.tv (si el usuario tiene clave) y, si no hay, TMDB.
 import { fetchTmdbImages } from './tmdb.js';
+import { fetchFanartImages } from './fanart.js';
+import { getFanartKey } from '../settings/global.js';
 
 const mem = new Map();
 
-const cacheKey = (type, id) => `tgvideo_autologo_${type}_${id}`;
+// v2 para colecciones: invalida logos de TMDB cacheados antes de usar Fanart.tv
+const cacheKey = (type, id) =>
+  type === 'collection' ? `tgvideo_autologo_v2_${type}_${id}` : `tgvideo_autologo_${type}_${id}`;
+
+async function fanartLogo(type, id) {
+  if (!getFanartKey()) return '';
+  try {
+    const { logo } = await fetchFanartImages(type, id);
+    return logo?.[0]?.url || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+async function tmdbLogo(type, id) {
+  const { logo } = await fetchTmdbImages(type, id);
+  return logo?.[0]?.url || '';
+}
 
 export async function getAutoLogo(t) {
   const id = t?.metadata?.id;
@@ -18,8 +38,9 @@ export async function getAutoLogo(t) {
   } catch (_) {}
   const job = (async () => {
     try {
-      const { logo } = await fetchTmdbImages(type, id);
-      const url = logo?.[0]?.url || '';
+      let url = '';
+      if (type === 'collection') url = await fanartLogo(type, id);
+      if (!url) url = await tmdbLogo(type, id);
       try { localStorage.setItem(k, url); } catch (_) {}
       return url;
     } catch (_) {
