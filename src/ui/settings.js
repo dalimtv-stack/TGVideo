@@ -76,23 +76,57 @@ export function applyProfileScale(profile) {
   return validIdx;
 }
 
-export const AVAILABLE_AVATARS = [
-  { id: 'Carmen-sandiego.png', name: 'Carmen Sandiego', type: 'image', file: 'Carmen-sandiego.png' },
-  { id: 'Elfo-navidad.png', name: 'Elfo de Navidad', type: 'image', file: 'Elfo-navidad.png' },
-  { id: 'Lucifer.png', name: 'Lucifer', type: 'image', file: 'Lucifer.png' },
-  { id: '👤', name: 'Usuario', type: 'emoji' },
-  { id: '🙂', name: 'Sonrisa', type: 'emoji' },
-  { id: '🎬', name: 'Cine', type: 'emoji' },
-  { id: '🌟', name: 'Estrella', type: 'emoji' },
-  { id: '🐱', name: 'Gato', type: 'emoji' },
-];
+// Carga dinámica de imágenes de avatares desde public/avatares/ usando Vite import.meta.glob
+const avatarModules = import.meta.glob('/public/avatares/*.{png,jpg,jpeg,webp,svg,gif,avif,PNG,JPG,JPEG,WEBP,SVG,GIF,AVIF}', { eager: true });
+
+function formatAvatarName(file) {
+  const customNames = {
+    'elfo-navidad.png': 'Elfo de Navidad',
+    'carmen-sandiego.png': 'Carmen Sandiego',
+    'lucifer.png': 'Lucifer',
+  };
+  const lower = file.toLowerCase();
+  if (customNames[lower]) return customNames[lower];
+
+  const base = file.replace(/\.[^.]+$/, '').replace(/[-_.]+/g, ' ').trim();
+  return base
+    .split(' ')
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+function getAvailableAvatars() {
+  const entries = Object.keys(avatarModules || {});
+  const images = entries.map(path => {
+    const file = path.replace(/^.*[\\/]/, '');
+    return {
+      id: file,
+      name: formatAvatarName(file),
+      type: 'image',
+      file: file,
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+
+  const emojis = [
+    { id: '👤', name: 'Usuario', type: 'emoji' },
+    { id: '🙂', name: 'Sonrisa', type: 'emoji' },
+    { id: '🎬', name: 'Cine', type: 'emoji' },
+    { id: '🌟', name: 'Estrella', type: 'emoji' },
+    { id: '🐱', name: 'Gato', type: 'emoji' },
+  ];
+
+  return [...images, ...emojis];
+}
+
+export const AVAILABLE_AVATARS = getAvailableAvatars();
 
 export function profileAvatar(profile) {
   const av = profile?.avatar;
   if (!av) return esc((profile?.name || '?')[0].toUpperCase());
-  if (typeof av === 'string' && (av.endsWith('.png') || av.endsWith('.jpg') || av.endsWith('.jpeg') || av.endsWith('.webp') || av.includes('/'))) {
+  if (typeof av === 'string' && (/\.(png|jpg|jpeg|webp|svg|gif|avif)$/i.test(av) || av.includes('/'))) {
     const cleanFile = av.replace(/^\/?(avatares\/)?/, '');
-    return `<img src="/avatares/${esc(cleanFile)}" class="avatar-img" alt="${esc(profile.name || '')}" onerror="this.style.display='none';this.parentElement.textContent='👤';" />`;
+    return `<img src="/avatares/${esc(encodeURI(cleanFile))}" class="avatar-img" alt="${esc(profile.name || '')}" onerror="this.style.display='none';this.parentElement.textContent='👤';" />`;
   }
   return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(av) ? av : esc((profile?.name || '?')[0].toUpperCase());
 }
@@ -124,6 +158,24 @@ export function modal(title, body, subtitle = '', onClose = null) {
     }
     // El D-Pad queda dentro del diálogo, permitiendo subir/bajar entre campos e inputs
     const isTextInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
+    const isAvatarGrid = document.activeElement?.closest('.avatar-grid');
+
+    if (isAvatarGrid && ['ArrowUp', 'ArrowDown'].includes(e.key)) {
+      const gridItems = [...isAvatarGrid.querySelectorAll('[data-focusable]')].filter(el => !el.disabled && el.offsetParent);
+      const idx = gridItems.indexOf(document.activeElement);
+      if (idx !== -1) {
+        const cols = 4;
+        const targetIdx = e.key === 'ArrowUp' ? idx - cols : idx + cols;
+        if (targetIdx >= 0 && targetIdx < gridItems.length) {
+          e.preventDefault();
+          e.stopPropagation();
+          gridItems[targetIdx].focus();
+          gridItems[targetIdx].scrollIntoView({ block: "nearest", behavior: "smooth" });
+          return;
+        }
+      }
+    }
+
     if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
       const items = [...overlay.querySelectorAll('[data-focusable]')].filter(el => !el.disabled && el.offsetParent);
       const index = items.indexOf(document.activeElement);
@@ -282,7 +334,7 @@ function profileSettings(profile, sync, onChanged) {
   const avatarOptionsHtml = AVAILABLE_AVATARS.map(a => {
     const isSelected = a.id === selectedAvatar;
     const previewHtml = a.type === 'image'
-      ? `<img src="/avatares/${esc(a.file)}" class="avatar-img" alt="${esc(a.name)}" />`
+      ? `<img src="/avatares/${esc(encodeURI(a.file))}" class="avatar-img" alt="${esc(a.name)}" />`
       : `<span class="avatar-emoji">${a.id}</span>`;
     return `
       <button type="button" class="avatar-option ${isSelected ? 'is-selected' : ''}" data-focusable data-avatar="${esc(a.id)}" title="${esc(a.name)}" aria-label="${esc(a.name)}" aria-pressed="${isSelected}">
