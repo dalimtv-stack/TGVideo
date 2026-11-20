@@ -119,3 +119,13 @@
   background: rgba(255, 255, 255, 0.16);
 }
 
+
+.player-next-up-play:focus,
+.player-next-up-play:focus-visible,
+.player-next-up-cancel:focus,
+.player-next-up-cancel:focus-visible {
+  outline: 3px solid #fff !important;
+  outline-offset: 2px !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.6) !important;
+}
