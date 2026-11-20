@@ -1,7 +1,7 @@
 // Proveedor de filas de la Home (independiente del HTML / skin)
 import { titleState } from '../player/progress.js';
 
-function getSagaMovieGroups(titles) {
+export function getSagaMovieGroups(titles) {
   const groups = [];
   const seenSagas = new Set();
 
@@ -34,6 +34,26 @@ function getSagaMovieGroups(titles) {
     );
     if (movies.length > 0) {
       groups.push({ id: `col_${colId}`, movies });
+    }
+  }
+
+  // 3. Películas que comparten collection ID (TMDB) aunque aún no se haya instanciado el objeto saga
+  const colMap = new Map();
+  for (const t of titles) {
+    if (t.isSaga || t.isVirtualSaga) continue;
+    const cid = t.metadata?.collection?.id || t.metadata?.belongs_to_collection?.id;
+    if (cid) {
+      const key = `col_${cid}`;
+      if (!seenSagas.has(key)) {
+        if (!colMap.has(key)) colMap.set(key, []);
+        colMap.get(key).push(t);
+      }
+    }
+  }
+  for (const [key, movies] of colMap.entries()) {
+    if (movies.length > 1) {
+      seenSagas.add(key);
+      groups.push({ id: key, movies });
     }
   }
 
