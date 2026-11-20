@@ -418,7 +418,7 @@ export async function playExoPlayer(opts) {
       isPlaying = false;
       showOsd();
       if (nextFile && onNext) {
-        onNext();
+        onNext(nextFile);
       }
     });
 
