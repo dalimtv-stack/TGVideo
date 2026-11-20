@@ -503,7 +503,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   if (favBtn && profile?.id) {
     favBtn.onclick = (e) => {
       e.preventDefault();
-      toggleFavorite(profile.id, t.id);
+      toggleFavorite(profile.id, t.id, sync, profile);
       updateActionButtons();
     };
   }
@@ -514,6 +514,9 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       toggleAllWatched(profile.id, t);
       updateActionButtons();
       const prg = loadProgress(profile.id);
+      if (sync?.schedulePush) {
+        sync.schedulePush({ profile, progress: prg });
+      }
       const newSt = titleState(t, prg);
       const playBtnEl = document.getElementById('d-play');
       if (playBtnEl) {
