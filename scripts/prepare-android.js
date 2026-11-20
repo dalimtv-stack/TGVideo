@@ -114,10 +114,69 @@ function configureStyles() {
   console.log('[prepare-android] Fondo negro configurado en styles.xml.');
 }
 
+function configureMainActivity() {
+  const javaDir = path.resolve('android/app/src/main/java');
+  if (!fs.existsSync(javaDir)) return;
+
+  function findMainActivity(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        const found = findMainActivity(full);
+        if (found) return found;
+      } else if (ent.name === 'MainActivity.java') {
+        return full;
+      }
+    }
+    return null;
+  }
+
+  const mainPath = findMainActivity(javaDir);
+  if (!mainPath) return;
+
+  let content = fs.readFileSync(mainPath, 'utf-8');
+  if (!content.includes('dispatchKeyEvent')) {
+    const dispatchMethod = `
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        int action = event.getAction();
+        int keyCode = event.getKeyCode();
+        if (action == android.view.KeyEvent.ACTION_DOWN) {
+            if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_REWIND ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_NEXT ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_STEP_FORWARD ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD) {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().dispatchKeyEvent(event);
+                    return true;
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+`;
+    const lastBrace = content.lastIndexOf('}');
+    if (lastBrace !== -1) {
+      content = content.slice(0, lastBrace) + dispatchMethod + content.slice(lastBrace);
+      fs.writeFileSync(mainPath, content, 'utf-8');
+      console.log('[prepare-android] dispatchKeyEvent añadido a MainActivity.java.');
+    }
+  }
+}
+
 try {
   configureManifest();
   copyBanners();
   configureStyles();
+  configureMainActivity();
   console.log('[prepare-android] Preparación para Android completada con éxito.');
 } catch (err) {
   console.error('[prepare-android] Error:', err);
