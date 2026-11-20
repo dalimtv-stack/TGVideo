@@ -120,6 +120,20 @@ export async function playExoPlayer(opts) {
   };
   registerPlayerController({
     close: () => closePlayer(),
+    onPlayPause: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      ExoPlayerPlugin.togglePlay();
+      showToast(playerEl, isPlaying ? '⏸ Pausa' : '▶ Reproduciendo');
+      showOsd();
+    },
+    onForward: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      seekBy(skipSeconds);
+    },
+    onRewind: () => {
+      if (document.querySelector('.player-tracks-overlay')) return;
+      seekBy(-skipSeconds);
+    },
     onLeft: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
       if (osd.classList.contains('is-hidden')) {
@@ -598,19 +612,29 @@ export async function playExoPlayer(opts) {
         return;
       }
 
-      if (e.key === 'MediaPlayPause') {
+      const isPlayPauseKey = e.key === 'MediaPlayPause' || e.key === 'MediaPlay' || e.key === 'MediaPause' ||
+        e.key === 'Play' || e.key === 'Pause' || e.key === 'ToggleMediaPlayPause' ||
+        e.keyCode === 179 || e.keyCode === 85 || e.keyCode === 126 || e.keyCode === 127 || e.keyCode === 250 || e.keyCode === 19;
+      if (isPlayPauseKey) {
         e.preventDefault();
         ExoPlayerPlugin.togglePlay();
+        showToast(playerEl, isPlaying ? '⏸ Pausa' : '▶ Reproduciendo');
         return;
       }
 
-      if (e.key === 'MediaFastForward') {
+      const isForwardKey = e.key === 'MediaFastForward' || e.key === 'FastForward' ||
+        e.key === 'MediaTrackNext' || e.key === 'MediaSkipForward' || e.key === 'MediaStepForward' ||
+        e.keyCode === 228 || e.keyCode === 90 || e.keyCode === 178 || e.keyCode === 87 || e.keyCode === 176 || e.keyCode === 272 || e.keyCode === 274;
+      if (isForwardKey) {
         e.preventDefault();
         seekBy(skipSeconds);
         return;
       }
 
-      if (e.key === 'MediaRewind') {
+      const isRewindKey = e.key === 'MediaRewind' || e.key === 'Rewind' ||
+        e.key === 'MediaTrackPrevious' || e.key === 'MediaSkipBackward' || e.key === 'MediaStepBackward' ||
+        e.keyCode === 227 || e.keyCode === 89 || e.keyCode === 177 || e.keyCode === 88 || e.keyCode === 273 || e.keyCode === 275;
+      if (isRewindKey) {
         e.preventDefault();
         seekBy(-skipSeconds);
         return;
