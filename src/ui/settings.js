@@ -131,6 +131,8 @@ export function profileAvatar(profile) {
   return ['👤', '🙂', '🎬', '🌟', '🐱'].includes(av) ? av : esc((profile?.name || '?')[0].toUpperCase());
 }
 
+import { pickAvatar } from './avatarCarousel.js';
+
 export function modal(title, body, subtitle = '', onClose = null) {
   const previousFocus = document.activeElement;
   const overlay = document.createElement('div');
@@ -331,19 +333,6 @@ function developerSettings(profile, sync) {
 function profileSettings(profile, sync, onChanged) {
   let selectedAvatar = profile.avatar || '👤';
 
-  const avatarOptionsHtml = AVAILABLE_AVATARS.map(a => {
-    const isSelected = a.id === selectedAvatar;
-    const previewHtml = a.type === 'image'
-      ? `<img src="/avatares/${esc(encodeURI(a.file))}" class="avatar-img" alt="${esc(a.name)}" />`
-      : `<span class="avatar-emoji">${a.id}</span>`;
-    return `
-      <button type="button" class="avatar-option ${isSelected ? 'is-selected' : ''}" data-focusable data-avatar="${esc(a.id)}" title="${esc(a.name)}" aria-label="${esc(a.name)}" aria-pressed="${isSelected}">
-        <div class="avatar-option-preview">${previewHtml}</div>
-        <span class="avatar-option-label">${esc(a.name)}</span>
-      </button>
-    `;
-  }).join('');
-
   const { overlay, close } = modal('Ajustes de perfil', `
     <form class="profile-settings-form">
       <div class="settings-fields">
@@ -351,9 +340,9 @@ function profileSettings(profile, sync, onChanged) {
           <input name="name" value="${esc(profile.name)}" required maxlength="60" data-focusable autocomplete="off">
         </label>
         <div class="settings-avatar-section">
-          <span class="settings-avatar-title">Elige un avatar:</span>
-          <div class="avatar-grid">
-            ${avatarOptionsHtml}
+          <div class="settings-avatar-row">
+            <div class="avatar" id="avatar-preview">${profileAvatar({ avatar: selectedAvatar, name: profile.name })}</div>
+            <button type="button" class="btn-ghost" data-focusable id="btn-change-avatar">Cambiar avatar</button>
           </div>
           <input type="hidden" name="avatar" value="${esc(selectedAvatar)}">
         </div>
@@ -367,18 +356,14 @@ function profileSettings(profile, sync, onChanged) {
   `, 'Configura el nombre y el avatar de este perfil');
 
   const avatarInput = overlay.querySelector('input[name="avatar"]');
-  overlay.querySelectorAll('.avatar-option').forEach(btn => {
-    btn.onclick = () => {
-      overlay.querySelectorAll('.avatar-option').forEach(b => {
-        b.classList.remove('is-selected');
-        b.setAttribute('aria-pressed', 'false');
-      });
-      btn.classList.add('is-selected');
-      btn.setAttribute('aria-pressed', 'true');
-      selectedAvatar = btn.dataset.avatar;
-      if (avatarInput) avatarInput.value = selectedAvatar;
-    };
-  });
+  overlay.querySelector('#btn-change-avatar').onclick = async () => {
+    const nameNow = overlay.querySelector('input[name="name"]').value.trim() || profile.name;
+    const picked = await pickAvatar({ name: nameNow, current: selectedAvatar, title: 'Cambiar avatar', confirmLabel: 'Elegir' });
+    if (picked === null) return;
+    selectedAvatar = picked;
+    if (avatarInput) avatarInput.value = picked;
+    overlay.querySelector('#avatar-preview').innerHTML = profileAvatar({ avatar: picked, name: nameNow });
+  };
 
   overlay.querySelector('form').onsubmit = async e => {
     e.preventDefault();

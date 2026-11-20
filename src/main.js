@@ -28,6 +28,7 @@ import { enrichTitles, enrichTitle, fetchSeasonEpisodes } from './metadata/tmdb.
 import { loadPoster, prewarmPosterCache, memoryCache } from './metadata/posterCache.js';
 import { prettyEpisodeName } from './library/parse.js';
 import { showMetadataModal } from './ui/metadataModal.js';
+import { pickAvatar } from './ui/avatarCarousel.js';
 import { showImagePicker } from './ui/imagePickerModal.js';
 import { getAutoLogo } from './metadata/autoLogo.js';
 import { applyImagePrefs, restoreOriginalImage, syncImagePrefsWithRemote, readImagePrefs } from './metadata/imagePrefs.js';
@@ -942,6 +943,9 @@ async function showProfileSelector(tg, sync) {
     const name = await promptUI('Nombre del perfil', 'Ej: Papá, Niños…');
     if (!name) return showProfileSelector(tg, sync);
 
+    const chosenAvatar = await pickAvatar({ name, current: null, title: 'Elige tu avatar', confirmLabel: 'Crear perfil' });
+    if (chosenAvatar === null) return showProfileSelector(tg, sync);
+
     const profileId = name
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
       .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'perfil';
@@ -951,7 +955,7 @@ async function showProfileSelector(tg, sync) {
       profile: {
         id: profileId,
         name: name.trim(),
-        avatar: null,
+        avatar: chosenAvatar,
         age_limit: '+18',
         pin: null,
         is_kids: false,

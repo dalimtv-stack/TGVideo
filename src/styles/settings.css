@@ -658,3 +658,19 @@
   transform: translateY(-1px);
   box-shadow: 0 0 14px rgba(239, 68, 68, 0.5) !important;
 }
+
+/* ===== Carrusel de avatares (crear perfil / cambiar avatar) ===== */
+.avatar-carousel-overlay { z-index: 3000; background: rgba(8, 8, 10, 0.96); display: flex; align-items: center; justify-content: center; }
+.avc-dialog { width: min(900px, 100%); display: flex; flex-direction: column; align-items: center; gap: 0.6rem; padding: 1rem; }
+.avc-title { margin: 0 0 0.5rem; font-size: calc(1.4rem * var(--ui-font-scale, 1)); }
+.avc-stage { position: relative; width: 100%; height: 260px; overflow: hidden; touch-action: pan-y; }
+.avc-item { position: absolute; left: 50%; top: 50%; transition: transform 0.28s ease, opacity 0.28s ease; cursor: pointer; will-change: transform; }
+.avc-item .avatar { width: 120px; height: 120px; }
+.avc-item.is-center .avatar { outline: 3px solid #fff; outline-offset: 3px; }
+.avc-name { font-size: calc(1.4rem * var(--ui-font-scale, 1)); color: #fff; min-height: 1.6em; }
+.avc-avatar-name { color: #888; font-size: 0.9rem; min-height: 1.2em; }
+.avc-actions { display: flex; gap: 1rem; margin-top: 0.8rem; }
+.avc-hint { color: #777; font-size: 0.8rem; margin: 0.2rem 0 0; }
+.settings-avatar-row { display: flex; align-items: center; gap: 1rem; margin-top: 0.4rem; }
+.settings-avatar-row .avatar { width: 64px; height: 64px; font-size: 1.6rem; border-radius: 50%; overflow: hidden; flex: none; }
+@media (max-width: 680px) { .avc-stage { height: 220px; } }
