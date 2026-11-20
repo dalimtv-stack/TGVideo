@@ -1,4 +1,5 @@
 import { prettyEpisodeName } from '../library/parse.js';
+import { extractTitleAndYear } from '../metadata/tmdb.js';
 
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
@@ -6,7 +7,7 @@ export function createLibraryViews(deps) {
     applyProfileScale, setBackHandler, getTitles, setTitles, loadProgress, titleState,
     formatPlayButtonLabel, esc, posterColor, memoryCache, showScreen, cardHtml,
     loadPoster, applyImagePrefs, getAutoLogo, fmtDur, fmtSize, enrichTitle,
-    showImagePicker, restoreOriginalImage, showMetadataModal, mergeMoviesByTmdb,
+    showImagePicker, restoreOriginalImage, showMetadataModal, mergeMoviesByTmdb, attachAutoCollections,
     playFile, fetchSeasonEpisodes, centerSeason, firstUncompleted, adjacentSeason,
     isFavorite, toggleFavorite, toggleAllWatched, focusFirst, showHome, app,
   } = deps;
@@ -304,7 +305,8 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           f.metadata = updatedMeta;
         }
       }
-      if (getTitles()) setTitles(mergeMoviesByTmdb(getTitles()));
+      const attachFn = attachAutoCollections || (x => x);
+      if (getTitles()) setTitles(attachFn(mergeMoviesByTmdb(getTitles())));
       applyDetailMetadata(t, profile);
       showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid });
     }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
@@ -397,12 +399,55 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
         <div class="ep-info"><div class="ep-name">${esc(filmTitle)}</div>
           <div class="ep-meta">${(t.tipo === 'serie' ? [durStr, fmtSize(f.size), episodeDate] : [filmYear, durStr, fmtSize(f.size)]).filter(Boolean).join(' · ')}</div>
           ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
-        <div class="ep-state">${p?.is_completed ? '✓ Visto' : pct ? Math.round(pct) + '%' : ''}</div>
+        <div class="ep-state">
+          ${p?.is_completed ? '<span class="ep-visto-badge">✓ Visto</span>' : pct ? Math.round(pct) + '%' : ''}
+          ${t.isSaga ? `<button class="btn-icon-circle saga-film-btn-meta" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>` : ''}
+        </div>
       </div>`;
     }).join('');
     container.querySelectorAll('.ep').forEach(el => {
       el.onclick = () => { const f = t.archivos.find(x => x.key === el.dataset.key); if (f) play(f); };
     });
+    if (t.isSaga) {
+      container.querySelectorAll('.saga-film-btn-meta').forEach(metaBtn => {
+        metaBtn.onclick = (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const f = t.archivos.find(x => x.key === metaBtn.dataset.key);
+          if (!f) return;
+          const parsedFilm = extractTitleAndYear(f.fileName || f.label);
+          const filmTitleObj = {
+            id: `${t.channel?.id || t.id}:${f.messageId}`,
+            tipo: 'pelicula',
+            isSaga: false,
+            nombre: f.sagaName || parsedFilm.title || f.label,
+            yearHint: parsedFilm.year,
+            channel: t.channel || f.channel,
+            archivos: [f],
+            metadata: f.metadata || null,
+            tmdbId: f.tmdbId || f.metadata?.id || null,
+          };
+          showMetadataModal(filmTitleObj, (updatedMeta) => {
+            f.metadata = updatedMeta;
+            f.tmdbId = updatedMeta.id;
+            f.sagaName = updatedMeta.name || f.sagaName;
+            const allTitles = getTitles() || [];
+            const loose = allTitles.find(x => !x.isSaga && x.archivos?.some(a => a.key === f.key));
+            if (loose) {
+              loose.metadata = updatedMeta;
+              loose.tmdbId = updatedMeta.id;
+              loose.nombre = updatedMeta.name || loose.nombre;
+            }
+            if (getTitles()) {
+              const attachFn = attachAutoCollections || (x => x);
+              setTitles(attachFn(mergeMoviesByTmdb(getTitles())));
+            }
+            applySagaFilmMetadata(t);
+            renderEpisodes(currentSeason);
+          }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
+        };
+      });
+    }
     if (hasSeasons) document.getElementById('d-list-title').textContent = `Temporada ${seasonNum} (${files.length} ep.)`;
   };
   renderEpisodes(currentSeason);
