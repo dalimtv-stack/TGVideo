@@ -37,11 +37,44 @@ let client = null;
 let isReconnecting = false;
 
 /**
+ * Limpia y recicla los senders exportados hacia los Data Centers de medios (DC 2, DC 4, etc.)
+ * Evita el bloqueo conocido de GramJS donde un sender secundario desconectado no puede reconectar ni reenviar autenticación.
+ */
+export async function resetExportedSenders(tgClient = client) {
+  if (!tgClient) return;
+  try {
+    if (tgClient._exportedSenderReleaseTimeouts) {
+      for (const t of tgClient._exportedSenderReleaseTimeouts.values()) {
+        try { clearTimeout(t); } catch (_) {}
+      }
+      tgClient._exportedSenderReleaseTimeouts.clear();
+    }
+    if (tgClient._exportedSenderPromises) {
+      const promises = Array.from(tgClient._exportedSenderPromises.values());
+      tgClient._exportedSenderPromises.clear();
+      for (const p of promises) {
+        try {
+          const s = await Promise.race([p, Promise.resolve(null)]);
+          if (s && typeof s.disconnect === 'function') {
+            try { await s.disconnect(); } catch (_) {}
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (err) {
+    console.warn('[telegram] Error reseteando senders de streaming:', err);
+  }
+}
+
+/**
  * Asegura que el cliente de Telegram esté conectado.
  * Si la conexión se ha perdido (ej. tras error MTProto o suspensión de red), reconecta automáticamente.
  */
-export async function ensureConnected(tgClient = client) {
+export async function ensureConnected(tgClient = client, { forceResetSenders = false } = {}) {
   if (!tgClient) return null;
+  if (forceResetSenders) {
+    await resetExportedSenders(tgClient);
+  }
   if (tgClient.connected) return tgClient;
   if (isReconnecting) {
     await new Promise(r => setTimeout(r, 600));
@@ -143,6 +176,8 @@ export function createTelegramClient({
 
     /** Asegura reconexión si se pierde la conexión */
     ensureConnected: () => ensureConnected(client),
+
+    resetExportedSenders: () => resetExportedSenders(client),
 
     /** ¿Hay sesión guardada? */
     hasSession: () => !!localStorage.getItem('tg_session'),
