@@ -102,6 +102,14 @@ export async function fetchTmdbImages(type, id, signal) {
 
 export async function validateTmdbKey() { return request("/configuration"); }
 
+export async function fetchTvExternalIds(tvId, signal) {
+  try {
+    return await request("/tv/" + tvId + "/external_ids", {}, signal);
+  } catch (_) {
+    return null;
+  }
+}
+
 const normalize = s => String(s || "")
   .replace(/ñ/g, "n").replace(/Ñ/g, "N")
   .normalize("NFD")
