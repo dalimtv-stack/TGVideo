@@ -1,10 +1,10 @@
 // Puente página <-> Service Worker: descarga de Telegram solo los trozos pedidos.
 import bigInt from 'big-integer';
-import { ensureConnected } from '../core/telegram.js';
+import { ensureConnected, resetExportedSenders } from '../core/telegram.js';
 
 const PART = 512 * 1024; // tamaño de petición a Telegram (múltiplo válido para upload.getFile)
 const CACHE_PARTS = 24;  // ~12 MB en memoria
-const streams = new Map(); // id -> { client, media, size, mime, cache: Map<partIdx, Promise<Uint8Array>> }
+const streams = new Map(); // id -> { client, media, size, mime, cache: Map<partIdx, Promise<Uint8Array>>, closed: boolean }
 let listening = false;
 
 export async function streamingAvailable() {
@@ -30,7 +30,7 @@ function listen() {
     if (ev.data?.type !== 'tgstream') return;
     const port = ev.ports[0];
     const s = streams.get(ev.data.id);
-    if (!s) return port.postMessage({ error: 'stream desconocido' });
+    if (!s || s.closed) return port.postMessage({ error: 'stream desconocido o cerrado' });
     try {
       const start = ev.data.start, end = Math.min(ev.data.end, s.size - 1);
       if (start >= s.size) return port.postMessage({ size: s.size, mime: s.mime, data: new ArrayBuffer(0) });
@@ -41,7 +41,9 @@ function listen() {
 }
 
 async function fetchPartWithRetry(s, idx, retries = 3) {
+  if (s.closed) return new Uint8Array(0);
   for (let attempt = 1; attempt <= retries; attempt++) {
+    if (s.closed) return new Uint8Array(0);
     try {
       if (s.client && typeof s.client.connected === 'boolean' && !s.client.connected) {
         console.warn(`[stream] Cliente desconectado antes de chunk ${idx}, reconectando (intento ${attempt})...`);
@@ -56,6 +58,7 @@ async function fetchPartWithRetry(s, idx, retries = 3) {
           limit: 1,
           fileSize: bigInt(s.size),
         })) {
+          if (s.closed) return new Uint8Array(0);
           return new Uint8Array(chunk);
         }
         return new Uint8Array(0);
@@ -69,10 +72,14 @@ async function fetchPartWithRetry(s, idx, retries = 3) {
       return result;
     } catch (err) {
       console.warn(`[stream] Error en descarga de chunk ${idx} (intento ${attempt}/${retries}):`, err?.message || err);
+      if (s.closed) return new Uint8Array(0);
       if (attempt === retries) throw err;
       await new Promise(r => setTimeout(r, 400 * attempt));
       if (s.client) {
-        try { await ensureConnected(s.client); } catch (_) {}
+        try {
+          await resetExportedSenders(s.client);
+          await ensureConnected(s.client);
+        } catch (_) {}
       }
     }
   }
@@ -80,6 +87,7 @@ async function fetchPartWithRetry(s, idx, retries = 3) {
 }
 
 function getPart(s, idx) {
+  if (s.closed) return Promise.resolve(new Uint8Array(0));
   if (s.cache.has(idx)) {
     const p = s.cache.get(idx);
     s.cache.delete(idx);
@@ -94,10 +102,11 @@ function getPart(s, idx) {
 }
 
 export async function readRange(s, start, end) {
+  if (s.closed) return new Uint8Array(0);
   const first = Math.floor(start / PART), lastP = Math.floor(end / PART);
   const parts = await Promise.all(Array.from({ length: lastP - first + 1 }, (_, i) => getPart(s, first + i)));
   // precarga el siguiente trozo para que no haya cortes
-  if ((lastP + 1) * PART < s.size) getPart(s, lastP + 1);
+  if (!s.closed && ((lastP + 1) * PART < s.size)) getPart(s, lastP + 1);
   const out = new Uint8Array(end - start + 1);
   let pos = 0;
   parts.forEach((p, i) => {
@@ -114,7 +123,16 @@ export function getStream(id) {
 
 export function openStream({ client, media, size, mime, name = 'video' }) {
   const id = Math.random().toString(36).slice(2);
-  const streamData = { client, media, size, mime, name, cache: new Map() };
+  const streamData = { client, media, size, mime, name, cache: new Map(), closed: false };
   streams.set(id, streamData);
-  return { id, url: `/tgstream/${id}/${encodeURIComponent(name)}`, close: () => streams.delete(id) };
+  return {
+    id,
+    url: `/tgstream/${id}/${encodeURIComponent(name)}`,
+    close: () => {
+      streamData.closed = true;
+      streamData.cache.clear();
+      streams.delete(id);
+      resetExportedSenders(client);
+    }
+  };
 }
