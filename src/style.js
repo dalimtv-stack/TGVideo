@@ -575,10 +575,11 @@
 /* Subtítulos nativos: zona segura inferior (iPhone) */
 .native-video::cue,
 video::cue {
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 1.05em;
-  line-height: 1.35;
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #FECB00 !important;
+  -webkit-text-stroke: 4px #000000 !important;
+  text-shadow: 0 3px 9px rgba(0, 0, 0, 0.5) !important;
 }
 .player-native,
 .player {
