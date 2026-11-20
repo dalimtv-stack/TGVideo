@@ -619,3 +619,34 @@
 .search-clear:focus-visible, .search-clear.dpad-focused { outline: 2px solid currentColor; }
 .search-status { text-align: center; opacity: .6; font-size: .9rem; margin: .8rem 0 1rem; }
 @media (max-width: 600px) { .search-bar { max-width: none; } .search-input { font-size: 16px; } }
+
+
+/* Notificación de nueva versión sobre el avatar de perfil */
+.home-profile {
+  position: relative !important;
+}
+.profile-update-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 2px solid #141414;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.9);
+  pointer-events: none;
+  animation: pulse-update-dot 2s infinite ease-in-out;
+  z-index: 10;
+}
+@keyframes pulse-update-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.85; }
+}
+.avatar img, .avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}
