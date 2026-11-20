@@ -265,15 +265,21 @@ export async function playExoPlayer(opts) {
     clearTimeout(osdTimer);
     keepScreenOn(false);
     try {
-      rangeListener?.remove?.();
-      readyListener?.remove?.();
-      playingListener?.remove?.();
-      progressListener?.remove?.();
-      endedListener?.remove?.();
+      if (rangeListener?.remove) await rangeListener.remove();
+      if (readyListener?.remove) await readyListener.remove();
+      if (playingListener?.remove) await playingListener.remove();
+      if (progressListener?.remove) await progressListener.remove();
+      if (endedListener?.remove) await endedListener.remove();
+      await ExoPlayerPlugin.removeAllListeners().catch(() => {});
     } catch (_) {}
 
     await ExoPlayerPlugin.stop().catch(() => {});
-    if (stream) stream.close();
+    if (stream) {
+      const sToClose = stream;
+      setTimeout(() => {
+        try { sToClose.close(); } catch (_) {}
+      }, 1200);
+    }
 
     const fileKey = String(file?.id || file?.messageId || file?.key || '');
     if (currentDuration > 0 && fileKey) {
@@ -313,8 +319,13 @@ export async function playExoPlayer(opts) {
     await ExoPlayerPlugin.registerStream({ id: stream.id, size, mime, name });
     const streamUrl = `http://127.0.0.1:${port}/stream/${stream.id}/${encodeURIComponent(name)}`;
 
+    try {
+      await ExoPlayerPlugin.removeAllListeners().catch(() => {});
+    } catch (_) {}
+
     rangeListener = await ExoPlayerPlugin.addListener('needRange', async (ev) => {
       const { streamId, start, end, requestId } = ev || {};
+      if (!ev || streamId !== stream.id) return;
       if (destroyed || !requestId) {
         if (requestId) {
           fetch(`http://127.0.0.1:${port}/error?requestId=${encodeURIComponent(requestId)}`, { method: 'POST' }).catch(() => {});
