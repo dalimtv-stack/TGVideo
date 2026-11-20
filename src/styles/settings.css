@@ -291,7 +291,6 @@
 
 
 
-
 /* ===== Selector de tamaño de portadas y fuentes por perfil ===== */
 .ui-scale-setting {
   margin-top: 0.8rem;
@@ -558,3 +557,104 @@
 .row-track .lib-card { scroll-snap-align: center; }
 .row-track { scroll-snap-type: x mandatory; }
 
+
+
+/* Selector de avatar con imágenes de public/avatares/ */
+.settings-avatar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.4rem;
+}
+.settings-avatar-title {
+  font-size: 0.88rem;
+  color: #bbb;
+  font-weight: 600;
+}
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.avatar-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.45rem 0.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+}
+.avatar-option:hover,
+.avatar-option:focus,
+.avatar-option:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: #fff;
+  outline: 2px solid #fff !important;
+  outline-offset: 1px !important;
+  transform: translateY(-2px);
+}
+.avatar-option.is-selected {
+  border-color: #e50914 !important;
+  background: rgba(229, 9, 20, 0.22) !important;
+  box-shadow: 0 0 10px rgba(229, 9, 20, 0.55);
+}
+.avatar-option-preview {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #262626;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+}
+.avatar-option-preview .avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
+.avatar-option-label {
+  font-size: 0.72rem;
+  color: #ccc;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 68px;
+}
+
+/* Botón Descargar y Actualizar en el menú de perfil */
+.btn-update-release {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  padding: 0.85rem 1rem !important;
+  border-radius: 8px !important;
+  border: 1px solid rgba(239, 68, 68, 0.4) !important;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(185, 28, 28, 0.25)) !important;
+  cursor: pointer;
+  margin-top: 0.6rem !important;
+  transition: all 0.15s ease;
+  text-align: left !important;
+}
+.btn-update-release:hover,
+.btn-update-release:focus,
+.btn-update-release:focus-visible {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.35), rgba(220, 38, 38, 0.45)) !important;
+  border-color: #ef4444 !important;
+  outline: 2px solid #fff !important;
+  outline-offset: 2px !important;
+  transform: translateY(-1px);
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.5) !important;
+}
