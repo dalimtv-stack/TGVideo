@@ -4,7 +4,9 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .home-header {
@@ -87,10 +89,16 @@
 .home-main {
   flex: 1;
   display: block;
-  padding: 1.4rem 0 3rem;
+  padding: 1.2rem 0 3rem;
   overflow-y: auto;
-  scroll-padding-top: 1.5rem;
+  overflow-x: hidden;
+  scroll-padding-top: 2rem;
   scroll-behavior: smooth;
+}
+
+.row:first-child {
+  margin-top: 0.25rem;
+  scroll-margin-top: 3rem;
 }
 
 .home-empty {
