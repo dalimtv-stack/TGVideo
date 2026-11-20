@@ -56,18 +56,30 @@ export function mergeFavorites(local = [], remote = []) {
   return Array.from(new Set([...arr1, ...arr2]));
 }
 
-export function isFavorite(pid, titleId) {
-  if (!pid || !titleId) return false;
-  return loadFavorites(pid).includes(String(titleId));
+export function isFavorite(pid, titleOrId) {
+  if (!pid || !titleOrId) return false;
+  const list = loadFavorites(pid);
+  if (typeof titleOrId === 'string' || typeof titleOrId === 'number') {
+    return list.includes(String(titleOrId));
+  }
+  const t = titleOrId;
+  if (list.includes(String(t.id))) return true;
+  if (t.tmdbId && (list.includes(String(t.tmdbId)) || list.includes(`tmdb:${t.tmdbId}`))) return true;
+  if (t.archivos) {
+    for (const f of t.archivos) {
+      if (list.includes(`${f.channel}:${f.messageId}`)) return true;
+    }
+  }
+  return false;
 }
 
-export function toggleFavorite(pid, titleId, sync, profile) {
-  if (!pid || !titleId) return false;
+export function toggleFavorite(pid, titleOrId, sync, profile) {
+  if (!pid || !titleOrId) return false;
+  const titleId = String(typeof titleOrId === 'object' && titleOrId ? titleOrId.id : titleOrId);
   const list = loadFavorites(pid);
-  const idStr = String(titleId);
-  const idx = list.indexOf(idStr);
+  const idx = list.indexOf(titleId);
   if (idx >= 0) list.splice(idx, 1);
-  else list.unshift(idStr);
+  else list.unshift(titleId);
   const updated = saveFavorites(pid, list);
 
   if (profile) {
@@ -79,10 +91,11 @@ export function toggleFavorite(pid, titleId, sync, profile) {
         profile: profile || { id: pid },
         progress: loadProgress(pid),
         favorites: updated,
+        image_prefs: profile?.image_prefs,
       });
     } catch (_) {}
   }
-  return updated.includes(idStr);
+  return updated.includes(titleId);
 }
 
 export function toggleAllWatched(pid, title) {
