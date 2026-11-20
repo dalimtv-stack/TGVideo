@@ -2,7 +2,7 @@
 // Integración de ExoPlayer nativo para Android TV / APK con túnel de streaming bajo demanda de Telegram
 import { getStream, readRange, openStream } from './stream.js';
 import { ensureConnected, resetExportedSenders } from '../core/telegram.js';
-import { formatTime, showToast } from './ui-helpers.js';
+import { formatTime, showToast, bindNextUp } from './ui-helpers.js';
 import { saveProgress } from './progress.js';
 import { getDeviceSettings } from '../ui/settings.js';
 import { badgeText, badgeTitle, nextPlayerId, playerLabel, setDevicePlayer } from './playerPrefs.js';
@@ -264,6 +264,7 @@ export async function playExoPlayer(opts) {
     unregisterPlayerController();
     clearTimeout(osdTimer);
     keepScreenOn(false);
+    if (nextUp?.remove) nextUp.remove();
     try {
       if (rangeListener?.remove) await rangeListener.remove();
       if (readyListener?.remove) await readyListener.remove();
@@ -389,6 +390,18 @@ export async function playExoPlayer(opts) {
       }
     });
 
+    const nextUp = bindNextUp({
+      getTime: () => currentPosition,
+      getDuration: () => currentDuration,
+      playerEl: overlay,
+      nextFile,
+      title,
+      onNext: async (nf) => {
+        await closePlayer({ isSwitching: true });
+        onNext?.(nf);
+      },
+    });
+
     progressListener = await ExoPlayerPlugin.addListener('onPlaybackProgress', (ev) => {
       if (destroyed) return;
       hideLoading();
@@ -404,6 +417,8 @@ export async function playExoPlayer(opts) {
         scrubberFill.style.width = `${pct}%`;
       }
 
+      nextUp.check();
+
       const now = Date.now();
       if (now - lastProgressSave > 5000 && currentDuration > 0) {
         lastProgressSave = now;
@@ -418,6 +433,7 @@ export async function playExoPlayer(opts) {
       isPlaying = false;
       showOsd();
       if (nextFile && onNext) {
+        closePlayer({ isSwitching: true });
         onNext(nextFile);
       }
     });
