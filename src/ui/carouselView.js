@@ -280,8 +280,12 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       }
       case 'ArrowUp': {
         stop();
-        const up = document.querySelector('.category-sort-bar [data-focusable].active')
-          || document.querySelector('.category-sort-bar [data-focusable]')
+        const sortBar = document.querySelector('.category-sort-bar:not(.search-bar)');
+        const up = (sortBar?.classList.contains('is-expanded')
+          ? (sortBar.querySelector('.category-sort-btn.active') || sortBar.querySelector('.category-sort-btn'))
+          : sortBar?.querySelector('.category-sort-toggle'))
+          || sortBar?.querySelector('.category-sort-toggle')
+          || sortBar?.querySelector('[data-focusable]')
           || document.querySelector('.home-nav-item.active');
         up?.focus({ preventScroll: true });
         break;

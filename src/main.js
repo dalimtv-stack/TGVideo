@@ -634,14 +634,20 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     : selectedSection !== 'inicio' ? (() => {
         const currentSort = getSectionSort(profile.id, selectedSection);
         const sortedItems = sortTitles(activeSection?.items || [], currentSort);
+        const isSortExpanded = Boolean(focusSort && !fromPointer);
         return `
       <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
         <div class="category-header">
-          <div class="category-sort-bar" role="group" aria-label="Ordenar por">
-            <span class="category-sort-label">Ordenar:</span>
-            <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
-            <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
-            <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
+          <div class="category-sort-bar ${isSortExpanded ? 'is-expanded' : ''}" role="group" aria-label="Ordenar por">
+            <button type="button" class="category-sort-toggle" data-focusable aria-expanded="${isSortExpanded}" aria-haspopup="true" title="Desplegar opciones de ordenación">
+              <span class="category-sort-label">Ordenar:</span>
+              <span class="category-sort-icon" aria-hidden="true">▾</span>
+            </button>
+            <div class="category-sort-options">
+              <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
+              <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
+              <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
+            </div>
           </div>
           <div class="category-views-bar" role="group" aria-label="Modo de vista">
             <span class="category-views-label">Vista:</span>
@@ -709,6 +715,49 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     });
     setBackHandler(() => showHome(tg, sync, profile, { selectedSection: 'inicio' }));
   }
+  const sortBar = document.querySelector('.category-sort-bar:not(.search-bar)');
+  const sortToggle = document.querySelector('.category-sort-toggle');
+  if (sortBar && sortToggle) {
+    const expandSort = () => {
+      sortBar.classList.add('is-expanded');
+      sortToggle.setAttribute('aria-expanded', 'true');
+    };
+    const collapseSort = () => {
+      sortBar.classList.remove('is-expanded');
+      sortToggle.setAttribute('aria-expanded', 'false');
+    };
+
+    sortToggle.onclick = (e) => {
+      e.stopPropagation();
+      const isExpanded = sortBar.classList.contains('is-expanded');
+      if (isExpanded) {
+        collapseSort();
+      } else {
+        expandSort();
+        if (e.detail === 0) {
+          const activeBtn = sortBar.querySelector('.category-sort-btn.active') || sortBar.querySelector('.category-sort-btn');
+          activeBtn?.focus();
+        }
+      }
+    };
+
+    sortBar.addEventListener('focusin', () => {
+      expandSort();
+    });
+
+    sortBar.addEventListener('focusout', (e) => {
+      if (!sortBar.contains(e.relatedTarget)) {
+        collapseSort();
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!sortBar.contains(e.target)) {
+        collapseSort();
+      }
+    }, { passive: true });
+  }
+
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
     btn.onclick = (e) => {
       btn.blur();
@@ -717,6 +766,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       if (newSort && newSort !== currentSort) {
         setSectionSort(profile.id, selectedSection, newSort);
         showHome(tg, sync, profile, { selectedSection, focusSort: newSort, fromPointer: e.detail > 0 });
+      } else {
+        sortBar?.classList.remove('is-expanded');
+        sortToggle?.setAttribute('aria-expanded', 'false');
       }
     };
   });
