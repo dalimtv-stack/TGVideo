@@ -1,25 +1,48 @@
 /* src/styles/carousel.css */
 /* Vista en carrusel de las pestañas de categoría. Usa las variables del tema (skins). */
 
-/* ---- Botón "Vista" junto a Ordenar ---- */
+/* ---- Barra de modos de vista (separada de Ordenar en su propio contenedor) ---- */
+.category-header {
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+}
+.category-sort-bar {
+  margin: 0;
+}
+.category-views-bar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.3rem 0.8rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  margin: 0;
+}
+.category-views-label {
+  font-size: calc(0.85rem * var(--ui-font-scale, 1));
+  color: var(--theme-text-muted, #888);
+  margin-right: 0.2rem;
+  font-weight: 500;
+}
 .category-view-btn {
   appearance: none;
   border: 1px solid transparent;
   background: transparent;
   color: var(--theme-text-muted, #aaa);
   padding: 0.35rem 0.85rem;
-  margin-left: 0.4rem;
   border-radius: 9999px;
   font-size: calc(0.82rem * var(--ui-font-scale, 1));
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  border-left: 1px solid var(--theme-border, rgba(255, 255, 255, 0.15));
+  transition: all 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
 }
-.category-view-btn.is-on {
+.category-view-btn:hover {
   color: #fff;
-  background: color-mix(in srgb, var(--theme-accent, #e50914) 75%, transparent);
-  border-color: var(--theme-accent, #e50914);
+  background: rgba(255, 255, 255, 0.1);
 }
 .category-view-btn:focus { outline: none; }
 .category-view-btn:focus-visible,
@@ -32,22 +55,30 @@
   box-shadow: 0 0 10px rgba(255, 255, 255, 0.45) !important;
 }
 
-/* ---- La home se ajusta a la pantalla en modo carrusel (sin scroll vertical) ---- */
+/* ---- La home en modo carrusel: permite scroll vertical en móviles sin alterar tamaños ---- */
 .home-main--carousel {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  padding-bottom: 0.75rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2rem;
 }
 .home-main--carousel .category-view {
-  flex: 1;
+  flex: 1 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   padding-bottom: 0;
 }
-.home-main--carousel .category-header { flex: 0 0 auto; margin-bottom: 0.6rem; }
-.carousel-host { flex: 1; min-height: 0; }
+.home-main--carousel .category-header {
+  flex: 0 0 auto;
+  margin-bottom: 0.6rem;
+}
+.carousel-host {
+  flex: 1 0 auto;
+  min-height: 0;
+}
 
 /* ---- Carrusel ---- */
 .carousel-view {
@@ -138,15 +169,14 @@
 @media (hover: none) { .carousel-nav { display: none; } }
 
 .carousel-info {
-  flex: 1;
+  flex: 1 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
   gap: 0.35rem;
-  padding: 0 max(0.5rem, var(--sal, 0px));
-  overflow: hidden;
+  padding: 0 max(0.5rem, var(--sal, 0px)) 1rem;
 }
 .carousel-title {
   margin: 0;
@@ -180,10 +210,7 @@
 
 .carousel-syn {
   margin: 0;
-  flex: 1;
-  min-height: 0;
   max-width: min(60rem, 92%);
-  overflow: hidden;
   font-size: clamp(0.8rem, calc(var(--car-h) * 0.03), 1.05rem);
   line-height: 1.45;
   color: var(--theme-text, #fff);
@@ -192,10 +219,153 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 6;
   line-clamp: 6;
+  overflow: hidden;
 }
+
+/* ---- Botón Tráiler a pantalla completa (modo portadas) ---- */
+.carousel-trailer-action {
+  flex: 0 0 auto;
+  margin-top: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+.carousel-trailer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.5rem 1.4rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  font-size: calc(0.92rem * var(--ui-font-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  backdrop-filter: blur(8px);
+  -webkit-tap-highlight-color: transparent;
+}
+.carousel-trailer-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.45);
+  transform: scale(1.03);
+}
+.carousel-trailer-btn:focus { outline: none; }
+.carousel-trailer-btn:focus-visible,
+.carousel-trailer-btn.dpad-focused {
+  color: #fff !important;
+  border-color: #fff !important;
+  outline: 2px solid #fff !important;
+  outline-offset: 2px !important;
+  background: rgba(255, 255, 255, 0.32) !important;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.5) !important;
+  transform: scale(1.05);
+}
+.carousel-trailer-btn .carousel-trailer-icon {
+  font-size: 0.8em;
+  display: inline-block;
+}
+
 .carousel-count { flex: 0 0 auto; color: var(--theme-text-muted, #aaa); font-size: 0.75rem; }
 
+/* ---- Modal Tráiler a Pantalla Completa ---- */
+.carousel-trailer-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: env(safe-area-inset-top, 1rem) env(safe-area-inset-right, 1rem) env(safe-area-inset-bottom, 1rem) env(safe-area-inset-left, 1rem);
+  box-sizing: border-box;
+  animation: trailerModalFadeIn 0.2s ease-out;
+}
+.carousel-trailer-modal.closing {
+  animation: trailerModalFadeOut 0.2s ease-in forwards;
+}
+@keyframes trailerModalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes trailerModalFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.carousel-trailer-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.carousel-trailer-content {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 1200px;
+  height: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.carousel-trailer-frame-wrap {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100vh - 120px);
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.85);
+}
+.carousel-trailer-frame-wrap iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+.carousel-trailer-close {
+  position: absolute;
+  top: -46px;
+  right: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(30, 30, 30, 0.85);
+  color: #fff;
+  font-size: 1.2rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(8px);
+}
+.carousel-trailer-close:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: #fff;
+  transform: scale(1.1);
+}
+.carousel-trailer-close:focus { outline: none; }
+.carousel-trailer-close:focus-visible,
+.carousel-trailer-close.dpad-focused {
+  outline: 2px solid #fff !important;
+  outline-offset: 2px !important;
+  background: rgba(255, 255, 255, 0.4) !important;
+}
+
 @media (max-width: 760px) {
-  .category-view-btn { margin-left: 0; border-left: 0; }
   .carousel-track { gap: 0.8rem; }
+  .carousel-trailer-close {
+    top: 10px;
+    right: 10px;
+    width: 44px;
+    height: 44px;
+    font-size: 1.4rem;
+    background: rgba(0, 0, 0, 0.7);
+  }
 }

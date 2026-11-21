@@ -20,6 +20,13 @@ export function unregisterPlayerController() {
 
 export function handleBack() {
   // 1. Cerrar diálogo modal si está abierto
+  const trailerModal = document.querySelector('.carousel-trailer-modal');
+  if (trailerModal) {
+    const closeBtn = trailerModal.querySelector('.carousel-trailer-close');
+    if (closeBtn) closeBtn.click();
+    else trailerModal.remove();
+    return true;
+  }
   const tracksOverlay = document.querySelector('.player-tracks-overlay');
   if (tracksOverlay) {
     const closeBtn = tracksOverlay.querySelector('.player-tracks-close');
@@ -313,9 +320,18 @@ function move(dir) {
       sortBtns[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
       return;
     }
-    if (dir === 'right' && idx >= 0 && idx < sortBtns.length - 1) {
-      sortBtns[idx + 1].focus();
-      sortBtns[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    if (dir === 'right') {
+      if (idx >= 0 && idx < sortBtns.length - 1) {
+        sortBtns[idx + 1].focus();
+        sortBtns[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
+      const viewBtn = document.querySelector('.category-views-bar [data-focusable]');
+      if (viewBtn) {
+        viewBtn.focus();
+        viewBtn.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
       return;
     }
     if (dir === 'up') {
@@ -341,6 +357,61 @@ function move(dir) {
         first.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
         return;
       }
+    }
+    return;
+  }
+
+  // 2.4b Si está en la barra de modos de vista (.category-views-bar)
+  const curViewsBar = cur.closest('.category-views-bar');
+  if (curViewsBar) {
+    if (dir === 'left') {
+      const sortBtns = [...document.querySelectorAll('.category-sort-bar [data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+      const last = sortBtns[sortBtns.length - 1];
+      if (last) {
+        last.focus();
+        last.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
+    }
+    if (dir === 'up') {
+      const activeNav = document.querySelector('.home-nav-item.active') || document.querySelector('.home-nav-item');
+      if (activeNav) {
+        activeNav.focus();
+        activeNav.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
+    }
+    if (dir === 'down') {
+      const stage = document.querySelector('.home-main .carousel-stage');
+      if (stage) {
+        stage.focus({ preventScroll: true });
+        return;
+      }
+      const gridCards = [...document.querySelectorAll('.home-main .category-grid .lib-card[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+      if (gridCards.length) {
+        const first = gridCards[0];
+        first.focus({ preventScroll: true });
+        first.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        return;
+      }
+    }
+    return;
+  }
+
+  // 2.4c Si está en el botón de tráiler del carrusel (.carousel-trailer-btn)
+  const curTrailerBtn = cur.closest('.carousel-trailer-btn');
+  if (curTrailerBtn) {
+    if (dir === 'up') {
+      const stage = document.querySelector('.carousel-stage');
+      if (stage) {
+        stage.focus({ preventScroll: true });
+        return;
+      }
+    }
+    if (dir === 'left' || dir === 'right') {
+      const navBtn = document.querySelector(`.carousel-stage .carousel-nav.${dir === 'left' ? 'prev' : 'next'}`);
+      if (navBtn) navBtn.click();
+      return;
     }
     return;
   }

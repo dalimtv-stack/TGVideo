@@ -41,6 +41,65 @@ function metaLine(t) {
 
 const synopsisOf = (t) => t.metadata?.overview || t.archivos?.[0]?.synopsis || '';
 
+
+export function openFullscreenTrailer(key, title = 'Tráiler') {
+  document.querySelector('.carousel-trailer-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.className = 'carousel-trailer-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', `Tráiler: ${title}`);
+
+  modal.innerHTML = `
+    <div class="carousel-trailer-backdrop"></div>
+    <div class="carousel-trailer-content">
+      <button type="button" class="carousel-trailer-close" data-focusable aria-label="Cerrar tráiler">✕</button>
+      <div class="carousel-trailer-frame-wrap">
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(key)}?autoplay=1&controls=1&rel=0&modestbranding=1&playsinline=1"
+          title="Tráiler: ${esc(title)}"
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowfullscreen>
+        </iframe>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const close = () => {
+    window.removeEventListener('keydown', onKey, true);
+    modal.classList.add('closing');
+    setTimeout(() => modal.remove(), 200);
+    const returnTarget = document.querySelector('.carousel-trailer-btn:focus')
+      || document.querySelector('.carousel-trailer-btn')
+      || document.querySelector('.carousel-stage');
+    returnTarget?.focus?.({ preventScroll: true });
+  };
+
+  const onKey = (e) => {
+    if (e.key === 'Escape' || e.key === 'Back' || e.key === 'BrowserBack') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    }
+  };
+  window.addEventListener('keydown', onKey, true);
+
+  modal.querySelector('.carousel-trailer-close').onclick = (e) => {
+    e.stopPropagation();
+    close();
+  };
+  modal.querySelector('.carousel-trailer-backdrop').onclick = (e) => {
+    e.stopPropagation();
+    close();
+  };
+
+  const closeBtn = modal.querySelector('.carousel-trailer-close');
+  closeBtn?.focus?.();
+}
+
 export function destroyCarousel() {
   active?.destroy();
   active = null;
@@ -74,6 +133,13 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
         <div class="carousel-meta"></div>
         ${logos ? '<div class="carousel-trailer" aria-label="Tráiler"></div>' : ''}
         <p class="carousel-syn"></p>
+        ${!logos ? `
+        <div class="carousel-trailer-action">
+          <button type="button" class="carousel-trailer-btn" data-focusable aria-label="Reproducir tráiler a pantalla completa">
+            <span class="carousel-trailer-icon">▶</span>
+            <span class="carousel-trailer-text">Tráiler</span>
+          </button>
+        </div>` : ''}
         <div class="carousel-count"></div>
       </div>
     </div>`;
@@ -180,7 +246,13 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     metaEl.textContent = metaLine(t);
     synEl.textContent = synopsisOf(t) || 'Sin sinopsis disponible.';
     countEl.textContent = `${cur + 1} / ${items.length}`;
-    if (logos) showTrailer(t);
+    if (logos) {
+      showTrailer(t);
+    } else if (trailerBtn) {
+      const textEl = trailerBtn.querySelector('.carousel-trailer-text');
+      if (textEl) textEl.textContent = 'Tráiler';
+      trailerBtn.disabled = false;
+    }
   }
 
   const step = (d) => { if (cur + d >= 0 && cur + d < items.length) setActive(cur + d); };
@@ -195,7 +267,17 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       case 'PageDown': stop(); step(5); break;
       case 'Home': stop(); setActive(0); break;
       case 'End': stop(); setActive(items.length - 1); break;
-      case 'ArrowDown': stop(); break; // no hay nada debajo que enfocar
+      case 'ArrowDown': {
+        const trailerBtn = host.querySelector('.carousel-trailer-btn');
+        if (trailerBtn && trailerBtn.offsetParent) {
+          stop();
+          trailerBtn.focus();
+          trailerBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          break;
+        }
+        stop();
+        break;
+      }
       case 'ArrowUp': {
         stop();
         const up = document.querySelector('.category-sort-bar [data-focusable].active')
@@ -242,8 +324,70 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
 
   function destroy() {
     clearTrailer();
+    document.querySelector('.carousel-trailer-modal')?.remove();
     window.removeEventListener('resize', onResize);
     if (active === api) active = null;
+  }
+
+  const trailerBtn = host.querySelector('.carousel-trailer-btn');
+  if (trailerBtn) {
+    trailerBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const t = items[cur];
+      if (!t) return;
+      const id = t.metadata?.id || t.tmdbId;
+      if (!id) {
+        const textEl = trailerBtn.querySelector('.carousel-trailer-text');
+        if (textEl) textEl.textContent = 'Sin tráiler';
+        setTimeout(() => { if (textEl) textEl.textContent = 'Tráiler'; }, 2000);
+        return;
+      }
+      if (t._trailerKey) {
+        openFullscreenTrailer(t._trailerKey, displayName(t));
+        return;
+      }
+      const textEl = trailerBtn.querySelector('.carousel-trailer-text');
+      const prevText = textEl?.textContent || 'Tráiler';
+      if (textEl) textEl.textContent = 'Buscando…';
+      trailerBtn.disabled = true;
+      try {
+        const key = await fetchTmdbTrailer(titleType(t), id);
+        if (!key) {
+          if (textEl) textEl.textContent = 'Sin tráiler';
+          setTimeout(() => {
+            if (textEl) textEl.textContent = prevText;
+            trailerBtn.disabled = false;
+          }, 2000);
+          return;
+        }
+        t._trailerKey = key;
+        if (textEl) textEl.textContent = prevText;
+        trailerBtn.disabled = false;
+        openFullscreenTrailer(key, displayName(t));
+      } catch (_) {
+        if (textEl) textEl.textContent = 'Error';
+        setTimeout(() => {
+          if (textEl) textEl.textContent = prevText;
+          trailerBtn.disabled = false;
+        }, 2000);
+      }
+    });
+
+    trailerBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        stage.focus({ preventScroll: true });
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        e.stopPropagation();
+        step(-1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        e.stopPropagation();
+        step(1);
+      }
+    });
   }
 
   const api = { destroy, focus: () => stage.focus({ preventScroll: true }), setActive };

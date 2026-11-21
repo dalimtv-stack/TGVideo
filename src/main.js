@@ -368,10 +368,10 @@ function nextViewMode(current) {
   return 'grid';
 }
 
-function viewModeLabel(mode) {
-  if (mode === 'logos') return 'Vista: Logos';
-  if (mode === 'posters') return 'Vista: Carrusel';
-  return 'Vista: Cuadrícula';
+function viewModeShortLabel(mode) {
+  if (mode === 'logos') return 'Logos';
+  if (mode === 'posters') return 'Carrusel';
+  return 'Cuadrícula';
 }
 
 function sortTitles(items, sortType) {
@@ -637,12 +637,15 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         return `
       <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
         <div class="category-header">
-          <div class="category-sort-bar" role="group" aria-label="Ordenar y ver">
+          <div class="category-sort-bar" role="group" aria-label="Ordenar por">
             <span class="category-sort-label">Ordenar:</span>
             <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
             <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
             <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
-            <button type="button" class="category-view-btn ${isCarousel ? 'is-on' : ''}" data-focusable data-view="${currentView}" title="Cambiar modo de vista" aria-label="Cambiar vista, actual: ${viewModeLabel(currentView)}">${viewModeLabel(currentView)}</button>
+          </div>
+          <div class="category-views-bar" role="group" aria-label="Modo de vista">
+            <span class="category-views-label">Vista:</span>
+            <button type="button" class="category-view-btn" data-focusable data-view="${currentView}" title="Cambiar modo de vista" aria-label="Cambiar vista, actual: ${viewModeShortLabel(currentView)}">${viewModeShortLabel(currentView)}</button>
           </div>
         </div>
         ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`}
