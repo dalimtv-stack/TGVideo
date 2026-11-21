@@ -65,6 +65,58 @@ export function handleBack() {
   return false;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Desplazamiento de las filas de la home (carruseles)
+// Un único scroll por eje y por contenedor: antes se encadenaban varios scrollIntoView/scrollTo
+// "smooth" sobre el mismo contenedor y el último cancelaba al anterior (la fila quedaba sin centrar
+// y, al volver a la primera, con el título cortado). Además scrollIntoView arrastraba a los
+// contenedores ancestros (.home-screen), desplazando también la cabecera.
+// ---------------------------------------------------------------------------------------------
+
+/** Centra verticalmente una fila en el área desplazable de la home (la primera fila va al tope). */
+export function centerRowInView(row, behavior = 'smooth') {
+  const scroller = document.querySelector('.home-main');
+  if (!scroller || !row) return;
+  const isFirst = !row.previousElementSibling?.matches?.('.row');
+  let top = 0;
+  if (!isFirst) {
+    const s = scroller.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    const delta = (r.top + r.height / 2) - (s.top + s.height / 2);
+    top = scroller.scrollTop + delta;
+  }
+  const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  top = Math.max(0, Math.min(max, top));
+  if (Math.abs(top - scroller.scrollTop) > 1) scroller.scrollTo({ top, behavior });
+}
+
+/** Centra horizontalmente un elemento dentro de su carrusel. */
+function centerInTrack(track, el, behavior = 'smooth') {
+  if (!track || !el) return;
+  const t = track.getBoundingClientRect();
+  const e = el.getBoundingClientRect();
+  const left = Math.max(0, track.scrollLeft + (e.left + e.width / 2) - (t.left + t.width / 2));
+  if (Math.abs(left - track.scrollLeft) > 1) track.scrollTo({ left, behavior });
+}
+
+/** Da el foco a un elemento de una fila y lo deja centrado (horizontal en su carrusel, vertical en pantalla). */
+export function focusInRow(target, { behavior = 'smooth' } = {}) {
+  if (!target) return;
+  target.focus({ preventScroll: true });
+  const track = target.closest('.row-track');
+  const row = target.closest('.row');
+  centerInTrack(track, target, behavior);
+  centerRowInView(row, behavior);
+}
+
+/** Foco + revelado: en filas centra; fuera de ellas usa el desplazamiento mínimo. */
+function focusAndReveal(el) {
+  if (!el) return;
+  if (el.closest?.('.row-track')) { focusInRow(el); return; }
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+}
+
 function move(dir) {
   // Si hay un modal abierto, limitar la navegación a los elementos dentro del modal
   const modalEl = document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up');
@@ -94,16 +146,7 @@ function move(dir) {
     if (dir === 'left') {
       if (idx > 0) {
         const target = trackItems[idx - 1];
-        target.focus({ preventScroll: true });
-        curTrack.scrollTo({
-          left: target.offsetLeft - curTrack.offsetWidth / 2 + target.offsetWidth / 2,
-          behavior: 'smooth'
-        });
-        const curRow = cur.closest('.row');
-        if (!curRow?.previousElementSibling?.matches('.row')) {
-          const scroller = document.querySelector('.home-main') || window;
-          if (scroller.scrollTop > 0) scroller.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+        focusInRow(target);
       }
       return;
     }
@@ -111,16 +154,7 @@ function move(dir) {
     if (dir === 'right') {
       if (idx !== -1 && idx < trackItems.length - 1) {
         const target = trackItems[idx + 1];
-        target.focus({ preventScroll: true });
-        curTrack.scrollTo({
-          left: target.offsetLeft - curTrack.offsetWidth / 2 + target.offsetWidth / 2,
-          behavior: 'smooth'
-        });
-        const curRow = cur.closest('.row');
-        if (!curRow?.previousElementSibling?.matches('.row')) {
-          const scroller = document.querySelector('.home-main') || window;
-          if (scroller.scrollTop > 0) scroller.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+        focusInRow(target);
       }
       return;
     }
@@ -139,15 +173,7 @@ function move(dir) {
             const distance = Math.abs((r.left + r.width / 2) - currentCenter);
             return !best || distance < best.distance ? { item, distance } : best;
           }, null)?.item || prevItems[0];
-          target.focus({ preventScroll: true });
-          const isFirstRow = !prevRow.previousElementSibling?.matches('.row');
-          if (isFirstRow) {
-            const scroller = document.querySelector('.home-main') || window;
-            scroller.scrollTo({ top: 0, behavior: 'smooth' });
-          } else {
-            prevRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-          }
-          target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          focusInRow(target);
           return;
         }
       } else {
@@ -181,9 +207,7 @@ function move(dir) {
             const distance = Math.abs((r.left + r.width / 2) - currentCenter);
             return !best || distance < best.distance ? { item, distance } : best;
           }, null)?.item || nextItems[0];
-          target.focus({ preventScroll: true });
-          nextRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-          target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          focusInRow(target);
           return;
         }
       }
@@ -224,8 +248,7 @@ function move(dir) {
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
-        target?.focus({ preventScroll: true });
-        target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        focusAndReveal(target);
         return;
       }
       if (dir === 'up') {
@@ -252,8 +275,7 @@ function move(dir) {
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
-        target?.focus({ preventScroll: true });
-        target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        focusAndReveal(target);
         return;
       }
       if (dir === 'up') return;
@@ -274,8 +296,7 @@ function move(dir) {
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
-        target?.focus({ preventScroll: true });
-        target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        focusAndReveal(target);
         return;
       }
       if (dir === 'up') return;
@@ -315,8 +336,7 @@ function move(dir) {
           const dist = Math.abs((r.left + r.width / 2) - curCenter);
           return (!best || dist < best.dist) ? { item, dist } : best;
         }, null)?.item || gridCards[0];
-        target?.focus({ preventScroll: true });
-        target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        focusAndReveal(target);
         return;
       }
     }

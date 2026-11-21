@@ -21,7 +21,7 @@ import { loadLibrary } from './library/channels.js';
 import { buildTitles, mergeMoviesByTmdb, attachAutoCollections } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
 import { getNewsPrefs } from './library/newsPrefs.js';
-import { initDpad, setBackHandler, focusFirst } from './ui/dpad.js';
+import { initDpad, setBackHandler, focusFirst, focusInRow } from './ui/dpad.js';
 import { loadProgress, loadFavorites, saveFavorites, mergeFavorites, writeFullProgress, titleState, isFavorite, toggleFavorite, toggleAllWatched } from './player/progress.js';
 import { playFile } from './player/player.js';
 import { createKV } from './core/kv.js';
@@ -755,13 +755,12 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       el = document.querySelector('.home-nav-item.active, [data-focusable]');
     }
     if (el) {
-      el.focus({ preventScroll: true });
-      const parentRow = el.closest('.row');
-      if (parentRow) {
-        parentRow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-      }
-      if (!fromPointer) {
-        el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      if (el.closest('.row')) {
+        // Fila de la home: un único desplazamiento (centrada; la primera fila al tope con su título entero)
+        focusInRow(el, { behavior: fromPointer ? 'auto' : 'smooth' });
+      } else {
+        el.focus({ preventScroll: true });
+        if (!fromPointer) el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
       }
     }
   }, 80);

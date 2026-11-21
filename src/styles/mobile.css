@@ -11,11 +11,11 @@
   }
 
   .row-title {
-    margin: 0 max(1rem, var(--sal)) 0.6rem;
+    margin: 0 max(1rem, var(--sal)) 0.3rem;
   }
 
   .row-track {
-    padding: 0.5rem max(1rem, var(--sal)) 1rem;
+    padding: 0.4rem max(1rem, var(--sal)) 0.5rem;
   }
 
   .lib-card,

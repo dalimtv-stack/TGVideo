@@ -339,7 +339,7 @@
 .seasons-track { padding-top: 10px; margin-top: -10px; padding-left: 6px; padding-right: 6px; }
 /* "+" pegado al margen izquierdo de la fila con separación uniforme */
 .row-expand-card { margin-left: 0 !important; margin-right: 0 !important; }
-.row-track { align-items: flex-start; overflow-y: hidden; min-height: calc(265px * var(--ui-scale, 1.12)); }
+.row-track { align-items: flex-start; overflow-y: hidden; min-height: calc(250px * var(--ui-scale, 1.12)); }
 .row-track .lib-card-name { height: 2.7em; min-height: 2.7em; max-height: 2.7em; line-height: 1.35; word-break: break-word; }
 
 /* Subtítulos iPhone: vídeo a pantalla completa sin desplazar la caja de subtítulos */
