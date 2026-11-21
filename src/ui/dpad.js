@@ -247,7 +247,7 @@ function move(dir) {
       if (dir === 'down') {
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
-          || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+          || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
         focusAndReveal(target);
         return;
       }
@@ -274,7 +274,7 @@ function move(dir) {
       if (dir === 'down') {
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
-          || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+          || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
         focusAndReveal(target);
         return;
       }
@@ -295,7 +295,7 @@ function move(dir) {
       if (dir === 'down') {
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
-          || document.querySelector('.home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+          || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
         focusAndReveal(target);
         return;
       }
@@ -327,16 +327,18 @@ function move(dir) {
       }
     }
     if (dir === 'down') {
+      // Vista carrusel: el foco pasa al carrusel
+      const stage = document.querySelector('.home-main .carousel-stage');
+      if (stage) {
+        stage.focus({ preventScroll: true });
+        return;
+      }
+      // Cuadrícula: SIEMPRE la primera tarjeta (antes se elegía la más cercana en horizontal, es decir, una del medio)
       const gridCards = [...document.querySelectorAll('.home-main .category-grid .lib-card[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
       if (gridCards.length) {
-        const curRect = cur.getBoundingClientRect();
-        const curCenter = curRect.left + curRect.width / 2;
-        const target = gridCards.slice(0, 8).reduce((best, item) => {
-          const r = item.getBoundingClientRect();
-          const dist = Math.abs((r.left + r.width / 2) - curCenter);
-          return (!best || dist < best.dist) ? { item, dist } : best;
-        }, null)?.item || gridCards[0];
-        focusAndReveal(target);
+        const first = gridCards[0];
+        first.focus({ preventScroll: true });
+        first.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
         return;
       }
     }
