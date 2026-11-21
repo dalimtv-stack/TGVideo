@@ -2,6 +2,8 @@ import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
 import { extractTitleAndYear } from '../metadata/tmdb.js';
 import { getSagaMovieGroups } from './home.js';
+import { showCollectionPicker } from './collectionPicker.js';
+import { assignMovieToCollection, removeMovieFromCollection } from '../metadata/collections.js';
 
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
@@ -12,6 +14,7 @@ export function createLibraryViews(deps) {
     showImagePicker, restoreOriginalImage, showMetadataModal, mergeMoviesByTmdb, attachAutoCollections,
     playFile, fetchSeasonEpisodes, centerSeason, firstUncompleted, adjacentSeason,
     isFavorite, toggleFavorite, toggleAllWatched, focusFirst, showHome, app,
+    persistMetadata,
   } = deps;
   let lastOpenedTitleId = null;
 
@@ -316,13 +319,27 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     }).catch(() => {});
   }
 
+  // Reagrupa colecciones tras cambiar la pertenencia de una película y guarda los metadatos
+  const regroupCollections = () => {
+    if (getTitles()) setTitles((attachAutoCollections || (x => x))(mergeMoviesByTmdb(getTitles())));
+    persistMetadata?.();
+  };
+  const canAddToCollection = t.tipo === 'pelicula' && !t.isSaga && !t.isVirtualSaga && !!t.metadata?.id;
+
   document.getElementById('d-images').onclick = () => {
     showImagePicker(t, profile, {
       sync,
       onChanged: (kind, url) => {
         if (!url) restoreOriginalImage(t, kind);
         applyDetailMetadata(t, profile);
+        persistMetadata?.();
       },
+      onAddToCollection: canAddToCollection ? () => {
+        showCollectionPicker(t, getTitles() || [], {
+          onAdd: async (col) => { await assignMovieToCollection(t, col); regroupCollections(); },
+          onRemove: async () => { await removeMovieFromCollection(t); regroupCollections(); },
+        });
+      } : undefined,
     });
   };
 
@@ -338,7 +355,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       if (getTitles()) setTitles(attachFn(mergeMoviesByTmdb(getTitles())));
       applyDetailMetadata(t, profile);
       showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid });
-    }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
+    }, { client: tg?.getClient?.(), peerOf: tg?.peerOf, profile, sync });
   };
 
   const play = (f, targetTitle = t) => {
@@ -510,7 +527,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
             }
             applySagaFilmMetadata(t);
             renderEpisodes(currentSeason);
-          }, { client: tg?.getClient?.(), peerOf: tg?.peerOf });
+          }, { client: tg?.getClient?.(), peerOf: tg?.peerOf, profile, sync });
         };
       });
     }

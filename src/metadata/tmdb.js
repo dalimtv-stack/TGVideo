@@ -100,6 +100,19 @@ export async function fetchTmdbImages(type, id, signal) {
   };
 }
 
+// Películas de una colección de TMDB (ordenadas por fecha de estreno)
+export async function fetchTmdbCollectionParts(collectionId, signal) {
+  if (!collectionId) return [];
+  try {
+    const data = await request(`/collection/${collectionId}`, {}, signal);
+    return (data.parts || [])
+      .map((p) => ({ id: p.id, name: p.title || p.name || "", date: p.release_date || "", poster: imageUrl(p.poster_path) }))
+      .sort((a, b) => String(a.date || "9999").localeCompare(String(b.date || "9999")));
+  } catch (_) {
+    return [];
+  }
+}
+
 export async function validateTmdbKey() { return request("/configuration"); }
 
 export async function fetchTvExternalIds(tvId, signal) {

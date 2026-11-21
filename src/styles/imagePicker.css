@@ -12,24 +12,30 @@
 .imgpick-item.is-current { border-color: #e50914; }
 .imgpick-item:focus, .imgpick-item:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
 
-/* Desplegable de proveedor de imágenes (TMDB / Fanart.tv) */
-.imgpick-provider-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.85rem;
-  color: #ccc;
-}
-.imgpick-select {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 6px;
-  padding: 0.3rem 0.6rem;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-.imgpick-select:focus {
-  outline: 2px solid #fff;
-  outline-offset: 1px;
-}
+/* Selector de proveedor de imágenes (TMDB / Fanart.tv): botones, navegables con mando */
+.imgpick-providers { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.imgpick-provider-label { font-size: 0.85rem; color: #ccc; }
+.imgpick-provider-btn { border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 999px; padding: 0.35rem 0.9rem; font-size: 0.85rem; }
+.imgpick-provider-btn.is-active { background: #e50914; border-color: #e50914; color: #fff; }
+.imgpick-provider-btn:focus, .imgpick-provider-btn:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+/* Botones segmentados del diálogo de identificación (tipo e origen de imágenes) */
+.meta-seg { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.meta-seg-btn { border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 8px; padding: 0.4rem 0.8rem; font-size: 0.9rem; }
+.meta-seg-btn.is-active { background: #e50914; border-color: #e50914; color: #fff; }
+.meta-seg-btn:focus, .meta-seg-btn:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.meta-imgsource { margin-top: 0.75rem; }
+.meta-hint { display: block; margin-top: 0.3rem; opacity: 0.7; font-size: 0.78rem; }
+
+/* Selector "Añadir a colección" */
+.colpick { padding: 0.75rem 1rem 1rem; display: flex; flex-direction: column; gap: 0.6rem; max-height: 70vh; overflow-y: auto; }
+.colpick-current { margin: 0; opacity: 0.9; }
+.colpick-filter { width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; border: 1px solid #444; background: #1a1a1a; color: #fff; font-size: 1rem; }
+.colpick-msg { margin: 0; min-height: 1.2em; opacity: 0.8; }
+.colpick-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.colpick-item { display: flex; align-items: center; gap: 0.75rem; text-align: left; width: 100%; padding: 0.4rem 0.6rem; border: 2px solid transparent; border-radius: 10px; background: rgba(255, 255, 255, 0.08); color: #fff; cursor: pointer; }
+.colpick-item img, .colpick-noposter { width: 44px; height: 64px; object-fit: cover; border-radius: 4px; flex: none; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.08); }
+.colpick-name { flex: 1; font-weight: 600; }
+.colpick-count { opacity: 0.7; font-size: 0.85rem; }
+.colpick-item:focus, .colpick-item:focus-visible, .colpick-filter:focus { outline: 3px solid #fff; outline-offset: 2px; }
+.colpick-item:disabled { opacity: 0.5; cursor: default; }

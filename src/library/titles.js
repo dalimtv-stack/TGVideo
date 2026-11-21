@@ -150,6 +150,12 @@ export function attachAutoCollections(titles) {
 
   // Excluir colecciones virtuales previas para recalcularlas limpiamente
   const baseTitles = titles.filter(t => !t.isVirtualSaga);
+  // Quitar los archivos que una pasada anterior añadió a sagas físicas (se recalculan abajo)
+  for (const t of baseTitles) {
+    if (t.isSaga && Array.isArray(t.archivos) && t.archivos.some(f => f._extraCollection)) {
+      t.archivos = t.archivos.filter(f => !f._extraCollection);
+    }
+  }
   const standaloneMovies = baseTitles.filter(t => t.tipo === 'pelicula' && !t.isSaga);
 
   // Mapear colecciones de TMDB por su ID
@@ -228,6 +234,24 @@ export function attachAutoCollections(titles) {
       };
 
       result.push(sagaTitle);
+    } else {
+      // Saga física (canal) ya existente: incluir también las películas añadidas manualmente a la
+      // colección ("Añadir a colección") o detectadas por TMDB que viven fuera del canal de la saga.
+      existingSaga.archivos = existingSaga.archivos || [];
+      const have = new Set(existingSaga.archivos.map(f => f.key));
+      for (const m of movies) {
+        for (const f of (m.archivos || [])) {
+          if (have.has(f.key)) continue;
+          have.add(f.key);
+          existingSaga.archivos.push({
+            ...f,
+            _extraCollection: true,
+            sagaName: m.metadata?.name || m.nombre || f.label,
+            metadata: m.metadata || f.metadata,
+            tmdbId: m.metadata?.id || f.tmdbId || m.tmdbId || null,
+          });
+        }
+      }
     }
   }
 

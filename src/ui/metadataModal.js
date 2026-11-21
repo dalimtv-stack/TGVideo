@@ -4,10 +4,20 @@ import { modal } from './settings.js';
 import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata, enrichTitle, fetchTmdbFullDetails } from '../metadata/tmdb.js';
 import { buildStandardCaption, parseCaption } from '../library/parse.js';
 import { loadPoster } from '../metadata/posterCache.js';
+import { fetchFanartBest, parseFanartMovieId } from '../metadata/fanart.js';
+import { getImagePrefs, setImagePref, IMAGE_KINDS } from '../metadata/imagePrefs.js';
+import { getFanartKey } from '../settings/global.js';
+import { attachSpatialNav } from './spatialNav.js';
+
+const IMG_SOURCE_KEY = 'tgvideo_ident_imgsource';
+const TYPE_LABELS = { movie: 'Película', tv: 'Serie', collection: 'Saga / Colección' };
+
+const segButtons = (name, options, current) => options.map(([value, label]) =>
+  `<button type="button" class="btn-ghost meta-seg-btn ${value === current ? 'is-active' : ''}" data-focusable data-seg="${name}" data-value="${value}" aria-pressed="${value === current}">${label}</button>`).join('');
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
+export function showMetadataModal(title, onUpdated, { client, peerOf, profile, sync } = {}) {
   const currentMeta = title.metadata;
   const parsed = extractTitleAndYear(title.nombre);
   const initialQuery = parsed.title;
@@ -16,6 +26,14 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
 
   const telegramFileName = title.archivos?.[0]?.captionFileName || title.archivos?.[0]?.fileName || title.nombre || '';
   const telegramChannel = title.channel?.title || title.channel?.name || title.grupo || '';
+
+  const hasFanart = !!getFanartKey();
+  let savedSource = null;
+  try { savedSource = localStorage.getItem(IMG_SOURCE_KEY); } catch (_) {}
+  // Por defecto: Fanart.tv para colecciones si hay clave; si no, lo último que eligió el usuario
+  const initialSource = hasFanart
+    ? (currentType === 'collection' ? 'fanart' : (savedSource === 'fanart' ? 'fanart' : 'tmdb'))
+    : 'tmdb';
 
   const statusText = currentMeta
     ? `Identificación actual: <strong>${esc(currentMeta.name)}</strong> (${esc(currentMeta.date?.slice(0, 4) || 's/f')}) · TMDB ID: ${currentMeta.id}`
@@ -36,14 +54,11 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
               <input name="query" data-focusable value="${esc(initialQuery)}" required placeholder="Ej: Matrix, Breaking Bad…">
             </label>
 
-            <label class="meta-field meta-field-sm">
+            <div class="meta-field meta-field-sm">
               <span>Tipo</span>
-              <select name="type" data-focusable>
-                <option value="movie" ${currentType === 'movie' ? 'selected' : ''}>Película</option>
-                <option value="tv" ${currentType === 'tv' ? 'selected' : ''}>Serie</option>
-                <option value="collection" ${currentType === 'collection' ? 'selected' : ''}>Saga / Colección</option>
-              </select>
-            </label>
+              <input type="hidden" name="type" value="${currentType}">
+              <div class="meta-seg" role="group" aria-label="Tipo">${segButtons('type', Object.entries(TYPE_LABELS), currentType)}</div>
+            </div>
 
             <label class="meta-field meta-field-xs">
               <span>Año</span>
@@ -53,10 +68,17 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
 
           <div class="meta-search-direct">
             <label class="meta-field">
-              <span>O introduce ID directo de TMDB (opcional)</span>
-              <input name="directId" data-focusable placeholder="Ej: 603 o https://www.themoviedb.org/movie/603">
+              <span>O introduce ID directo de TMDB / enlace de TMDB o Fanart.tv (opcional)</span>
+              <input name="directId" data-focusable placeholder="Ej: 603, themoviedb.org/movie/603 o fanart.tv/movie/603">
             </label>
             <button class="btn" type="submit" data-focusable>Buscar</button>
+          </div>
+
+          <div class="meta-field meta-imgsource">
+            <span>Carteles, fondos y logos</span>
+            <input type="hidden" name="imgsource" value="${initialSource}">
+            <div class="meta-seg" role="group" aria-label="Origen de las imágenes">${segButtons('imgsource', [['tmdb', 'TMDB'], ['fanart', 'Fanart.tv']], initialSource)}</div>
+            ${hasFanart ? '' : '<small class="meta-hint">Añade tu clave de Fanart.tv en Ajustes globales para usar Fanart.tv.</small>'}
           </div>
         </form>
 
@@ -75,6 +97,21 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
   `, modalSubtitle);
 
   const form = overlay.querySelector('#meta-form');
+  attachSpatialNav(overlay.querySelector('.meta-modal-body'));
+
+  // Botones segmentados (sustituyen a los <select>, que no se abren con el mando)
+  overlay.querySelectorAll('.meta-seg-btn').forEach((btn) => {
+    btn.onclick = () => {
+      const name = btn.dataset.seg;
+      form.elements[name].value = btn.dataset.value;
+      overlay.querySelectorAll(`.meta-seg-btn[data-seg="${name}"]`).forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+      if (name === 'imgsource') { try { localStorage.setItem(IMG_SOURCE_KEY, btn.dataset.value); } catch (_) {} }
+    };
+  });
   const status = overlay.querySelector('.meta-status');
   const resultsContainer = overlay.querySelector('#meta-results');
   const resetBtn = overlay.querySelector('#btn-reset-meta');
@@ -88,7 +125,8 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
     const query = form.elements.query.value.trim();
     const type = form.elements.type.value;
     const year = form.elements.year.value.trim();
-    const directId = form.elements.directId.value.trim();
+    const rawDirect = form.elements.directId.value.trim();
+    const directId = parseFanartMovieId(rawDirect) || rawDirect;
 
     status.textContent = 'Buscando en TMDB…';
     resultsContainer.innerHTML = '';
@@ -145,9 +183,10 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
             console.warn('[metadataModal] Error obteniendo detalles TMDB:', err);
           }
 
-          // Asignar metadatos completos
+          // Asignar metadatos completos (la identidad cambia: se descartan los originales de imagen anteriores)
           title.metadata = selected;
           title.tmdbId = selected.id;
+          title._origImages = {};
 
           if (title.archivos && !title.isSaga) {
             for (const f of title.archivos) {
@@ -158,6 +197,23 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
 
           // Guardar localmente y actualizar vista
           await setManualMetadata(title, selected).catch(() => {});
+
+          // Imágenes: con Fanart.tv se eligen automáticamente las mejores (es > en) de cada tipo.
+          // Las elecciones anteriores pertenecían a la identificación antigua y se restauran.
+          if (profile) {
+            const source = form.elements.imgsource.value;
+            let best = {};
+            if (source === 'fanart') {
+              status.textContent = `Buscando imágenes de «${selected.name}» en Fanart.tv…`;
+              try { best = await fetchFanartBest(selected.type || currentType, selected.id); }
+              catch (err) { console.warn('[metadataModal] Fanart.tv:', err?.message || err); }
+            }
+            const previous = getImagePrefs(profile, title);
+            for (const kind of Object.keys(IMAGE_KINDS)) {
+              if (best[kind]) setImagePref(profile, title, kind, best[kind], sync);
+              else if (previous[kind]) setImagePref(profile, title, kind, '', sync);
+            }
+          }
           try { onUpdated?.(selected); } catch (e) { console.warn('[metadataModal] onUpdated error', e); }
           close();
 
@@ -239,6 +295,7 @@ export function showMetadataModal(title, onUpdated, { client, peerOf } = {}) {
   resetBtn?.addEventListener('click', async () => {
     if (!confirm('¿Restablecer identificación a automática?')) return;
     await clearManualMetadata(title);
+    title._origImages = {};
     await enrichTitle(title);
     if (title.archivos && !title.isSaga) {
       for (const f of title.archivos) {

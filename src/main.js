@@ -32,7 +32,7 @@ import { showMetadataModal } from './ui/metadataModal.js';
 import { pickAvatar } from './ui/avatarCarousel.js';
 import { showImagePicker } from './ui/imagePickerModal.js';
 import { getAutoLogo } from './metadata/autoLogo.js';
-import { applyImagePrefs, restoreOriginalImage, syncImagePrefsWithRemote, readImagePrefs } from './metadata/imagePrefs.js';
+import { applyImagePrefs, restoreOriginalImage, pullAndMergeImagePrefs, metadataForPersist } from './metadata/imagePrefs.js';
 import { hookConsole, isDevLogEnabled, startDevLogging } from './utils/devLogger.js';
 import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
@@ -233,13 +233,36 @@ function cardHtml(t, progress) {
     </div>`;
 }
 
+// Guarda en la caché local los metadatos de todos los títulos SIN las imágenes elegidas por el perfil
+// (esas viajan en image_prefs y se reaplican al cargar; así "Restaurar original" siempre funciona).
+async function persistTitlesMetadata() {
+  try {
+    const saved = await kv.get(LIB_KEY).catch(() => null);
+    if (!saved) return;
+    saved.metadataMap = saved.metadataMap || {};
+    for (const t of (TITLES_CACHE || [])) {
+      const meta = metadataForPersist(t);
+      if (meta) saved.metadataMap[t.id] = meta;
+      if (t.isSaga && Array.isArray(t.archivos)) {
+        for (const f of t.archivos) {
+          if (f.metadata) {
+            const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+            saved.metadataMap[fKey] = f.metadata;
+          }
+        }
+      }
+    }
+    await kv.set(LIB_KEY, saved);
+  } catch (_) {}
+}
+
 const libraryViews = createLibraryViews({
   applyProfileScale, setBackHandler, getTitles: () => TITLES_CACHE, setTitles: value => { TITLES_CACHE = value; },
   loadProgress, titleState, formatPlayButtonLabel, esc, posterColor, memoryCache, showScreen, cardHtml,
   loadPoster, applyImagePrefs, getAutoLogo, fmtDur, fmtSize, enrichTitle, showImagePicker,
   restoreOriginalImage, showMetadataModal, mergeMoviesByTmdb, attachAutoCollections, playFile, fetchSeasonEpisodes,
   centerSeason, firstUncompleted, adjacentSeason, isFavorite, toggleFavorite, toggleAllWatched,
-  focusFirst, showHome, app,
+  focusFirst, showHome, app, persistMetadata: persistTitlesMetadata,
 });
 
 // Lee los canales y solo vuelve a escanear los que han cambiado (o todos si force)
@@ -268,7 +291,7 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const sig = channels.map(c => `${c.id}:${c.top}:${c.title}`).sort().join('|');
   const metadataMap = { ...savedMeta };
   for (const t of titles) {
-    if (t.metadata) metadataMap[t.id] = t.metadata;
+    if (t.metadata) metadataMap[t.id] = metadataForPersist(t);
     if (t.isSaga && Array.isArray(t.archivos)) {
       for (const f of t.archivos) {
         if (f.metadata) {
@@ -395,11 +418,11 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
           profile.favorites = mergedFavs;
 
           const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
-          const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
+          const mergedImg = await pullAndMergeImagePrefs(profile, sync, remoteImg);
           profile.image_prefs = mergedImg;
 
           // Si el local aportó favoritos o imágenes que faltaban en el remoto, subir el snapshot unificado
-          if (mergedFavs.length > remoteFavs.length || Object.keys(mergedImg).length > Object.keys(remoteImg).length) {
+          if (mergedFavs.length > remoteFavs.length) {
             sync.pushProfile({
               profile,
               progress: loadProgress(profile.id),
@@ -449,7 +472,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     const before = (await kv.get(LIB_KEY).catch(() => null))?.sig;
     if (sync && profile?.id) {
       loadOverrides(sync).catch(() => {});
-      sync.pullProfile(profile.id).then(remote => {
+      sync.pullProfile(profile.id).then(async remote => {
         if (!remote) return;
         const remoteFavs = mergeFavorites(remote.favorites || [], remote.profile?.favorites || []);
         const localFavs = loadFavorites(profile.id);
@@ -458,10 +481,10 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         profile.favorites = mergedFavs;
 
         const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
-        const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
+        const mergedImg = await pullAndMergeImagePrefs(profile, sync, remoteImg);
         profile.image_prefs = mergedImg;
 
-        if (mergedFavs.length > remoteFavs.length || Object.keys(mergedImg).length > Object.keys(remoteImg).length) {
+        if (mergedFavs.length > remoteFavs.length) {
           sync.pushProfile({
             profile,
             progress: loadProgress(profile.id),
@@ -748,26 +771,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   let metaSaveTimer = null;
   const saveMetaDebounced = () => {
     clearTimeout(metaSaveTimer);
-    metaSaveTimer = setTimeout(async () => {
-      try {
-        const saved = await kv.get(LIB_KEY).catch(() => null);
-        if (saved) {
-          saved.metadataMap = saved.metadataMap || {};
-          for (const t of (TITLES_CACHE || [])) {
-            if (t.metadata) saved.metadataMap[t.id] = t.metadata;
-            if (t.isSaga && Array.isArray(t.archivos)) {
-              for (const f of t.archivos) {
-                if (f.metadata) {
-                  const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
-                  saved.metadataMap[fKey] = f.metadata;
-                }
-              }
-            }
-          }
-          await kv.set(LIB_KEY, saved);
-        }
-      } catch (_) {}
-    }, 1500);
+    metaSaveTimer = setTimeout(persistTitlesMetadata, 1500);
   };
 
   let reattachTimer = null;
@@ -780,7 +784,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         if (newTitles.length !== beforeCount) {
           TITLES_CACHE = newTitles;
           if (document.querySelector('.home-screen')) {
-            showHome(tg, sync, profile, { focusSort: activeSort, fromPointer: true });
+            showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
           }
         }
       }
@@ -825,7 +829,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       const before = TITLES_CACHE.length;
       TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
       if (TITLES_CACHE.length !== before && document.querySelector('.home-screen')) {
-        showHome(tg, sync, profile, { focusSort: activeSort, fromPointer: true });
+        showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
       }
     }
   }).catch(() => {});
@@ -909,11 +913,11 @@ async function showProfileSelector(tg, sync) {
 
             // Sincronizar Carteles, Fondos y Logos por perfil
             const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
-            const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
+            const mergedImg = await pullAndMergeImagePrefs(profile, sync, remoteImg);
             profile.image_prefs = mergedImg;
 
             // Re-enviar snapshot si el local aportó favoritos o imágenes no presentes en el remoto
-            if (mergedFavs.length > remoteFavs.length || Object.keys(mergedImg).length > Object.keys(remoteImg).length) {
+            if (mergedFavs.length > remoteFavs.length) {
               sync.pushProfile({
                 profile,
                 progress: loadProgress(profile.id),

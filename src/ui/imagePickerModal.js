@@ -1,55 +1,72 @@
 // src/ui/imagePickerModal.js
-// Engranaje ⚙ de la ficha: elegir cartel / fondo / logo entre las imágenes de TMDB o Fanart.tv.
+// Engranaje ⚙ de la ficha: elegir cartel / fondo / logo entre las imágenes de TMDB o Fanart.tv,
+// y (en películas) añadir la película a una colección existente.
+//
+// Pensado para mando (D-pad) en la APK: nada de <select> nativos (no se abren con el mando);
+// el proveedor se cambia con dos botones y la rejilla se recorre con navegación espacial.
 import { modal } from './settings.js';
+import { attachSpatialNav } from './spatialNav.js';
 import { fetchTmdbImages } from '../metadata/tmdb.js';
 import { fetchFanartImages } from '../metadata/fanart.js';
 import { IMAGE_KINDS, getImagePrefs, setImagePref } from '../metadata/imagePrefs.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-export function showImagePicker(title, profile, { sync, onChanged } = {}) {
-  const tmdbId = title.metadata?.id || title.tmdbId;
-  const type = title.isSaga ? 'collection' : title.tipo === 'serie' ? 'tv' : 'movie';
-  const { overlay } = modal('Imágenes de la ficha', '<div class="imgpick" id="imgpick"></div>', esc(title.metadata?.name || title.nombre || ''));
-  const root = overlay.querySelector('#imgpick');
+const PROVIDERS = { tmdb: 'TMDB', fanart: 'Fanart.tv' };
+const PROVIDER_KEY = 'tgvideo_image_provider';
 
-  const providerCache = {
-    tmdb: null,
-    fanart: null,
-  };
-  let currentProvider = 'tmdb';
+const loadProvider = () => {
+  try { const v = localStorage.getItem(PROVIDER_KEY); return PROVIDERS[v] ? v : 'tmdb'; } catch (_) { return 'tmdb'; }
+};
+const saveProvider = (v) => { try { localStorage.setItem(PROVIDER_KEY, v); } catch (_) {} };
+
+/**
+ * @param {object} title
+ * @param {object} profile
+ * @param {{ sync?: object, onChanged?: (kind: string, url: string) => void, onAddToCollection?: () => void }} [opts]
+ */
+export function showImagePicker(title, profile, { sync, onChanged, onAddToCollection } = {}) {
+  const tmdbId = title.metadata?.id || title.tmdbId;
+  const type = title.isSaga || title.metadata?.type === 'collection' ? 'collection' : title.tipo === 'serie' ? 'tv' : 'movie';
+  const { overlay, close } = modal('Imágenes de la ficha', '<div class="imgpick" id="imgpick"></div>', esc(title.metadata?.name || title.nombre || ''));
+  const root = overlay.querySelector('#imgpick');
+  attachSpatialNav(root);
+
+  const cache = { tmdb: null, fanart: null };
+  let provider = loadProvider();
 
   const focusFirst = () => root.querySelector('[data-focusable]')?.focus({ preventScroll: true });
 
   const renderMenu = () => {
-    root.innerHTML = Object.entries(IMAGE_KINDS).map(([kind, label]) =>
+    const kinds = Object.entries(IMAGE_KINDS).map(([kind, label]) =>
       `<button class="btn imgpick-opt" data-focusable data-kind="${kind}">Cambiar ${label.toLowerCase()}</button>`).join('');
+    const addCol = onAddToCollection
+      ? '<button class="btn btn-secondary imgpick-opt" data-focusable id="imgpick-addcol">Añadir a colección…</button>'
+      : '';
+    root.innerHTML = kinds + addCol;
     root.querySelectorAll('[data-kind]').forEach((b) => { b.onclick = () => renderGrid(b.dataset.kind); });
+    const addBtn = root.querySelector('#imgpick-addcol');
+    // Se cierra este diálogo antes de abrir el siguiente (el mando solo navega dentro del primer diálogo abierto)
+    if (addBtn) addBtn.onclick = () => { close(); onAddToCollection(); };
     focusFirst();
   };
 
-  const loadProviderImages = async (provider, kind) => {
-    if (providerCache[provider]) return providerCache[provider];
-    if (provider === 'tmdb') {
-      const data = await fetchTmdbImages(type, tmdbId);
-      providerCache.tmdb = data;
-      return data;
-    } else if (provider === 'fanart') {
-      const data = await fetchFanartImages(type, tmdbId, {
-        externalIds: title.metadata?.external_ids || (title.metadata?.imdbId ? { imdb_id: title.metadata.imdbId } : null)
-      });
-      providerCache.fanart = data;
-      return data;
-    }
-    return { poster: [], backdrop: [], logo: [] };
+  const loadImages = async (prov) => {
+    if (cache[prov]) return cache[prov];
+    const data = prov === 'tmdb'
+      ? await fetchTmdbImages(type, tmdbId)
+      : await fetchFanartImages(type, tmdbId, { externalIds: title.metadata?.external_ids || null });
+    cache[prov] = data;
+    return data;
   };
+
+  const providerBtns = () => Object.entries(PROVIDERS).map(([id, label]) =>
+    `<button class="btn-ghost imgpick-provider-btn ${provider === id ? 'is-active' : ''}" data-focusable data-provider="${id}" aria-pressed="${provider === id}">${label}</button>`).join('');
 
   const renderGrid = async (kind) => {
     if (!tmdbId) {
       root.innerHTML = `
-        <div class="imgpick-bar">
-          <button class="btn-ghost" data-focusable id="imgpick-back">← Volver</button>
-        </div>
+        <div class="imgpick-bar"><button class="btn-ghost" data-focusable id="imgpick-back">← Volver</button></div>
         <p class="imgpick-msg">Este título aún no está identificado en TMDB.</p>`;
       root.querySelector('#imgpick-back').onclick = renderMenu;
       focusFirst();
@@ -60,71 +77,73 @@ export function showImagePicker(title, profile, { sync, onChanged } = {}) {
       <div class="imgpick-bar">
         <button class="btn-ghost" data-focusable id="imgpick-back">← Volver</button>
         <strong>${IMAGE_KINDS[kind]}</strong>
-        <label class="imgpick-provider-label">
-          <span>Proveedor:</span>
-          <select class="imgpick-select" id="imgpick-provider" data-focusable>
-            <option value="tmdb" ${currentProvider === 'tmdb' ? 'selected' : ''}>TMDB</option>
-            <option value="fanart" ${currentProvider === 'fanart' ? 'selected' : ''}>Fanart.tv</option>
-          </select>
-        </label>
         <button class="btn-ghost" data-focusable id="imgpick-reset">Restaurar original</button>
       </div>
-      <p class="imgpick-msg">Cargando imágenes de ${currentProvider === 'fanart' ? 'Fanart.tv' : 'TMDB'}…</p>
-      <div class="imgpick-grid imgpick-${kind}" id="imgpick-results"></div>
-    `;
+      <div class="imgpick-providers" role="group" aria-label="Proveedor de imágenes">
+        <span class="imgpick-provider-label">Proveedor:</span>${providerBtns()}
+      </div>
+      <p class="imgpick-msg">Cargando imágenes de ${PROVIDERS[provider]}…</p>
+      <div class="imgpick-grid imgpick-${kind}" id="imgpick-results"></div>`;
 
     root.querySelector('#imgpick-back').onclick = renderMenu;
     root.querySelector('#imgpick-reset').onclick = () => {
-      setImagePref(profile, title.id, kind, '', sync);
+      setImagePref(profile, title, kind, '', sync);
       onChanged?.(kind, '');
       renderMenu();
     };
-
-    const selectEl = root.querySelector('#imgpick-provider');
-    selectEl.onchange = (e) => {
-      currentProvider = e.target.value;
-      renderGrid(kind);
-    };
+    root.querySelectorAll('[data-provider]').forEach((b) => {
+      b.onclick = () => {
+        if (b.dataset.provider === provider) return;
+        provider = b.dataset.provider;
+        saveProvider(provider);
+        renderGrid(kind).then(() => {
+          root.querySelector(`[data-provider="${provider}"]`)?.focus({ preventScroll: true });
+        });
+      };
+    });
 
     const msgEl = root.querySelector('.imgpick-msg');
     const gridEl = root.querySelector('#imgpick-results');
+    const activeProviderBtn = root.querySelector(`[data-provider="${provider}"]`);
 
-    let imagesData = null;
+    let data;
     try {
-      imagesData = await loadProviderImages(currentProvider, kind);
+      data = await loadImages(provider);
     } catch (e) {
-      msgEl.textContent = e.message || `No se pudieron cargar imágenes de ${currentProvider === 'fanart' ? 'Fanart.tv' : 'TMDB'}.`;
-      selectEl?.focus({ preventScroll: true });
+      msgEl.textContent = e.message || `No se pudieron cargar imágenes de ${PROVIDERS[provider]}.`;
+      activeProviderBtn?.focus({ preventScroll: true });
       return;
     }
 
-    const list = imagesData?.[kind] || [];
-    const current = getImagePrefs(profile, title.id)[kind] || title.metadata?.[kind] || '';
+    const list = data?.[kind] || [];
+    const current = getImagePrefs(profile, title)[kind] || title.metadata?.[kind] || '';
 
     if (!list.length) {
-      msgEl.textContent = `${currentProvider === 'fanart' ? 'Fanart.tv' : 'TMDB'} no tiene imágenes de este tipo.`;
-    } else {
-      msgEl.textContent = '';
-      msgEl.style.display = 'none';
+      msgEl.textContent = `${PROVIDERS[provider]} no tiene imágenes de este tipo.`;
+      activeProviderBtn?.focus({ preventScroll: true });
+      return;
     }
+    msgEl.textContent = '';
+    msgEl.style.display = 'none';
 
-    gridEl.innerHTML = list.map((im, i) =>
-      `<button class="imgpick-item ${im.url === current ? 'is-current' : ''}" data-focusable data-i="${i}" title="${esc(im.lang ? (im.lang + (im.likes ? ' · ' + im.likes + ' likes' : '')) : (im.likes ? im.likes + ' likes' : 'sin idioma'))}">
+    gridEl.innerHTML = list.map((im, i) => {
+      const tip = im.lang ? `${im.lang}${im.likes ? ` · ${im.likes} likes` : ''}` : (im.likes ? `${im.likes} likes` : 'sin idioma');
+      return `<button class="imgpick-item ${im.url === current ? 'is-current' : ''}" data-focusable data-i="${i}" title="${esc(tip)}">
         <img src="${esc(im.thumb)}" alt="" loading="lazy">
-      </button>`
-    ).join('');
+      </button>`;
+    }).join('');
 
     gridEl.querySelectorAll('.imgpick-item').forEach((b) => {
       b.onclick = () => {
         const im = list[Number(b.dataset.i)];
         if (!im?.url) return;
-        setImagePref(profile, title.id, kind, im.url, sync);
+        setImagePref(profile, title, kind, im.url, sync);   // se guarda con alias TMDB y se sincroniza
         onChanged?.(kind, im.url);
         gridEl.querySelectorAll('.imgpick-item').forEach((x) => x.classList.toggle('is-current', x === b));
       };
     });
 
-    (gridEl.querySelector('.imgpick-item.is-current') || gridEl.querySelector('.imgpick-item') || selectEl)?.focus({ preventScroll: true });
+    (gridEl.querySelector('.imgpick-item.is-current') || gridEl.querySelector('.imgpick-item'))?.focus({ preventScroll: true });
   };
 
   renderMenu();

@@ -2,7 +2,8 @@
 // Sincronización bidireccional vía canal de Telegram (Perfiles::TGVideo::tgstorage)
 import { Api } from 'telegram';
 import { loadFavorites, mergeFavorites } from '../player/progress.js';
-import { readImagePrefs } from '../metadata/imagePrefs.js';
+import { readImagePrefs, mergeImagePrefMaps } from '../metadata/imagePrefs.js';
+import { createImagePrefsSync } from './imagePrefsSync.js';
 
 const SYNC_CHANNEL_TITLE = 'Perfiles::TGVideo::tgstorage';
 const MAX_VERSIONS = 5; // 1 versión activa + 4 backups (5 en total)
@@ -45,24 +46,25 @@ function parseSyncFilename(filename) {
     return { kind: 'overrides', timestamp, rawTs, filename };
   }
 
-  if (name.startsWith('perfil_')) {
-    const rest = name.slice('perfil_'.length);
+  if (name.startsWith('perfil_') || name.startsWith('imgprefs_')) {
+    const kind = name.startsWith('imgprefs_') ? 'imgprefs' : 'profile';
+    const rest = name.slice(name.startsWith('imgprefs_') ? 'imgprefs_'.length : 'perfil_'.length);
     // Timestamp al final: _YYYYMMDD_HHMMSS o _YYYYMMDDHHMMSS
     const match = rest.match(/^(.*?)_(\d{8}_\d{6}|\d{14})$/);
     if (match) {
       const profileId = match[1];
       const rawTs = match[2];
       const timestamp = rawTs.replace(/\D/g, '');
-      return { kind: 'profile', profileId, timestamp, rawTs, filename };
+      return { kind, profileId, timestamp, rawTs, filename };
     }
     const lastUnderscore = rest.lastIndexOf('_');
     if (lastUnderscore > 0) {
       const profileId = rest.slice(0, lastUnderscore);
       const rawTs = rest.slice(lastUnderscore + 1);
       const timestamp = rawTs.replace(/\D/g, '');
-      return { kind: 'profile', profileId, timestamp, rawTs, filename };
+      return { kind, profileId, timestamp, rawTs, filename };
     }
-    return { kind: 'profile', profileId: rest, timestamp: '', rawTs: '', filename };
+    return { kind, profileId: rest, timestamp: '', rawTs: '', filename };
   }
 
   return null;
@@ -137,7 +139,7 @@ export function createTelegramSync({ getClient, peerOf }) {
     const peer = peerOf(ch);
     const files = [];
 
-    for await (const msg of client.iterMessages(peer, { limit: 100 })) {
+    for await (const msg of client.iterMessages(peer, { limit: 200 })) {
       const doc = msg.media?.document;
       if (!doc) continue;
 
@@ -311,7 +313,7 @@ export function createTelegramSync({ getClient, peerOf }) {
               : null) ||
             10,
           favorites: mergeFavorites(data.profile?.favorites || [], data.favorites || []),
-          image_prefs: { ...(data.image_prefs || {}), ...(data.profile?.image_prefs || {}) },
+          image_prefs: mergeImagePrefMaps(data.image_prefs || {}, data.profile?.image_prefs || {}),
           lastSync: f.timestamp,
           messageId: f.messageId,
         });
@@ -369,7 +371,7 @@ export function createTelegramSync({ getClient, peerOf }) {
     const data = JSON.parse(text);
 
     let remoteFavs = mergeFavorites(data.favorites || [], data.profile?.favorites || []);
-    let remoteImg = { ...(data.image_prefs || {}), ...(data.profile?.image_prefs || {}) };
+    let remoteImg = mergeImagePrefMaps(data.image_prefs || {}, data.profile?.image_prefs || {});
 
     // Si hay más versiones en Telegram (hasta 3), fusionar favoritos e imágenes recientes
     // para no perder datos si otro dispositivo subió un snapshot incompleto o desfasado
@@ -385,13 +387,7 @@ export function createTelegramSync({ getClient, peerOf }) {
             remoteFavs = mergeFavorites(remoteFavs, prevFavs);
           }
           const prevImg = { ...(prevData.image_prefs || {}), ...(prevData.profile?.image_prefs || {}) };
-          for (const [k, v] of Object.entries(prevImg)) {
-            if (!remoteImg[k]) {
-              remoteImg[k] = v;
-            } else if ((v?.updated_at || 0) > (remoteImg[k]?.updated_at || 0)) {
-              remoteImg[k] = { ...remoteImg[k], ...v };
-            }
-          }
+          remoteImg = mergeImagePrefMaps(remoteImg, prevImg);
         } catch (_) {}
       }
     }
@@ -427,11 +423,10 @@ export function createTelegramSync({ getClient, peerOf }) {
       }
 
       const localImg = typeof readImagePrefs === 'function' ? readImagePrefs(snapshot.profile || { id: pid }) : {};
-      const currentImg = {
-        ...localImg,
-        ...(snapshot.profile?.image_prefs || {}),
-        ...(snapshot.image_prefs || {}),
-      };
+      const currentImg = mergeImagePrefMaps(
+        mergeImagePrefMaps(localImg, snapshot.profile?.image_prefs || {}),
+        snapshot.image_prefs || {}
+      );
       snapshot.image_prefs = currentImg;
       if (snapshot.profile) {
         snapshot.profile.image_prefs = currentImg;
@@ -483,6 +478,10 @@ export function createTelegramSync({ getClient, peerOf }) {
     return task;
   }
 
+  const imagePrefsSync = createImagePrefsSync({
+    getClient, peerOf, listSyncFiles, findOrCreateSyncChannel, nowTimestamp, normalizeName,
+  });
+
   function mergeProgress(localProgress = {}, remoteProgress = {}) {
     const out = { ...localProgress };
 
@@ -531,5 +530,7 @@ export function createTelegramSync({ getClient, peerOf }) {
     pushProfile,
     schedulePush,
     mergeProgress,
+    pullImagePrefs: imagePrefsSync.pullImagePrefs,
+    pushImagePrefs: imagePrefsSync.pushImagePrefs,
   };
 }
