@@ -1,14 +1,17 @@
 /* src/styles/carousel.css */
 /* Vista en carrusel de las pestañas de categoría. Usa las variables del tema (skins). */
 
-/* ---- Ocultación de barra superior en vista Carrusel y Logos (ganar espacio en 1080p TV) ---- */
+/* ---- Cabecera recogida en vista Carrusel y Logos (ganar espacio en 1080p TV y móviles) ---- */
 .home-screen--carousel .home-header--carousel {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   z-index: 40;
-  padding: 0.5rem 1.5rem;
+  padding-top: max(0.6rem, calc(var(--sat, env(safe-area-inset-top, 0px)) + 0.35rem));
+  padding-left: max(1rem, calc(var(--sal, env(safe-area-inset-left, 0px)) + 0.6rem));
+  padding-right: max(1rem, calc(var(--sar, env(safe-area-inset-right, 0px)) + 0.6rem));
+  padding-bottom: 0.45rem;
   background: transparent;
   pointer-events: none;
   transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease;
@@ -21,14 +24,16 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.35rem 0.85rem;
+  padding: 0.4rem 0.95rem;
   border-radius: 9999px;
-  background: rgba(15, 15, 15, 0.78);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(15, 15, 15, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   transition: all 0.2s ease;
   font-weight: 700;
   letter-spacing: 0.5px;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .home-screen--carousel .home-header--carousel .home-logo:hover,
@@ -52,10 +57,11 @@
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, visibility 0.25s;
 }
 
-/* Estado desplegado al interactuar o enfocar con el mando */
+/* Estado desplegado al interactuar con el logo o enfocar con el mando */
 .home-screen--carousel .home-header--carousel.is-expanded {
   background: rgba(10, 10, 10, 0.96);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   pointer-events: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.85);
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
@@ -69,27 +75,47 @@
   visibility: visible;
 }
 
-/* Subir la cabecera de la categoría arriba de todo al lado del logo */
-.home-screen--carousel .category-view {
-  padding-top: 0.35rem;
+/* ---- La home en modo carrusel: deja espacio seguro arriba para no solapar con el logo ni el notch ---- */
+.home-main--carousel {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-top: max(3.2rem, calc(var(--sat, env(safe-area-inset-top, 0px)) + 2.8rem));
+  padding-bottom: 1.5rem;
 }
 
+.home-screen--carousel .category-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: max(0.5rem, var(--sal, env(safe-area-inset-left, 0px)));
+  padding-right: max(0.5rem, var(--sar, env(safe-area-inset-right, 0px)));
+}
+
+/* Cabecera de categoría (Ordenar y Modo de Vista): siempre visible, nunca tapada */
 .home-screen--carousel .category-header {
   position: relative;
   z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
   margin: 0 auto 0.4rem;
-  padding-left: 9rem;
-  padding-right: 1.5rem;
-  min-height: 2.8rem;
+  padding-left: max(0.5rem, var(--sal, 0px));
+  padding-right: max(0.5rem, var(--sar, 0px));
+  min-height: 2.6rem;
 }
 
-@media (max-width: 768px) {
+@media (min-width: 900px) and (min-height: 600px) {
+  /* En pantallas grandes y 1080p TV: margen izquierdo para equilibrar con el logo TGVideo */
   .home-screen--carousel .category-header {
-    padding-left: 0;
-    margin-top: 2.8rem;
+    padding-left: max(1rem, calc(var(--sal, 0px) + 8rem));
   }
 }
 
@@ -155,26 +181,6 @@
   box-shadow: 0 0 10px rgba(255, 255, 255, 0.5) !important;
 }
 
-/* ---- La home en modo carrusel ---- */
-.home-main--carousel {
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: 1.5rem;
-}
-.home-main--carousel .category-view {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 0;
-}
-.home-main--carousel .category-header {
-  flex: 0 0 auto;
-  margin-bottom: 0.4rem;
-}
 .carousel-host {
   flex: 1 1 auto;
   min-height: 0;
@@ -201,7 +207,7 @@
   outline: none;
   flex: 0 0 auto;
   height: clamp(260px, calc(var(--car-h, 520px) * 0.58), 400px);
-  padding: 12px 0;
+  padding: 14px 0;
   box-sizing: border-box;
   border-radius: 12px;
   scroll-behavior: auto !important;
@@ -214,7 +220,7 @@
   top: 0;
   display: flex;
   align-items: center;
-  gap: 1.2rem;
+  gap: 1.4rem;
   height: 100%;
   width: max-content;
   transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
@@ -236,20 +242,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transform: scale(0.85);
-  opacity: 0.55;
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
+  transform: scale(0.82);
+  opacity: 0.52;
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
   cursor: pointer;
 }
 
+/* Portada con foco: notablemente más grande, destacada y nítida */
 .carousel-item.is-active,
 .carousel-stage:focus .carousel-item.is-active,
 .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-stage.dpad-focused .carousel-item.is-active {
-  transform: scale(1.04) !important;
+  transform: scale(1.15) !important;
   opacity: 1 !important;
-  box-shadow: 0 0 0 3px #fff, 0 0 22px rgba(255, 255, 255, 0.5) !important;
-  z-index: 2;
+  box-shadow: 0 0 0 3px #fff, 0 4px 28px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(0, 0, 0, 0.8) !important;
+  z-index: 5;
 }
 
 .carousel-poster {
@@ -309,11 +316,11 @@
 .carousel-mode-logos .carousel-stage:focus .carousel-item.is-active,
 .carousel-mode-logos .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-mode-logos .carousel-stage.dpad-focused .carousel-item.is-active {
-  transform: scale(1.05) !important;
+  transform: scale(1.08) !important;
   opacity: 1 !important;
   background: transparent !important;
   box-shadow: none !important;
-  z-index: 2;
+  z-index: 5;
 }
 
 .carousel-mode-logos .carousel-item.is-active .carousel-logo,
@@ -506,11 +513,13 @@
   position: fixed;
   inset: 0;
   z-index: 99999;
-  background: rgba(0, 0, 0, 0.95);
+  background: rgba(0, 0, 0, 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: env(safe-area-inset-top, 1rem) env(safe-area-inset-right, 1rem) env(safe-area-inset-bottom, 1rem) env(safe-area-inset-left, 1rem);
+  padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
   box-sizing: border-box;
   animation: trailerModalFadeIn 0.2s ease-out;
 }
@@ -529,20 +538,26 @@
   position: absolute;
   inset: 0;
   z-index: 1;
+  background: transparent;
+  cursor: pointer;
 }
+
+.carousel-trailer-player-box,
 .carousel-trailer-content {
   position: relative;
   z-index: 2;
   width: 100%;
-  max-width: 1200px;
-  height: 100%;
-  max-height: 90vh;
+  max-width: 1100px;
+  height: auto;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.6rem;
+  gap: 0.65rem;
 }
+
+.carousel-trailer-header,
 .carousel-trailer-bar {
   width: 100%;
   display: flex;
@@ -552,13 +567,29 @@
   padding: 0 0.2rem;
   box-sizing: border-box;
 }
+
+.carousel-trailer-title-wrap,
 .carousel-trailer-info {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.6rem;
   min-width: 0;
   flex: 1;
 }
+
+.carousel-trailer-badge,
+.carousel-trailer-seq-badge {
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: var(--theme-accent, #e50914);
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
 .carousel-trailer-main-title {
   color: #fff;
   font-size: 1.15rem;
@@ -567,31 +598,24 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.carousel-trailer-seq-badge {
-  color: #ff4d4d;
-  font-size: 0.88rem;
-  font-weight: 600;
-  background: rgba(229, 9, 20, 0.18);
-  border: 1px solid rgba(229, 9, 20, 0.4);
-  padding: 3px 9px;
-  border-radius: 4px;
+
+.carousel-trailer-part-title {
+  color: var(--theme-text-muted, #aaa);
+  font-size: 0.95rem;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 500px;
 }
-.carousel-trailer-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  flex-shrink: 0;
-}
-.carousel-trailer-nav-btn,
+
+.carousel-trailer-close-btn,
 .carousel-trailer-close {
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   background: rgba(30, 30, 30, 0.85);
   color: #fff;
   font-size: 1.15rem;
@@ -602,33 +626,45 @@
   cursor: pointer;
   transition: all 0.15s ease;
   backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
 }
-.carousel-trailer-nav-btn:hover,
+
+.carousel-trailer-close-btn:hover,
 .carousel-trailer-close:hover {
   background: rgba(255, 255, 255, 0.25);
   border-color: #fff;
   transform: scale(1.08);
 }
-.carousel-trailer-nav-btn:focus,
+
+.carousel-trailer-close-btn:focus,
 .carousel-trailer-close:focus { outline: none; }
-.carousel-trailer-nav-btn:focus-visible,
-.carousel-trailer-nav-btn.dpad-focused,
+.carousel-trailer-close-btn:focus-visible,
+.carousel-trailer-close-btn.dpad-focused,
 .carousel-trailer-close:focus-visible,
 .carousel-trailer-close.dpad-focused {
   outline: 2px solid #fff !important;
   outline-offset: 2px !important;
-  background: rgba(255, 255, 255, 0.45) !important;
+  border-color: #fff !important;
+  background: rgba(255, 255, 255, 0.4) !important;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.5) !important;
   transform: scale(1.08);
 }
+
+.carousel-trailer-frame-container,
 .carousel-trailer-frame-wrap {
   width: 100%;
   aspect-ratio: 16 / 9;
-  max-height: calc(100vh - 130px);
+  max-height: calc(88vh - 70px);
   background: #000;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.85);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
+
+.carousel-trailer-frame-container iframe,
 .carousel-trailer-frame-wrap iframe {
   width: 100%;
   height: 100%;
@@ -636,34 +672,63 @@
   display: block;
 }
 
+.carousel-trailer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  margin-top: 0.35rem;
+}
+
+.carousel-trailer-nav-btn {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(30, 30, 30, 0.85);
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.4rem 1.1rem;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(8px);
+}
+
+.carousel-trailer-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: #fff;
+  transform: scale(1.04);
+}
+
+.carousel-trailer-nav-btn:focus-visible,
+.carousel-trailer-nav-btn.dpad-focused {
+  outline: 2px solid #fff !important;
+  outline-offset: 2px !important;
+  background: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5) !important;
+}
+
+.carousel-trailer-counter {
+  color: var(--theme-text-muted, #aaa);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 @media (max-width: 760px) {
+  .carousel-trailer-header,
   .carousel-trailer-bar {
     flex-wrap: wrap;
     gap: 0.4rem;
   }
-  .carousel-trailer-info {
-    width: 100%;
-    order: 2;
-    flex-direction: column;
-    gap: 0.2rem;
-  }
-  .carousel-trailer-controls {
-    order: 1;
-    width: 100%;
-    justify-content: flex-end;
-  }
   .carousel-trailer-main-title {
     font-size: 1rem;
   }
-  .carousel-trailer-seq-badge {
-    font-size: 0.8rem;
-    max-width: 100%;
+  .carousel-trailer-part-title {
+    font-size: 0.82rem;
   }
-  .carousel-trailer-nav-btn,
+  .carousel-trailer-close-btn,
   .carousel-trailer-close {
-    width: 42px;
-    height: 42px;
-    font-size: 1.25rem;
-    background: rgba(0, 0, 0, 0.7);
+    width: 38px;
+    height: 38px;
+    font-size: 1.1rem;
   }
 }

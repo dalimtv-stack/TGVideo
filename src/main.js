@@ -698,6 +698,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   document.querySelectorAll('.home-nav-item').forEach(button => {
     button.onclick = (e) => {
       button.blur();
+      carouselHeader?.classList.remove('is-expanded');
       button.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       destroyCarousel();
       showHome(tg, sync, profile, { selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
@@ -763,18 +764,16 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   const carouselHeader = document.querySelector('.home-header--carousel');
   const homeLogo = document.querySelector('#home-logo');
   if (carouselHeader && homeLogo) {
-    homeLogo.onclick = (e) => {
+    const toggleHeader = (e) => {
       e.stopPropagation();
       carouselHeader.classList.toggle('is-expanded');
     };
+    homeLogo.onclick = toggleHeader;
+    // En D-Pad / mando de TV: si el foco entra a cualquier elemento del header, se despliega
     carouselHeader.addEventListener('focusin', () => {
       carouselHeader.classList.add('is-expanded');
     });
-    carouselHeader.addEventListener('focusout', (e) => {
-      if (!carouselHeader.contains(e.relatedTarget)) {
-        carouselHeader.classList.remove('is-expanded');
-      }
-    });
+    // Cerrar al pulsar fuera (sin focusout agresivo que rompía los taps en iOS/móviles)
     document.addEventListener('click', (e) => {
       if (!carouselHeader.contains(e.target)) {
         carouselHeader.classList.remove('is-expanded');
