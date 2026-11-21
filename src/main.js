@@ -38,6 +38,7 @@ import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
+import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
 import { createLibraryViews } from './ui/libraryViews.js';
 
 const kv = createKV();
@@ -347,6 +348,32 @@ function setSectionSort(profileId, sectionId, sortType) {
   } catch (_) {}
 }
 
+function getSectionViewMode(profileId, sectionId) {
+  try {
+    return localStorage.getItem(`tg_view_${profileId}_${sectionId}`) || 'grid';
+  } catch (_) {
+    return 'grid';
+  }
+}
+
+function setSectionViewMode(profileId, sectionId, viewMode) {
+  try {
+    localStorage.setItem(`tg_view_${profileId}_${sectionId}`, viewMode);
+  } catch (_) {}
+}
+
+function nextViewMode(current) {
+  if (current === 'grid') return 'posters';
+  if (current === 'posters') return 'logos';
+  return 'grid';
+}
+
+function viewModeLabel(mode) {
+  if (mode === 'logos') return 'Vista: Logos';
+  if (mode === 'posters') return 'Vista: Carrusel';
+  return 'Vista: Cuadrícula';
+}
+
 function sortTitles(items, sortType) {
   const list = [...items];
   if (sortType === 'estreno') {
@@ -392,9 +419,16 @@ function sortTitles(items, sortType) {
   });
 }
 
-async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
+async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
   applyProfileScale(profile);
-  setBackHandler(() => showProfileSelector(tg, sync));
+  if (selectedSection !== 'inicio') {
+    setBackHandler(() => {
+      destroyCarousel();
+      showHome(tg, sync, profile, { selectedSection: 'inicio' });
+    });
+  } else {
+    setBackHandler(() => showProfileSelector(tg, sync));
+  }
   const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
   if (reload) {
     showLoading(force ? 'Reescaneando toda la biblioteca y sincronizando…' : 'Sincronizando perfil, metadatos y vídeos…');
@@ -588,6 +622,10 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   ACTIVE_HOME_SECTION = selectedSection;
   const activeSection = sectionDefs.find(section => section.id === selectedSection);
 
+  const isCategorySection = selectedSection !== 'inicio' && !isSearch;
+  const currentView = isCategorySection ? getSectionViewMode(profile.id, selectedSection) : 'grid';
+  const isCarousel = isCategorySection && (currentView === 'posters' || currentView === 'logos');
+
   const body = !titles.length ? `
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
@@ -599,14 +637,15 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         return `
       <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
         <div class="category-header">
-          <div class="category-sort-bar" role="group" aria-label="Ordenar por">
+          <div class="category-sort-bar" role="group" aria-label="Ordenar y ver">
             <span class="category-sort-label">Ordenar:</span>
             <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
             <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
             <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
+            <button type="button" class="category-view-btn ${isCarousel ? 'is-on' : ''}" data-focusable data-view="${currentView}" title="Cambiar modo de vista" aria-label="Cambiar vista, actual: ${viewModeLabel(currentView)}">${viewModeLabel(currentView)}</button>
           </div>
         </div>
-        <div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>
+        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`}
       </section>`;
       })()
     : rows.map(r => `
@@ -637,7 +676,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
           </div>
         </div>
       </header>
-      <main class="home-main">${body}</main>
+      <main class="home-main ${isCarousel ? 'home-main--carousel' : ''}">${body}</main>
     </div>`);
 
   const activeNav = document.querySelector('.home-nav-item.active');
@@ -651,6 +690,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     button.onclick = (e) => {
       button.blur();
       button.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+      destroyCarousel();
       showHome(tg, sync, profile, { selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
     };
   });
@@ -677,6 +717,34 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       }
     };
   });
+  const viewBtn = document.querySelector('.category-view-btn');
+  if (viewBtn) {
+    viewBtn.onclick = (e) => {
+      e.stopPropagation();
+      const current = getSectionViewMode(profile.id, selectedSection);
+      const next = nextViewMode(current);
+      setSectionViewMode(profile.id, selectedSection, next);
+      showHome(tg, sync, profile, { selectedSection, focusViewBtn: true, fromPointer: e.detail > 0 });
+    };
+  }
+
+  if (isCarousel) {
+    const carouselHost = document.getElementById('carousel-host');
+    if (carouselHost && activeSection?.items) {
+      const currentSort = getSectionSort(profile.id, selectedSection);
+      const sortedItems = sortTitles(activeSection?.items || [], currentSort);
+      mountCarousel(carouselHost, {
+        items: sortedItems,
+        mode: currentView,
+        initialId: focusTitleId,
+        onOpen: (t) => {
+          if (t) libraryViews.showDetail(tg, sync, profile, t);
+        },
+      });
+    }
+  } else {
+    destroyCarousel();
+  }
   document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
     onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
     onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
@@ -725,8 +793,12 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
   setTimeout(() => {
     let el = null;
-    if (focusSort && !fromPointer) {
+    if (focusViewBtn) {
+      el = document.querySelector('.category-view-btn');
+    } else if (focusSort && !fromPointer) {
       el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);
+    } else if (isCarousel && focusTitleId) {
+      el = document.querySelector('.carousel-stage');
     }
     if (focusRowId && focusExpandBtn) {
       el = document.querySelector(`.row[data-row-id="${focusRowId}"] .row-expand-card`);

@@ -123,6 +123,27 @@ export async function fetchTvExternalIds(tvId, signal) {
   }
 }
 
+export async function fetchTmdbTrailer(type, id, signal) {
+  if (!id) return null;
+  const endpoint = type === "serie" || type === "tv" ? "tv" : (type === "collection" ? null : "movie");
+  if (!endpoint) return null;
+  try {
+    const dataEs = await request(`/${endpoint}/${id}/videos`, {}, signal);
+    const results = dataEs.results || [];
+    let vid = results.find(v => v.site === "YouTube" && v.type === "Trailer")
+      || results.find(v => v.site === "YouTube" && (v.type === "Teaser" || v.type === "Clip"));
+    if (vid?.key) return vid.key;
+
+    const dataEn = await request(`/${endpoint}/${id}/videos`, { language: "en-US" }, signal);
+    const resultsEn = dataEn.results || [];
+    vid = resultsEn.find(v => v.site === "YouTube" && v.type === "Trailer")
+      || resultsEn.find(v => v.site === "YouTube" && (v.type === "Teaser" || v.type === "Clip"));
+    return vid?.key || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 const normalize = s => String(s || "")
   .replace(/ñ/g, "n").replace(/Ñ/g, "N")
   .normalize("NFD")
