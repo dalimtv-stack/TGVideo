@@ -170,29 +170,11 @@ jobs:
                       count=1
                   )
 
-              # Configurar banner, tráfico cleartext y aceleración hardware
+              # Configurar banner y permitir tráfico cleartext en localhost para streaming de ExoPlayer
               if 'android:banner=' not in m:
-                  m = re.sub(r'<application\b', '<application android:banner="@drawable/banner" android:logo="@drawable/banner" android:usesCleartextTraffic="true" android:hardwareAccelerated="true" android:isGame="false"', m, count=1)
-              else:
-                  if 'android:usesCleartextTraffic=' not in m:
-                      m = re.sub(r'<application\b', '<application android:usesCleartextTraffic="true"', m, count=1)
-                  if 'android:hardwareAccelerated=' not in m:
-                      m = re.sub(r'<application\b', '<application android:hardwareAccelerated="true"', m, count=1)
-
-              if "REQUEST_INSTALL_PACKAGES" not in m:
-                  m = m.replace("</manifest>", '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n</manifest>')
-
-              if "androidx.core.content.FileProvider" not in m:
-                  provider_xml = """        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>"""
-                  m = m.replace("</application>", f"{provider_xml}\n    </application>")
+                  m = re.sub(r'<application\b', '<application android:banner="@drawable/banner" android:logo="@drawable/banner" android:usesCleartextTraffic="true" android:isGame="false"', m, count=1)
+              elif 'android:usesCleartextTraffic=' not in m:
+                  m = re.sub(r'<application\b', '<application android:usesCleartextTraffic="true"', m, count=1)
 
               def inject_activity_banner(match):
                   tag = match.group(0)
@@ -219,17 +201,6 @@ jobs:
               with open(manifest_path, "w", encoding="utf-8") as f:
                   f.write(m)
               print("AndroidManifest.xml configurado para Leanback / Android TV y cleartextTraffic.")
-
-          xml_dir = "android/app/src/main/res/xml"
-          os.makedirs(xml_dir, exist_ok=True)
-          with open(os.path.join(xml_dir, "file_paths.xml"), "w", encoding="utf-8") as f:
-              f.write("""<?xml version="1.0" encoding="utf-8"?>
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-cache-path name="external_cache" path="." />
-    <cache-path name="cache" path="." />
-</paths>
-""")
-          print("file_paths.xml creado para FileProvider.")
 
           # Fondo negro para estilos
           for styles_path in ["android/app/src/main/res/values/styles.xml", "android/app/src/main/res/values-night/styles.xml"]:
@@ -935,224 +906,49 @@ jobs:
               f.write(plugin_code)
           print("ExoPlayerPlugin.java inyectado exitosamente.")
 
-          # 2.5 AppUpdaterPlugin.java
-          updater_file = os.path.join(java_pkg_dir, "AppUpdaterPlugin.java")
-          updater_code = """package com.tgvideo.app;
-
-          import android.content.Context;
-          import android.content.Intent;
-          import android.net.Uri;
-          import android.os.Build;
-          import androidx.core.content.FileProvider;
-
-          import com.getcapacitor.JSObject;
-          import com.getcapacitor.Plugin;
-          import com.getcapacitor.PluginCall;
-          import com.getcapacitor.PluginMethod;
-          import com.getcapacitor.annotation.CapacitorPlugin;
-
-          import java.io.BufferedInputStream;
-          import java.io.File;
-          import java.io.FileOutputStream;
-          import java.io.InputStream;
-          import java.io.OutputStream;
-          import java.net.HttpURLConnection;
-          import java.net.URL;
-
-          @CapacitorPlugin(name = "AppUpdaterPlugin")
-          public class AppUpdaterPlugin extends Plugin {
-
-              @Override
-              public void load() {
-                  super.load();
-                  cleanOldUpdateApk();
-              }
-
-              private void cleanOldUpdateApk() {
-                  try {
-                      Context context = getContext();
-                      if (context == null) return;
-                      File cacheDir = context.getExternalCacheDir();
-                      if (cacheDir != null) {
-                          File f = new File(cacheDir, "tgvideo_update.apk");
-                          if (f.exists()) f.delete();
-                      }
-                      File intCache = context.getCacheDir();
-                      if (intCache != null) {
-                          File f = new File(intCache, "tgvideo_update.apk");
-                          if (f.exists()) f.delete();
-                      }
-                  } catch (Exception ignored) {}
-              }
-
-              @PluginMethod
-              public void downloadAndInstall(PluginCall call) {
-                  String urlString = call.getString("url");
-                  if (urlString == null || urlString.isEmpty()) {
-                      call.reject("URL de descarga no proporcionada");
-                      return;
-                  }
-
-                  call.resolve();
-
-                  new Thread(() -> {
-                      HttpURLConnection connection = null;
-                      InputStream input = null;
-                      OutputStream output = null;
-                      try {
-                          Context context = getContext();
-                          File cacheDir = context.getExternalCacheDir();
-                          if (cacheDir == null) cacheDir = context.getCacheDir();
-
-                          File apkFile = new File(cacheDir, "tgvideo_update.apk");
-                          if (apkFile.exists()) {
-                              apkFile.delete();
-                          }
-
-                          URL url = new URL(urlString);
-                          int redirectCount = 0;
-                          while (redirectCount < 5) {
-                              connection = (HttpURLConnection) url.openConnection();
-                              connection.setInstanceFollowRedirects(true);
-                              connection.setRequestProperty("User-Agent", "TGVideo-AppUpdater");
-                              connection.connect();
-
-                              int status = connection.getResponseCode();
-                              if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
-                                  status == HttpURLConnection.HTTP_MOVED_PERM ||
-                                  status == 307 || status == 308) {
-                                  String newUrl = connection.getHeaderField("Location");
-                                  connection.disconnect();
-                                  url = new URL(newUrl);
-                                  redirectCount++;
-                              } else {
-                                  break;
-                              }
-                          }
-
-                          int fileLength = connection.getContentLength();
-                          input = new BufferedInputStream(connection.getInputStream(), 8192);
-                          output = new FileOutputStream(apkFile);
-
-                          byte[] data = new byte[8192];
-                          long total = 0;
-                          int count;
-                          long lastNotifyTime = 0;
-
-                          while ((count = input.read(data)) != -1) {
-                              total += count;
-                              output.write(data, 0, count);
-
-                              long now = System.currentTimeMillis();
-                              if (now - lastNotifyTime > 250 && fileLength > 0) {
-                                  lastNotifyTime = now;
-                                  int percent = (int) ((total * 100) / fileLength);
-                                  JSObject progressObj = new JSObject();
-                                  progressObj.put("percent", percent);
-                                  progressObj.put("bytesDownloaded", total);
-                                  progressObj.put("totalBytes", fileLength);
-                                  notifyListeners("onUpdateProgress", progressObj);
-                              }
-                          }
-
-                          output.flush();
-                          output.close();
-                          output = null;
-                          input.close();
-                          input = null;
-
-                          JSObject doneObj = new JSObject();
-                          doneObj.put("percent", 100);
-                          doneObj.put("bytesDownloaded", total);
-                          doneObj.put("totalBytes", total);
-                          notifyListeners("onUpdateProgress", doneObj);
-
-                          Uri apkUri = FileProvider.getUriForFile(
-                              context,
-                              context.getPackageName() + ".fileprovider",
-                              apkFile
-                          );
-
-                          Intent intent = new Intent(Intent.ACTION_VIEW);
-                          intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-                          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                          context.startActivity(intent);
-
-                      } catch (Exception e) {
-                          JSObject errObj = new JSObject();
-                          errObj.put("error", e.getMessage());
-                          notifyListeners("onUpdateError", errObj);
-                      } finally {
-                          try { if (output != null) output.close(); } catch (Exception ignored) {}
-                          try { if (input != null) input.close(); } catch (Exception ignored) {}
-                          if (connection != null) connection.disconnect();
-                      }
-                  }).start();
-              }
-          }
-          """
-          with open(updater_file, "w", encoding="utf-8") as f:
-              f.write(updater_code)
-          print("AppUpdaterPlugin.java inyectado exitosamente.")
-
-          # 3. Registrar plugins en MainActivity.java (AppUpdaterPlugin y ExoPlayerPlugin) y WebSettings
+          # 3. Registrar plugin en MainActivity.java
           main_activity = os.path.join(java_pkg_dir, "MainActivity.java")
           if os.path.exists(main_activity):
               with open(main_activity, "r", encoding="utf-8") as f:
                   act = f.read()
-
-              replacement = (
-                  "public class MainActivity extends BridgeActivity {\n"
-                  "    @Override\n"
-                  "    public void onCreate(android.os.Bundle savedInstanceState) {\n"
-                  "        registerPlugin(AppUpdaterPlugin.class);\n"
-                  "        registerPlugin(ExoPlayerPlugin.class);\n"
-                  "        super.onCreate(savedInstanceState);\n"
-                  "        if (getBridge() != null && getBridge().getWebView() != null) {\n"
-                  "            android.webkit.WebSettings ws = getBridge().getWebView().getSettings();\n"
-                  "            ws.setJavaScriptEnabled(true);\n"
-                  "            ws.setDomStorageEnabled(true);\n"
-                  "            ws.setMediaPlaybackRequiresUserGesture(false);\n"
-                  "            ws.setAllowFileAccess(true);\n"
-                  "            ws.setAllowContentAccess(true);\n"
-                  "        }\n"
-                  "    }\n"
-                  "\n"
-                  "    @Override\n"
-                  "    public boolean dispatchKeyEvent(android.view.KeyEvent event) {\n"
-                  "        int action = event.getAction();\n"
-                  "        int keyCode = event.getKeyCode();\n"
-                  "        if (action == android.view.KeyEvent.ACTION_DOWN) {\n"
-                  "            if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_REWIND ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_NEXT ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_STEP_FORWARD ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD ||\n"
-                  "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD) {\n"
-                  "                if (getBridge() != null && getBridge().getWebView() != null) {\n"
-                  "                    getBridge().getWebView().dispatchKeyEvent(event);\n"
-                  "                    return true;\n"
-                  "                }\n"
-                  "            }\n"
-                  "        }\n"
-                  "        return super.dispatchKeyEvent(event);\n"
-                  "    }\n"
-              )
-              if "AppUpdaterPlugin" not in act and "ExoPlayerPlugin" not in act:
+              if "ExoPlayerPlugin" not in act:
+                  replacement = (
+                      "public class MainActivity extends BridgeActivity {\n"
+                      "    @Override\n"
+                      "    public void onCreate(android.os.Bundle savedInstanceState) {\n"
+                      "        registerPlugin(ExoPlayerPlugin.class);\n"
+                      "        super.onCreate(savedInstanceState);\n"
+                      "    }\n"
+                      "\n"
+                      "    @Override\n"
+                      "    public boolean dispatchKeyEvent(android.view.KeyEvent event) {\n"
+                      "        int action = event.getAction();\n"
+                      "        int keyCode = event.getKeyCode();\n"
+                      "        if (action == android.view.KeyEvent.ACTION_DOWN) {\n"
+                      "            if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_REWIND ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_NEXT ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_STEP_FORWARD ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD ||\n"
+                      "                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD) {\n"
+                      "                if (getBridge() != null && getBridge().getWebView() != null) {\n"
+                      "                    getBridge().getWebView().dispatchKeyEvent(event);\n"
+                      "                    return true;\n"
+                      "                }\n"
+                      "            }\n"
+                      "        }\n"
+                      "        return super.dispatchKeyEvent(event);\n"
+                      "    }\n"
+                  )
                   act = act.replace("public class MainActivity extends BridgeActivity {", replacement, 1)
-              elif "AppUpdaterPlugin" not in act:
-                  act = act.replace("registerPlugin(ExoPlayerPlugin.class);", "registerPlugin(AppUpdaterPlugin.class);\n        registerPlugin(ExoPlayerPlugin.class);")
-                  if "setMediaPlaybackRequiresUserGesture(false)" not in act:
-                      act = act.replace("super.onCreate(savedInstanceState);", "super.onCreate(savedInstanceState);\n        if (getBridge() != null && getBridge().getWebView() != null) {\n            android.webkit.WebSettings ws = getBridge().getWebView().getSettings();\n            ws.setJavaScriptEnabled(true);\n            ws.setDomStorageEnabled(true);\n            ws.setMediaPlaybackRequiresUserGesture(false);\n            ws.setAllowFileAccess(true);\n            ws.setAllowContentAccess(true);\n        }")
-              with open(main_activity, "w", encoding="utf-8") as f:
-                  f.write(act)
-              print("MainActivity.java configurado para registrar AppUpdaterPlugin y ExoPlayerPlugin.")
+                  with open(main_activity, "w", encoding="utf-8") as f:
+                      f.write(act)
+                  print("MainActivity.java configurado para registrar ExoPlayerPlugin.")
           PYEOF
 
       - name: Setup Signing Key and Version
