@@ -222,6 +222,33 @@ function move(dir) {
     }
   }
 
+  function getSubheaderOrContent() {
+    const sortToggle = document.querySelector('.category-sort-toggle');
+    if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) return sortToggle;
+
+    const sortBar = document.querySelector('.category-sort-bar');
+    if (sortBar && sortBar.classList.contains('is-expanded')) {
+      const activeSort = sortBar.querySelector('.category-sort-btn.active');
+      if (activeSort && activeSort.offsetParent && !activeSort.disabled) return activeSort;
+      const firstSort = [...sortBar.querySelectorAll('.category-sort-btn')].find(e => e.offsetParent && !e.disabled);
+      if (firstSort) return firstSort;
+    }
+
+    const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
+    if (viewBtn && viewBtn.offsetParent && !viewBtn.disabled) return viewBtn;
+
+    const stage = document.querySelector('.home-main .carousel-stage');
+    if (stage && stage.offsetParent) return stage;
+
+    const firstGridCard = [...document.querySelectorAll('.home-main .category-grid .lib-card[data-focusable]')].find(e => e.offsetParent && !e.disabled);
+    if (firstGridCard) return firstGridCard;
+
+    const firstRowCard = document.querySelector('.home-main .row-track .lib-card[data-title]');
+    if (firstRowCard) return firstRowCard;
+
+    return null;
+  }
+
   // 2. Si está en el header de la Home (.home-header)
   const curHeader = cur.closest('.home-header');
   if (curHeader) {
@@ -243,9 +270,7 @@ function move(dir) {
       }
       if (dir === 'down') {
         curHeader.classList.remove('is-expanded');
-        const target = document.querySelector('.category-sort-bar [data-focusable]')
-          || document.querySelector('.category-view-btn')
-          || document.querySelector('.home-main .carousel-stage');
+        const target = getSubheaderOrContent();
         focusAndReveal(target);
         return;
       }
@@ -280,9 +305,7 @@ function move(dir) {
         if (curHeader.classList.contains('home-header--carousel')) {
           curHeader.classList.remove('is-expanded');
         }
-        const target = document.querySelector('.category-sort-bar [data-focusable].active')
-          || document.querySelector('.category-sort-bar [data-focusable]')
-          || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+        const target = getSubheaderOrContent();
         focusAndReveal(target);
         return;
       }
@@ -310,9 +333,7 @@ function move(dir) {
         if (curHeader.classList.contains('home-header--carousel')) {
           curHeader.classList.remove('is-expanded');
         }
-        const target = document.querySelector('.category-sort-bar [data-focusable].active')
-          || document.querySelector('.category-sort-bar [data-focusable]')
-          || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+        const target = getSubheaderOrContent();
         focusAndReveal(target);
         return;
       }
@@ -334,9 +355,7 @@ function move(dir) {
         if (curHeader.classList.contains('home-header--carousel')) {
           curHeader.classList.remove('is-expanded');
         }
-        const target = document.querySelector('.category-sort-bar [data-focusable].active')
-          || document.querySelector('.category-sort-bar [data-focusable]')
-          || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
+        const target = getSubheaderOrContent();
         focusAndReveal(target);
         return;
       }
@@ -404,6 +423,12 @@ function move(dir) {
   const curViewsBar = cur.closest('.category-views-bar');
   if (curViewsBar) {
     if (dir === 'left') {
+      const sortToggle = document.querySelector('.category-sort-toggle');
+      if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) {
+        sortToggle.focus();
+        sortToggle.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
       const sortBtns = [...document.querySelectorAll('.category-sort-bar [data-focusable]')].filter(e => e.offsetParent && !e.disabled);
       const last = sortBtns[sortBtns.length - 1];
       if (last) {
@@ -473,11 +498,16 @@ function move(dir) {
         return oRect.bottom <= curRect.top + 10;
       });
       if (isTopRow) {
-        const sortActive = document.querySelector('.category-sort-bar [data-focusable].active')
-          || document.querySelector('.category-sort-bar [data-focusable]');
-        if (sortActive) {
-          sortActive.focus();
-          sortActive.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        const sortToggle = document.querySelector('.category-sort-toggle');
+        if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) {
+          sortToggle.focus();
+          sortToggle.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          return;
+        }
+        const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
+        if (viewBtn && viewBtn.offsetParent && !viewBtn.disabled) {
+          viewBtn.focus();
+          viewBtn.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
           return;
         }
         const activeNav = document.querySelector('.home-nav-item.active') || document.querySelector('.home-nav-item');

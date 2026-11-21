@@ -453,35 +453,54 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
 
   // ---------------------------------------------------------------- posición y datos
   const view = host.querySelector('.carousel-view');
-  // Altura disponible en px: todos los tamaños del carrusel se calculan a partir de ella
-  const fit = () => view.style.setProperty('--car-h', `${host.clientHeight}px`);
+  // Altura disponible en px: ajustada una sola vez en el montaje y al redimensionar la ventana (evita bucles recursivos)
+  const updateAvailableHeight = () => {
+    if (!host || !view) return;
+    const h = host.clientHeight || Math.round(window.innerHeight * 0.72);
+    const clampedH = Math.max(340, Math.min(840, h));
+    view.style.setProperty('--car-h', `${clampedH}px`);
+  };
+  updateAvailableHeight();
 
   const getItemMetrics = () => {
-    const stageH = stage.clientHeight || Math.round(host.clientHeight * 0.62);
-    const itemH = Math.max(60, Math.round(stageH - 16));
-    const itemW = Math.round(itemH * (logos ? 16 / 7 : 2 / 3));
+    const isLogos = logos;
+    const stageH = stage.clientHeight || (isLogos ? 130 : 340);
+    const itemH = isLogos ? 110 : Math.max(60, Math.round(stageH - 24));
+    const itemW = isLogos ? 250 : Math.round(itemH * (2 / 3));
     const rem = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).fontSize)) || 16;
     const gap = Math.round(1.2 * rem);
     return { itemW, itemH, gap };
   };
 
   function center(smooth = true) {
-    fit();
-    stage.scrollLeft = 0;
-    stage.scrollTop = 0;
+    if (!stage || !track || !els.length) return;
     const stageWidth = stage.clientWidth;
     if (!stageWidth) return;
-    const { itemW, gap } = getItemMetrics();
-    const x = cur * (itemW + gap) + itemW / 2 - stageWidth / 2;
-    track.style.transition = smooth ? 'transform 0.28s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
-    track.style.transform = `translate3d(${-Math.round(x)}px, 0, 0)`;
-    if (!smooth) { void track.offsetWidth; track.style.transition = ''; }
+
+    if (stage.scrollLeft !== 0) stage.scrollLeft = 0;
+    if (stage.scrollTop !== 0) stage.scrollTop = 0;
+
+    const activeEl = els[cur];
+    let targetX = 0;
+    if (activeEl && activeEl.offsetWidth > 0) {
+      targetX = activeEl.offsetLeft + (activeEl.offsetWidth / 2) - (stageWidth / 2);
+    } else {
+      const { itemW, gap } = getItemMetrics();
+      targetX = cur * (itemW + gap) + itemW / 2 - stageWidth / 2;
+    }
+
+    track.style.transition = smooth ? 'transform 0.24s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
+    track.style.transform = `translate3d(${-Math.round(targetX)}px, 0, 0)`;
+    if (!smooth) {
+      void track.offsetWidth;
+      track.style.transition = '';
+    }
   }
 
   // Prevenir que el scroll nativo desplace la pista del carrusel
   stage.addEventListener('scroll', () => {
-    stage.scrollLeft = 0;
-    stage.scrollTop = 0;
+    if (stage.scrollLeft !== 0) stage.scrollLeft = 0;
+    if (stage.scrollTop !== 0) stage.scrollTop = 0;
   }, { passive: true });
 
   function setActive(i, { smooth = true } = {}) {
@@ -549,8 +568,8 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       }
       case 'ArrowUp': {
         stop();
-        const up = document.querySelector('.category-sort-bar .category-sort-toggle')
-          || document.querySelector('.category-sort-bar [data-focusable].active')
+        const up = document.querySelector('.category-sort-toggle')
+          || document.querySelector('.category-views-bar [data-focusable]')
           || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('#home-logo[data-focusable]')
           || document.querySelector('.home-nav-item.active');
@@ -590,7 +609,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     if (Math.abs(dx) > 40) step(dx < 0 ? 1 : -1);
   }, { passive: true });
 
-  const onResize = () => { if (!alive()) { destroy(); return; } center(false); };
+  const onResize = () => { if (!alive()) { destroy(); return; } updateAvailableHeight(); center(false); };
   window.addEventListener('resize', onResize);
 
   function destroy() {
