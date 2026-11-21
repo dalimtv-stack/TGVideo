@@ -1,16 +1,15 @@
 // src/metadata/autoLogo.js
 // Logo automático para la ficha (es > en > sin idioma), cacheado en el dispositivo.
-// Colecciones/sagas: primero Fanart.tv (películas de la colección) y, si no hay, TMDB.
+// Colecciones/sagas: primero Fanart.tv (si el usuario tiene clave) y, si no hay, TMDB.
 import { fetchTmdbImages } from './tmdb.js';
 import { fetchFanartImages } from './fanart.js';
 import { getFanartKey } from '../settings/global.js';
 
 const mem = new Map();
 
-// v3 para colecciones: invalida logos cacheados cuando se consultaba Fanart.tv con el ID de colección
-// como si fuese el de una película (devolvía el logo de otra película).
+// v2 para colecciones: invalida logos de TMDB cacheados antes de usar Fanart.tv
 const cacheKey = (type, id) =>
-  type === 'collection' ? `tgvideo_autologo_v3_${type}_${id}` : `tgvideo_autologo_${type}_${id}`;
+  type === 'collection' ? `tgvideo_autologo_v2_${type}_${id}` : `tgvideo_autologo_${type}_${id}`;
 
 async function fanartLogo(type, id) {
   if (!getFanartKey()) return '';

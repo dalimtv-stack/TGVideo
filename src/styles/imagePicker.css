@@ -39,3 +39,9 @@
 .colpick-count { opacity: 0.7; font-size: 0.85rem; }
 .colpick-item:focus, .colpick-item:focus-visible, .colpick-filter:focus { outline: 3px solid #fff; outline-offset: 2px; }
 .colpick-item:disabled { opacity: 0.5; cursor: default; }
+
+/* URL manual de imagen (primera fila del selector) */
+.imgpick-url { display: flex; gap: 0.5rem; align-items: center; }
+.imgpick-url input { flex: 1; min-width: 0; padding: 0.55rem 0.8rem; border-radius: 8px; border: 1px solid #444; background: #1a1a1a; color: #fff; font-size: 0.95rem; }
+.imgpick-url input:focus { outline: 3px solid #fff; outline-offset: 2px; }
+.imgpick-urlmsg { margin: 0; min-height: 1.1em; font-size: 0.82rem; opacity: 0.8; }

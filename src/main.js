@@ -247,7 +247,7 @@ async function persistTitlesMetadata() {
         for (const f of t.archivos) {
           if (f.metadata) {
             const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
-            saved.metadataMap[fKey] = f.metadata;
+            saved.metadataMap[fKey] = metadataForPersist(f);
           }
         }
       }

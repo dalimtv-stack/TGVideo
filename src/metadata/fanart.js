@@ -3,8 +3,9 @@
 //
 // - Películas: /movies/{tmdbId}
 // - Series:    /tv/{tvdbId}  (se resuelve desde TMDB si hace falta)
-// - Colecciones (sagas): Fanart.tv no indexa las colecciones de TMDB; se consultan las películas
-//   que forman la colección (obtenidas de TMDB) y se combinan sus imágenes.
+// - Colecciones (sagas): Fanart.tv las publica bajo el ID de colección de TMDB en el mismo endpoint
+//   /movies/{idColección} (p. ej. fanart.tv/movie/1570/die-hard-collection). Si no hubiera nada ahí,
+//   se complementa con las imágenes de las películas de la colección.
 import { getFanartKey } from '../settings/global.js';
 import { fetchTvExternalIds, fetchTmdbCollectionParts } from './tmdb.js';
 
@@ -28,10 +29,15 @@ export async function validateFanartKey(apiKey) {
   return resp.ok;
 }
 
-/** Extrae el ID de TMDB de una URL de Fanart.tv (https://fanart.tv/movie/603/) o devuelve null. */
+/** Extrae el ID (película o colección de TMDB) de una URL de Fanart.tv, o null. */
 export function parseFanartMovieId(value) {
   const m = String(value || '').match(/fanart\.tv\/movie\/(\d+)/i);
   return m ? Number(m[1]) : null;
+}
+
+/** true si la URL de Fanart.tv apunta claramente a una colección (slug "…-collection", "…-saga", etc.). */
+export function isFanartCollectionUrl(value) {
+  return /fanart\.tv\/movie\/\d+\/[^/?#]*(collection|saga|trilog|anthology|franchise|coleccion)/i.test(String(value || ''));
 }
 
 const langRank = (l) => (l === 'es' ? 2 : (l === 'en' || !l ? 1 : 0));
@@ -71,7 +77,15 @@ function movieImages(data) {
   };
 }
 
+const isEmpty = (r) => !r.poster.length && !r.backdrop.length && !r.logo.length;
+
 async function fetchCollectionImages(collectionId, options) {
+  // 1) Imágenes publicadas para la colección en sí
+  const direct = await request(`/movies/${encodeURIComponent(collectionId)}`, options.signal);
+  const own = movieImages(direct);
+  if (!isEmpty(own)) return { poster: sortImages(own.poster), backdrop: sortImages(own.backdrop), logo: sortImages(own.logo) };
+
+  // 2) Alternativa: imágenes de las películas que forman la colección
   const parts = (await fetchTmdbCollectionParts(collectionId, options.signal)).slice(0, COLLECTION_PARTS_LIMIT);
   if (!parts.length) return EMPTY();
   const results = await Promise.allSettled(parts.map((p) => request(`/movies/${encodeURIComponent(p.id)}`, options.signal)));

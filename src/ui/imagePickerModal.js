@@ -60,16 +60,49 @@ export function showImagePicker(title, profile, { sync, onChanged, onAddToCollec
     return data;
   };
 
+  // Fila "URL manual": siempre la primera de la pantalla (también en títulos sin identificar)
+  const urlRowHtml = () => `
+    <form class="imgpick-url" id="imgpick-url-form" autocomplete="off">
+      <input type="url" id="imgpick-url" data-focusable inputmode="url" placeholder="URL manual de la imagen (https://…)">
+      <button class="btn btn-sm" type="submit" data-focusable>Usar URL</button>
+    </form>
+    <p class="imgpick-urlmsg" id="imgpick-urlmsg" role="status"></p>`;
+
+  const bindUrlRow = (kind) => {
+    const form = root.querySelector('#imgpick-url-form');
+    const input = root.querySelector('#imgpick-url');
+    const msg = root.querySelector('#imgpick-urlmsg');
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const raw = input.value.trim();
+      let url = '';
+      try { const u = new URL(raw); if (/^https?:$/.test(u.protocol)) url = u.href; } catch (_) {}
+      if (!url) { msg.textContent = 'Introduce una URL válida que empiece por http:// o https://'; return; }
+      msg.textContent = 'Comprobando la imagen…';
+      const probe = new Image();
+      probe.onload = () => {
+        setImagePref(profile, title, kind, url, sync);
+        onChanged?.(kind, url);
+        msg.textContent = 'Imagen aplicada.';
+        root.querySelectorAll('.imgpick-item.is-current').forEach((x) => x.classList.remove('is-current'));
+      };
+      probe.onerror = () => { msg.textContent = 'No se pudo cargar esa imagen. Revisa la URL.'; };
+      probe.src = url;
+    };
+  };
+
   const providerBtns = () => Object.entries(PROVIDERS).map(([id, label]) =>
     `<button class="btn-ghost imgpick-provider-btn ${provider === id ? 'is-active' : ''}" data-focusable data-provider="${id}" aria-pressed="${provider === id}">${label}</button>`).join('');
 
   const renderGrid = async (kind) => {
     if (!tmdbId) {
       root.innerHTML = `
-        <div class="imgpick-bar"><button class="btn-ghost" data-focusable id="imgpick-back">← Volver</button></div>
-        <p class="imgpick-msg">Este título aún no está identificado en TMDB.</p>`;
+        <div class="imgpick-bar"><button class="btn-ghost" data-focusable id="imgpick-back">← Volver</button><strong>${IMAGE_KINDS[kind]}</strong></div>
+        ${urlRowHtml()}
+        <p class="imgpick-msg">Este título aún no está identificado en TMDB: solo puedes usar una URL manual.</p>`;
       root.querySelector('#imgpick-back').onclick = renderMenu;
-      focusFirst();
+      bindUrlRow(kind);
+      root.querySelector('#imgpick-url')?.focus({ preventScroll: true });
       return;
     }
 
@@ -79,6 +112,7 @@ export function showImagePicker(title, profile, { sync, onChanged, onAddToCollec
         <strong>${IMAGE_KINDS[kind]}</strong>
         <button class="btn-ghost" data-focusable id="imgpick-reset">Restaurar original</button>
       </div>
+      ${urlRowHtml()}
       <div class="imgpick-providers" role="group" aria-label="Proveedor de imágenes">
         <span class="imgpick-provider-label">Proveedor:</span>${providerBtns()}
       </div>
@@ -86,6 +120,7 @@ export function showImagePicker(title, profile, { sync, onChanged, onAddToCollec
       <div class="imgpick-grid imgpick-${kind}" id="imgpick-results"></div>`;
 
     root.querySelector('#imgpick-back').onclick = renderMenu;
+    bindUrlRow(kind);
     root.querySelector('#imgpick-reset').onclick = () => {
       setImagePref(profile, title, kind, '', sync);
       onChanged?.(kind, '');

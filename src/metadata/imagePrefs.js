@@ -120,7 +120,12 @@ const tmdbAlias = (t) => {
   return id ? `tmdb:${typeOf(t)}:${id}` : null;
 };
 
-/** Todas las claves en las que puede estar guardada la elección de un título. */
+/**
+ * Claves en las que puede estar guardada la elección de un título.
+ * - Colecciones/sagas y series: SOLO su propio id y su alias TMDB tipado. Antes también leían las
+ *   claves `canal:mensaje` de sus películas, por lo que la saga heredaba el cartel de cualquiera de ellas.
+ * - Películas: además las claves antiguas (`tmdb:<id>`, `<id>`) y las de sus archivos (versiones).
+ */
 function candidateKeys(titleOrId) {
   if (typeof titleOrId === 'string' || typeof titleOrId === 'number') return [String(titleOrId)];
   const t = titleOrId;
@@ -128,10 +133,12 @@ function candidateKeys(titleOrId) {
   if (t.id != null) keys.push(String(t.id));
   const alias = tmdbAlias(t);
   if (alias) keys.push(alias);
+  if (typeOf(t) !== 'movie') return [...new Set(keys)];
+
   const tmdb = t.metadata?.id || t.tmdbId;
   if (tmdb) {
-    keys.push(`tmdb:${tmdb}`);                            // formato antiguo
-    if (typeOf(t) === 'movie') keys.push(String(tmdb));   // formato antiguo (colisionaba con series)
+    keys.push(`tmdb:${tmdb}`);   // formato antiguo
+    keys.push(String(tmdb));     // formato antiguo
   }
   for (const f of (t.archivos || [])) {
     const ch = f.channel && typeof f.channel === 'object' ? f.channel.id : f.channel;
@@ -248,7 +255,7 @@ function clearCustomFields(t, kind) {
  * (puede ser compartido con la caché, los overrides sincronizados o varios títulos).
  * Devuelve true si cambió algo.
  */
-export function applyImagePrefs(t, profile) {
+function applyToOne(t, profile) {
   if (!t || !profile) return false;
   const prefs = getImagePrefs(profile, t);
   let changed = false;
@@ -268,9 +275,36 @@ export function applyImagePrefs(t, profile) {
     } else if (t._origImages && kind in t._origImages) {
       // El usuario restauró el original (aquí o en otro dispositivo). Solo se revierte si el metadato
       // sigue mostrando la imagen elegida; si ya se recargó "limpio", basta con olvidar el original.
-      if (t.metadata && t.metadata[kind] === t[custom]) restoreOriginalImage(t, kind);
+      if (t.metadata && (t[custom] === undefined || t.metadata[kind] === t[custom])) restoreOriginalImage(t, kind);
       else { delete t._origImages[kind]; clearCustomFields(t, kind); }
       changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * Aplica las imágenes elegidas al título y, si es una saga, también a cada una de sus películas
+ * (cada película usa su propia elección, igual que en su ficha individual y en la home).
+ */
+export function applyImagePrefs(t, profile) {
+  let changed = applyToOne(t, profile);
+  if (t?.isSaga && Array.isArray(t.archivos)) {
+    for (const f of t.archivos) {
+      if (!f.metadata) continue;
+      const film = {
+        id: f.key || `${f.channelId ?? f.channel?.id ?? ''}:${f.messageId}`,
+        tipo: 'pelicula',
+        metadata: f.metadata,
+        tmdbId: f.tmdbId || f.metadata?.id || null,
+        archivos: [f],
+        _origImages: f._origImages,
+      };
+      if (applyToOne(film, profile)) {
+        f.metadata = film.metadata;
+        f._origImages = film._origImages;
+        changed = true;
+      }
     }
   }
   return changed;

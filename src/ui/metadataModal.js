@@ -4,12 +4,11 @@ import { modal } from './settings.js';
 import { extractTitleAndYear, searchTmdbManual, setManualMetadata, clearManualMetadata, enrichTitle, fetchTmdbFullDetails } from '../metadata/tmdb.js';
 import { buildStandardCaption, parseCaption } from '../library/parse.js';
 import { loadPoster } from '../metadata/posterCache.js';
-import { fetchFanartBest, parseFanartMovieId } from '../metadata/fanart.js';
+import { fetchFanartBest, parseFanartMovieId, isFanartCollectionUrl } from '../metadata/fanart.js';
 import { getImagePrefs, setImagePref, IMAGE_KINDS } from '../metadata/imagePrefs.js';
 import { getFanartKey } from '../settings/global.js';
 import { attachSpatialNav } from './spatialNav.js';
 
-const IMG_SOURCE_KEY = 'tgvideo_ident_imgsource';
 const TYPE_LABELS = { movie: 'Película', tv: 'Serie', collection: 'Saga / Colección' };
 
 const segButtons = (name, options, current) => options.map(([value, label]) =>
@@ -28,12 +27,9 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
   const telegramChannel = title.channel?.title || title.channel?.name || title.grupo || '';
 
   const hasFanart = !!getFanartKey();
-  let savedSource = null;
-  try { savedSource = localStorage.getItem(IMG_SOURCE_KEY); } catch (_) {}
-  // Por defecto: Fanart.tv para colecciones si hay clave; si no, lo último que eligió el usuario
-  const initialSource = hasFanart
-    ? (currentType === 'collection' ? 'fanart' : (savedSource === 'fanart' ? 'fanart' : 'tmdb'))
-    : 'tmdb';
+  // TMDB es SIEMPRE el valor por defecto. Fanart.tv solo se usa si el usuario lo activa aquí, y solo
+  // para esta identificación.
+  const initialSource = 'tmdb';
 
   const statusText = currentMeta
     ? `Identificación actual: <strong>${esc(currentMeta.name)}</strong> (${esc(currentMeta.date?.slice(0, 4) || 's/f')}) · TMDB ID: ${currentMeta.id}`
@@ -75,10 +71,10 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
           </div>
 
           <div class="meta-field meta-imgsource">
-            <span>Carteles, fondos y logos</span>
+            <span>Imágenes de la ficha tras identificar</span>
             <input type="hidden" name="imgsource" value="${initialSource}">
             <div class="meta-seg" role="group" aria-label="Origen de las imágenes">${segButtons('imgsource', [['tmdb', 'TMDB'], ['fanart', 'Fanart.tv']], initialSource)}</div>
-            ${hasFanart ? '' : '<small class="meta-hint">Añade tu clave de Fanart.tv en Ajustes globales para usar Fanart.tv.</small>'}
+            <small class="meta-hint">${hasFanart ? 'TMDB deja las imágenes como están. Fanart.tv aplica automáticamente las mejores que encuentre.' : 'Para usar Fanart.tv añade tu clave en Ajustes globales.'}</small>
           </div>
         </form>
 
@@ -109,7 +105,6 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
         b.classList.toggle('is-active', on);
         b.setAttribute('aria-pressed', String(on));
       });
-      if (name === 'imgsource') { try { localStorage.setItem(IMG_SOURCE_KEY, btn.dataset.value); } catch (_) {} }
     };
   });
   const status = overlay.querySelector('.meta-status');
@@ -120,6 +115,15 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
   resultsContainer.addEventListener('focusin', (e) => {
     e.target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
+
+  const setTypeUi = (value) => {
+    form.elements.type.value = value;
+    overlay.querySelectorAll('.meta-seg-btn[data-seg="type"]').forEach((b) => {
+      const on = b.dataset.value === value;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  };
 
   const executeSearch = async () => {
     const query = form.elements.query.value.trim();
@@ -132,7 +136,21 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
     resultsContainer.innerHTML = '';
 
     try {
-      const results = await searchTmdbManual({ query, type, year, directId });
+      // Un enlace de Fanart.tv (fanart.tv/movie/1570/die-hard-collection) lleva el ID de TMDB de una
+      // película o de una colección: se prueba el tipo indicado por el enlace/elegido y, si TMDB no
+      // lo reconoce, el otro.
+      const fromFanart = !!parseFanartMovieId(rawDirect);
+      const firstType = fromFanart && isFanartCollectionUrl(rawDirect) ? 'collection' : type;
+      const order = fromFanart ? [firstType, firstType === 'collection' ? 'movie' : 'collection'] : [type];
+      let results = null;
+      let lastErr = null;
+      for (const tryType of order) {
+        try {
+          const found = await searchTmdbManual({ query, type: tryType, year, directId });
+          if (found?.length) { results = found; if (tryType !== form.elements.type.value) setTypeUi(tryType); break; }
+        } catch (e) { lastErr = e; }
+      }
+      if (!results && lastErr) throw lastErr;
       if (!results || results.length === 0) {
         status.textContent = 'No se encontraron resultados en TMDB. Prueba cambiando el título o tipo.';
         return;
@@ -198,20 +216,27 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
           // Guardar localmente y actualizar vista
           await setManualMetadata(title, selected).catch(() => {});
 
-          // Imágenes: con Fanart.tv se eligen automáticamente las mejores (es > en) de cada tipo.
-          // Las elecciones anteriores pertenecían a la identificación antigua y se restauran.
+          // Imágenes de la ficha.
+          // - Si la identificación cambió de título, se descartan las imágenes que el usuario había
+          //   elegido para el título anterior (si no, un cartel ajeno seguiría mostrándose).
+          // - Con origen TMDB no se toca nada más. Con Fanart.tv se aplican las mejores disponibles.
           if (profile) {
-            const source = form.elements.imgsource.value;
-            let best = {};
-            if (source === 'fanart') {
-              status.textContent = `Buscando imágenes de «${selected.name}» en Fanart.tv…`;
-              try { best = await fetchFanartBest(selected.type || currentType, selected.id); }
-              catch (err) { console.warn('[metadataModal] Fanart.tv:', err?.message || err); }
+            const idChanged = String(currentMeta?.id ?? '') !== String(selected.id);
+            if (idChanged && currentMeta) {
+              const oldTitle = { ...title, metadata: currentMeta };
+              const old = getImagePrefs(profile, oldTitle);
+              for (const kind of Object.keys(IMAGE_KINDS)) {
+                if (old[kind]) setImagePref(profile, oldTitle, kind, '', sync);
+              }
             }
-            const previous = getImagePrefs(profile, title);
-            for (const kind of Object.keys(IMAGE_KINDS)) {
-              if (best[kind]) setImagePref(profile, title, kind, best[kind], sync);
-              else if (previous[kind]) setImagePref(profile, title, kind, '', sync);
+            if (form.elements.imgsource.value === 'fanart') {
+              status.textContent = `Buscando imágenes de «${selected.name}» en Fanart.tv…`;
+              try {
+                const best = await fetchFanartBest(selected.type || currentType, selected.id);
+                for (const kind of Object.keys(IMAGE_KINDS)) {
+                  if (best[kind]) setImagePref(profile, title, kind, best[kind], sync);
+                }
+              } catch (err) { console.warn('[metadataModal] Fanart.tv:', err?.message || err); }
             }
           }
           try { onUpdated?.(selected); } catch (e) { console.warn('[metadataModal] onUpdated error', e); }
