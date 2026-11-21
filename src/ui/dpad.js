@@ -225,9 +225,32 @@ function move(dir) {
   // 2. Si está en el header de la Home (.home-header)
   const curHeader = cur.closest('.home-header');
   if (curHeader) {
+    const homeLogo = curHeader.querySelector('#home-logo');
     const nav = curHeader.querySelector('.home-nav');
     const reloadBtn = curHeader.querySelector('#btn-reload');
     const profileBtn = curHeader.querySelector('#btn-change-profile');
+
+    // 2.0 En el logo TGVideo (especialmente en modo carrusel cuando la cabecera está colapsada)
+    if (cur === homeLogo) {
+      if (dir === 'right') {
+        curHeader.classList.add('is-expanded');
+        const firstTab = nav?.querySelector('.home-nav-item[data-focusable].active') || nav?.querySelector('.home-nav-item[data-focusable]');
+        if (firstTab) {
+          firstTab.focus();
+          firstTab.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'down') {
+        curHeader.classList.remove('is-expanded');
+        const target = document.querySelector('.category-sort-bar [data-focusable]')
+          || document.querySelector('.category-view-btn')
+          || document.querySelector('.home-main .carousel-stage');
+        focusAndReveal(target);
+        return;
+      }
+      if (dir === 'left' || dir === 'up') return;
+    }
 
     // 2.1 En las pestañas de navegación (.home-nav)
     if (nav && nav.contains(cur)) {
@@ -237,6 +260,8 @@ function move(dir) {
         if (idx > 0) {
           tabs[idx - 1].focus();
           tabs[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        } else if (curHeader.querySelector('#home-logo[data-focusable]')) {
+          curHeader.querySelector('#home-logo').focus();
         }
         return;
       }
@@ -252,6 +277,9 @@ function move(dir) {
         return;
       }
       if (dir === 'down') {
+        if (curHeader.classList.contains('home-header--carousel')) {
+          curHeader.classList.remove('is-expanded');
+        }
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
@@ -279,6 +307,9 @@ function move(dir) {
         return;
       }
       if (dir === 'down') {
+        if (curHeader.classList.contains('home-header--carousel')) {
+          curHeader.classList.remove('is-expanded');
+        }
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
@@ -300,6 +331,9 @@ function move(dir) {
       }
       if (dir === 'right') return;
       if (dir === 'down') {
+        if (curHeader.classList.contains('home-header--carousel')) {
+          curHeader.classList.remove('is-expanded');
+        }
         const target = document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
@@ -335,6 +369,11 @@ function move(dir) {
       return;
     }
     if (dir === 'up') {
+      const carouselLogo = document.querySelector('.home-screen--carousel #home-logo[data-focusable]');
+      if (carouselLogo) {
+        carouselLogo.focus();
+        return;
+      }
       const activeNav = document.querySelector('.home-nav-item.active') || document.querySelector('.home-nav-item');
       if (activeNav) {
         activeNav.focus();
@@ -374,6 +413,11 @@ function move(dir) {
       }
     }
     if (dir === 'up') {
+      const carouselLogo = document.querySelector('.home-screen--carousel #home-logo[data-focusable]');
+      if (carouselLogo) {
+        carouselLogo.focus();
+        return;
+      }
       const activeNav = document.querySelector('.home-nav-item.active') || document.querySelector('.home-nav-item');
       if (activeNav) {
         activeNav.focus();

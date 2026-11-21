@@ -634,14 +634,20 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     : selectedSection !== 'inicio' ? (() => {
         const currentSort = getSectionSort(profile.id, selectedSection);
         const sortedItems = sortTitles(activeSection?.items || [], currentSort);
+        const isSortExpanded = Boolean(focusSort);
         return `
       <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
         <div class="category-header">
-          <div class="category-sort-bar" role="group" aria-label="Ordenar por">
-            <span class="category-sort-label">Ordenar:</span>
-            <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
-            <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
-            <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
+          <div class="category-sort-bar ${isSortExpanded ? 'is-expanded' : ''}" role="group" aria-label="Ordenar por">
+            <button type="button" class="category-sort-toggle" data-focusable aria-expanded="${isSortExpanded}" aria-haspopup="true" title="Desplegar opciones de ordenación">
+              <span class="category-sort-label">Ordenar:</span>
+              <span class="category-sort-icon" aria-hidden="true">▾</span>
+            </button>
+            <div class="category-sort-options">
+              <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
+              <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
+              <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
+            </div>
           </div>
           <div class="category-views-bar" role="group" aria-label="Modo de vista">
             <span class="category-views-label">Vista:</span>
@@ -667,9 +673,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       </section>`).join('');
 
   showScreen(`
-    <div class="screen home-screen">
-      <header class="home-header">
-        <div class="home-logo">TGVideo</div>
+    <div class="screen home-screen ${isCarousel ? 'home-screen--carousel' : ''}">
+      <header class="home-header ${isCarousel ? 'home-header--carousel' : ''}">
+        <div class="home-logo" tabindex="${isCarousel ? '0' : '-1'}" ${isCarousel ? 'data-focusable' : ''} id="home-logo" title="${isCarousel ? 'Mostrar menú de navegación' : 'TGVideo'}" role="${isCarousel ? 'button' : 'banner'}">TGVideo</div>
         ${sectionDefs.length ? `<nav class="home-nav" aria-label="Secciones"><button class="home-nav-item nav-search-btn ${isSearch ? 'active' : ''}" data-focusable data-section="buscar" type="button" aria-label="Buscar" title="Buscar" aria-current="${isSearch ? 'page' : 'false'}"><span class="nav-search-icon" aria-hidden="true">🔍</span></button>${sectionDefs.map(section => `<button class="home-nav-item ${section.id === selectedSection ? 'active' : ''}" data-focusable data-section="${esc(section.id)}" type="button" aria-current="${section.id === selectedSection ? 'page' : 'false'}">${esc(section.label)}</button>`).join('')}</nav>` : ''}
         <div class="home-actions">
           <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
@@ -709,6 +715,73 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     });
     setBackHandler(() => showHome(tg, sync, profile, { selectedSection: 'inicio' }));
   }
+  // Plegado y despliegue del selector "Ordenar:"
+  const sortBar = document.querySelector('.category-sort-bar:not(.search-bar)');
+  const sortToggle = document.querySelector('.category-sort-toggle');
+  if (sortBar && sortToggle) {
+    const expandSort = () => {
+      sortBar.classList.add('is-expanded');
+      sortToggle.setAttribute('aria-expanded', 'true');
+    };
+    const collapseSort = () => {
+      sortBar.classList.remove('is-expanded');
+      sortToggle.setAttribute('aria-expanded', 'false');
+    };
+
+    sortToggle.onclick = (e) => {
+      e.stopPropagation();
+      const isExpanded = sortBar.classList.contains('is-expanded');
+      if (isExpanded) {
+        collapseSort();
+      } else {
+        expandSort();
+        if (e.detail === 0) {
+          const activeBtn = sortBar.querySelector('.category-sort-btn.active') || sortBar.querySelector('.category-sort-btn');
+          activeBtn?.focus();
+        }
+      }
+    };
+
+    sortBar.addEventListener('focusin', () => {
+      expandSort();
+    });
+
+    sortBar.addEventListener('focusout', (e) => {
+      if (!sortBar.contains(e.relatedTarget)) {
+        collapseSort();
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!sortBar.contains(e.target)) {
+        collapseSort();
+      }
+    }, { passive: true });
+  }
+
+  // Despliegue de la cabecera en vista carrusel al interactuar con el logo TGVideo
+  const carouselHeader = document.querySelector('.home-header--carousel');
+  const homeLogo = document.querySelector('#home-logo');
+  if (carouselHeader && homeLogo) {
+    homeLogo.onclick = (e) => {
+      e.stopPropagation();
+      carouselHeader.classList.toggle('is-expanded');
+    };
+    carouselHeader.addEventListener('focusin', () => {
+      carouselHeader.classList.add('is-expanded');
+    });
+    carouselHeader.addEventListener('focusout', (e) => {
+      if (!carouselHeader.contains(e.relatedTarget)) {
+        carouselHeader.classList.remove('is-expanded');
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (!carouselHeader.contains(e.target)) {
+        carouselHeader.classList.remove('is-expanded');
+      }
+    }, { passive: true });
+  }
+
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
     btn.onclick = (e) => {
       btn.blur();
@@ -717,6 +790,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       if (newSort && newSort !== currentSort) {
         setSectionSort(profile.id, selectedSection, newSort);
         showHome(tg, sync, profile, { selectedSection, focusSort: newSort, fromPointer: e.detail > 0 });
+      } else {
+        sortBar?.classList.remove('is-expanded');
+        sortToggle?.setAttribute('aria-expanded', 'false');
       }
     };
   });
@@ -800,6 +876,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     if (focusViewBtn) {
       el = document.querySelector('.category-view-btn');
     } else if (focusSort && !fromPointer) {
+      document.querySelector('.category-sort-bar')?.classList.add('is-expanded');
       el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);
     } else if (isCarousel && focusTitleId) {
       el = document.querySelector('.carousel-stage');

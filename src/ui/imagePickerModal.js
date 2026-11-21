@@ -41,7 +41,7 @@ export function showImagePicker(title, profile, { sync, onChanged, onAddToCollec
     const kinds = Object.entries(IMAGE_KINDS).map(([kind, label]) =>
       `<button class="btn imgpick-opt" data-focusable data-kind="${kind}">Cambiar ${label.toLowerCase()}</button>`).join('');
     const addCol = onAddToCollection
-      ? '<button class="btn btn-secondary imgpick-opt" data-focusable id="imgpick-addcol">Añadir a colección…</button>'
+      ? '<button class="btn btn-secondary imgpick-opt btn-addcol" data-focusable id="imgpick-addcol">Añadir a colección…</button>'
       : '';
     root.innerHTML = kinds + addCol;
     root.querySelectorAll('[data-kind]').forEach((b) => { b.onclick = () => renderGrid(b.dataset.kind); });

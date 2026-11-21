@@ -1,3 +1,4 @@
+import { startAppUpdate } from '../core/updater.js';
 import { checkForUpdate } from '../core/updateCheck.js';
 import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
 // src/ui/settings.js
@@ -244,14 +245,7 @@ export async function showProfileMenu({ profile, sync, onSwitch, onChanged, onGl
   if (updateBtn && updateInfo) {
     updateBtn.onclick = () => {
       close();
-      const isAndroidApp = typeof window !== 'undefined' &&
-        (window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android');
-      const targetUrl = (isAndroidApp && updateInfo.downloadUrl) ? updateInfo.downloadUrl : (updateInfo.releaseUrl || updateInfo.downloadUrl);
-      if (isAndroidApp) {
-        window.open(targetUrl, '_system');
-      } else {
-        window.open(targetUrl, '_blank');
-      }
+      startAppUpdate(updateInfo);
     };
   }
 }

@@ -232,17 +232,22 @@ export function openFullscreenTrailer(trailersInput, mainTitle = 'Tráiler', ini
       badgeEl.title = filmName;
     }
 
+    const origin = typeof window !== 'undefined' ? (window.location.origin || 'http://localhost') : 'http://localhost';
+    const isLocal = origin.startsWith('http://localhost') || origin.startsWith('https://localhost') || origin.startsWith('capacitor://');
+    const ytOrigin = isLocal ? 'https://www.youtube.com' : origin;
+
     const allKeys = trailers.map(t => t.key);
     const playlist = allKeys.slice(activeIndex).concat(allKeys.slice(0, activeIndex)).join(',');
-    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cur.key)}`
-      + `?autoplay=1&controls=1&rel=0&modestbranding=1&playsinline=1&loop=1&playlist=${encodeURIComponent(playlist)}&enablejsapi=1`;
+    const src = `https://www.youtube.com/embed/${encodeURIComponent(cur.key)}`
+      + `?autoplay=1&mute=0&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`
+      + `&loop=1&playlist=${encodeURIComponent(playlist)}&origin=${encodeURIComponent(ytOrigin)}&widget_referrer=${encodeURIComponent(origin)}`;
 
     frameWrap.innerHTML = `
       <iframe
         src="${src}"
         title="Tráiler: ${esc(filmName)}"
-        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-        allowfullscreen>
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowfullscreen="true">
       </iframe>
     `;
   }
@@ -433,20 +438,24 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     idx = (idx + trailers.length) % trailers.length;
     logoTrailerIdx = idx;
 
+    const origin = typeof window !== 'undefined' ? (window.location.origin || 'http://localhost') : 'http://localhost';
+    const isLocal = origin.startsWith('http://localhost') || origin.startsWith('https://localhost') || origin.startsWith('capacitor://');
+    const ytOrigin = isLocal ? 'https://www.youtube.com' : origin;
+
     const allKeys = trailers.map(x => x.key);
-    // Orden de la playlist empezando por el actual y dando la vuelta
     const playlistKeys = allKeys.slice(idx).concat(allKeys.slice(0, idx));
     const curKey = playlistKeys[0];
-    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(curKey)}`
+    const src = `https://www.youtube.com/embed/${encodeURIComponent(curKey)}`
       + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&disablekb=1`
-      + `&loop=1&playlist=${encodeURIComponent(playlistKeys.join(','))}&enablejsapi=1`;
+      + `&loop=1&playlist=${encodeURIComponent(playlistKeys.join(','))}&enablejsapi=1`
+      + `&origin=${encodeURIComponent(ytOrigin)}&widget_referrer=${encodeURIComponent(origin)}`;
 
     const isMulti = trailers.length > 1;
     const filmName = trailers[idx].name || '';
     trailerBox.innerHTML = `
       <div class="carousel-trailer-wrap">
         ${isMulti ? `<div class="carousel-trailer-tag" title="${esc(filmName)}">Tráiler ${idx + 1}/${trailers.length} · ${esc(filmName)}</div>` : ''}
-        <iframe src="${src}" title="Tráiler" tabindex="-1" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+        <iframe src="${src}" title="Tráiler" tabindex="-1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="true"></iframe>
       </div>
     `;
   }
@@ -500,9 +509,17 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     fit();
     const el = els[cur];
     if (!el) return;
-    const x = el.offsetLeft + el.offsetWidth / 2 - stage.clientWidth / 2;
-    track.style.transition = smooth ? '' : 'none';
-    track.style.transform = `translateX(${-x}px)`;
+    const stageWidth = stage.clientWidth;
+    let x = 0;
+    if (el.offsetLeft > 0 || cur === 0) {
+      x = el.offsetLeft + el.offsetWidth / 2 - stageWidth / 2;
+    } else {
+      const itemW = el.offsetWidth || Math.round((stage.clientHeight - 16) * (logos ? 16 / 7 : 2 / 3));
+      const gap = 19.2;
+      x = cur * (itemW + gap) + itemW / 2 - stageWidth / 2;
+    }
+    track.style.transition = smooth ? 'transform 0.28s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
+    track.style.transform = `translate3d(${-Math.round(x)}px, 0, 0)`;
     if (!smooth) { void track.offsetWidth; track.style.transition = ''; }
   }
 
@@ -532,11 +549,28 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
   const step = (d) => { if (cur + d >= 0 && cur + d < items.length) setActive(cur + d); };
 
   // ---------------------------------------------------------------- entrada: mando, teclado, ratón, táctil
+  let keyLock = 0;
+  const KEY_STEP_THROTTLE_MS = 140;
+
   stage.addEventListener('keydown', (e) => {
     const stop = () => { e.preventDefault(); e.stopPropagation(); };
     switch (e.key) {
-      case 'ArrowLeft': stop(); step(-1); break;
-      case 'ArrowRight': stop(); step(1); break;
+      case 'ArrowLeft': {
+        stop();
+        const now = Date.now();
+        if (now - keyLock < KEY_STEP_THROTTLE_MS) return;
+        keyLock = now;
+        step(-1);
+        break;
+      }
+      case 'ArrowRight': {
+        stop();
+        const now = Date.now();
+        if (now - keyLock < KEY_STEP_THROTTLE_MS) return;
+        keyLock = now;
+        step(1);
+        break;
+      }
       case 'PageUp': stop(); step(-5); break;
       case 'PageDown': stop(); step(5); break;
       case 'Home': stop(); setActive(0); break;
@@ -554,13 +588,15 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       }
       case 'ArrowUp': {
         stop();
-        const up = document.querySelector('.category-sort-bar [data-focusable].active')
+        const up = document.querySelector('.category-sort-bar .category-sort-toggle')
+          || document.querySelector('.category-sort-bar [data-focusable].active')
           || document.querySelector('.category-sort-bar [data-focusable]')
+          || document.querySelector('#home-logo[data-focusable]')
           || document.querySelector('.home-nav-item.active');
         up?.focus({ preventScroll: true });
         break;
       }
-      default: break; // Enter lo convierte dpad.js en un clic sobre el elemento enfocado
+      default: break;
     }
   });
 
