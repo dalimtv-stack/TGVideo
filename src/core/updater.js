@@ -3,7 +3,7 @@
 // En Android TV / APK descarga el paquete mostrando progreso porcentual
 // y lanza el instalador nativo del sistema. En Web ofrece la descarga directa.
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { attachSpatialNav } from '../ui/spatialNav.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -12,6 +12,20 @@ function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return '0 MB';
   const mb = bytes / (1024 * 1024);
   return `${mb.toFixed(1)} MB`;
+}
+
+function getUpdaterPlugin() {
+  if (typeof window !== 'undefined' && window.Capacitor?.Plugins?.AppUpdaterPlugin) {
+    return window.Capacitor.Plugins.AppUpdaterPlugin;
+  }
+  if (typeof Capacitor !== 'undefined' && Capacitor?.Plugins?.AppUpdaterPlugin) {
+    return Capacitor.Plugins.AppUpdaterPlugin;
+  }
+  try {
+    return registerPlugin('AppUpdaterPlugin');
+  } catch (_) {
+    return null;
+  }
 }
 
 /**
@@ -34,7 +48,7 @@ export async function startAppUpdate(updateInfo) {
   }
 
   // Comprobar si el plugin nativo de actualización está disponible
-  const updaterPlugin = window.Capacitor?.Plugins?.AppUpdaterPlugin;
+  const updaterPlugin = getUpdaterPlugin();
 
   const overlay = document.createElement('div');
   overlay.className = 'settings-overlay update-download-overlay';
@@ -73,12 +87,12 @@ export async function startAppUpdate(updateInfo) {
 
   let cancelled = false;
   let progressListener = null;
+  let errorListener = null;
 
   const close = () => {
     cancelled = true;
-    if (progressListener && typeof progressListener.remove === 'function') {
-      try { progressListener.remove(); } catch (_) {}
-    }
+    try { progressListener?.remove?.(); } catch (_) {}
+    try { errorListener?.remove?.(); } catch (_) {}
     overlay.remove();
   };
 
@@ -87,26 +101,34 @@ export async function startAppUpdate(updateInfo) {
 
   if (updaterPlugin && typeof updaterPlugin.downloadAndInstall === 'function') {
     try {
-      progressListener = await updaterPlugin.addListener('onUpdateProgress', (data) => {
-        if (cancelled) return;
-        const percent = Math.min(100, Math.max(0, Number(data?.percent) || 0));
-        const downloaded = Number(data?.bytesDownloaded) || 0;
-        const total = Number(data?.totalBytes) || 0;
+      if (typeof updaterPlugin.addListener === 'function') {
+        progressListener = await updaterPlugin.addListener('onUpdateProgress', (data) => {
+          if (cancelled) return;
+          const percent = Math.min(100, Math.max(0, Number(data?.percent) || 0));
+          const downloaded = Number(data?.bytesDownloaded) || 0;
+          const total = Number(data?.totalBytes) || 0;
 
-        if (barEl) barEl.style.width = `${percent}%`;
-        if (bytesEl) {
-          bytesEl.textContent = total > 0
-            ? `${percent}% (${formatBytes(downloaded)} / ${formatBytes(total)})`
-            : `${percent}%`;
-        }
+          if (barEl) barEl.style.width = `${percent}%`;
+          if (bytesEl) {
+            bytesEl.textContent = total > 0
+              ? `${percent}% (${formatBytes(downloaded)} / ${formatBytes(total)})`
+              : `${percent}%`;
+          }
 
-        if (percent >= 100) {
-          if (statusEl) statusEl.textContent = 'Descarga lista. Abriendo instalador…';
-          setTimeout(close, 2000);
-        } else {
-          if (statusEl) statusEl.textContent = 'Descargando actualización…';
-        }
-      });
+          if (percent >= 100) {
+            if (statusEl) statusEl.textContent = 'Descarga lista. Abriendo instalador de Android…';
+            setTimeout(close, 3500);
+          } else {
+            if (statusEl) statusEl.textContent = 'Descargando actualización…';
+          }
+        });
+
+        errorListener = await updaterPlugin.addListener('onUpdateError', (data) => {
+          if (cancelled) return;
+          if (statusEl) statusEl.textContent = `Error: ${data?.error || 'Fallo en la descarga'}`;
+          if (bytesEl) bytesEl.textContent = 'Reintentar más tarde';
+        });
+      }
 
       await updaterPlugin.downloadAndInstall({ url: targetUrl, version });
     } catch (err) {

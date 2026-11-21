@@ -1,10 +1,195 @@
 // scripts/prepare-android.js
-// Configura automáticamente AndroidManifest.xml, banners 16:9 y recursos para Android TV en compilaciones locales
+// Configura automáticamente AndroidManifest.xml, banners 16:9, aceleración de hardware,
+// WebSettings, FileProvider y AppUpdaterPlugin para Android TV y compilaciones locales.
 import fs from 'fs';
 import path from 'path';
 
 const ANDROID_RES = path.resolve('android/app/src/main/res');
 const MANIFEST_PATH = path.resolve('android/app/src/main/AndroidManifest.xml');
+
+function ensureAppUpdaterPlugin() {
+  const javaDir = path.resolve('android/app/src/main/java/com/tgvideo/app');
+  if (!fs.existsSync(javaDir)) {
+    fs.mkdirSync(javaDir, { recursive: true });
+  }
+
+  const pluginPath = path.join(javaDir, 'AppUpdaterPlugin.java');
+  const pluginCode = `package com.tgvideo.app;
+
+import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
+import androidx.core.content.FileProvider;
+
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+@CapacitorPlugin(name = "AppUpdaterPlugin")
+public class AppUpdaterPlugin extends Plugin {
+
+    @Override
+    public void load() {
+        super.load();
+        cleanOldUpdateApk();
+    }
+
+    private void cleanOldUpdateApk() {
+        try {
+            Context context = getContext();
+            if (context == null) return;
+            File cacheDir = context.getExternalCacheDir();
+            if (cacheDir != null) {
+                File f = new File(cacheDir, "tgvideo_update.apk");
+                if (f.exists()) f.delete();
+            }
+            File intCache = context.getCacheDir();
+            if (intCache != null) {
+                File f = new File(intCache, "tgvideo_update.apk");
+                if (f.exists()) f.delete();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @PluginMethod
+    public void downloadAndInstall(PluginCall call) {
+        String urlString = call.getString("url");
+        if (urlString == null || urlString.isEmpty()) {
+            call.reject("URL de descarga no proporcionada");
+            return;
+        }
+
+        call.resolve();
+
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            InputStream input = null;
+            OutputStream output = null;
+            try {
+                Context context = getContext();
+                File cacheDir = context.getExternalCacheDir();
+                if (cacheDir == null) cacheDir = context.getCacheDir();
+
+                File apkFile = new File(cacheDir, "tgvideo_update.apk");
+                if (apkFile.exists()) {
+                    apkFile.delete();
+                }
+
+                URL url = new URL(urlString);
+                int redirectCount = 0;
+                while (redirectCount < 5) {
+                    connection = (HttpURLConnection) url.openConnection();
+                    connection.setInstanceFollowRedirects(true);
+                    connection.setRequestProperty("User-Agent", "TGVideo-AppUpdater");
+                    connection.connect();
+
+                    int status = connection.getResponseCode();
+                    if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
+                        status == HttpURLConnection.HTTP_MOVED_PERM ||
+                        status == 307 || status == 308) {
+                        String newUrl = connection.getHeaderField("Location");
+                        connection.disconnect();
+                        url = new URL(newUrl);
+                        redirectCount++;
+                    } else {
+                        break;
+                    }
+                }
+
+                int fileLength = connection.getContentLength();
+                input = new BufferedInputStream(connection.getInputStream(), 8192);
+                output = new FileOutputStream(apkFile);
+
+                byte[] data = new byte[8192];
+                long total = 0;
+                int count;
+                long lastNotifyTime = 0;
+
+                while ((count = input.read(data)) != -1) {
+                    total += count;
+                    output.write(data, 0, count);
+
+                    long now = System.currentTimeMillis();
+                    if (now - lastNotifyTime > 250 && fileLength > 0) {
+                        lastNotifyTime = now;
+                        int percent = (int) ((total * 100) / fileLength);
+                        JSObject progressObj = new JSObject();
+                        progressObj.put("percent", percent);
+                        progressObj.put("bytesDownloaded", total);
+                        progressObj.put("totalBytes", fileLength);
+                        notifyListeners("onUpdateProgress", progressObj);
+                    }
+                }
+
+                output.flush();
+                output.close();
+                output = null;
+                input.close();
+                input = null;
+
+                // Notificar 100% completado
+                JSObject doneObj = new JSObject();
+                doneObj.put("percent", 100);
+                doneObj.put("bytesDownloaded", total);
+                doneObj.put("totalBytes", total);
+                notifyListeners("onUpdateProgress", doneObj);
+
+                // Lanzar instalador nativo del paquete APK
+                Uri apkUri = FileProvider.getUriForFile(
+                    context,
+                    context.getPackageName() + ".fileprovider",
+                    apkFile
+                );
+
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+
+            } catch (Exception e) {
+                JSObject errObj = new JSObject();
+                errObj.put("error", e.getMessage());
+                notifyListeners("onUpdateError", errObj);
+            } finally {
+                try { if (output != null) output.close(); } catch (Exception ignored) {}
+                try { if (input != null) input.close(); } catch (Exception ignored) {}
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
+    }
+}
+`;
+  fs.writeFileSync(pluginPath, pluginCode, 'utf-8');
+  console.log('[prepare-android] AppUpdaterPlugin.java inyectado con éxito.');
+}
+
+function ensureFilePathsXml() {
+  const xmlDir = path.join(ANDROID_RES, 'xml');
+  if (!fs.existsSync(xmlDir)) {
+    fs.mkdirSync(xmlDir, { recursive: true });
+  }
+  const fp = path.join(xmlDir, 'file_paths.xml');
+  const content = `<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-cache-path name="external_cache" path="." />
+    <cache-path name="cache" path="." />
+</paths>
+`;
+  fs.writeFileSync(fp, content, 'utf-8');
+  console.log('[prepare-android] file_paths.xml creado para FileProvider.');
+}
 
 function configureManifest() {
   if (!fs.existsSync(MANIFEST_PATH)) {
@@ -22,11 +207,16 @@ function configureManifest() {
     );
   }
 
-  // 2. Banner y cleartext en <application>
+  // 2. Banner, cleartext y aceleración por hardware en <application>
   if (!m.includes('android:banner=')) {
-    m = m.replace('<application', '<application android:banner="@drawable/banner" android:logo="@drawable/banner" android:usesCleartextTraffic="true"');
-  } else if (!m.includes('android:usesCleartextTraffic=')) {
-    m = m.replace('<application', '<application android:usesCleartextTraffic="true"');
+    m = m.replace('<application', '<application android:banner="@drawable/banner" android:logo="@drawable/banner" android:usesCleartextTraffic="true" android:hardwareAccelerated="true"');
+  } else {
+    if (!m.includes('android:usesCleartextTraffic=')) {
+      m = m.replace('<application', '<application android:usesCleartextTraffic="true"');
+    }
+    if (!m.includes('android:hardwareAccelerated=')) {
+      m = m.replace('<application', '<application android:hardwareAccelerated="true"');
+    }
   }
 
   // 3. Banner e icono en MainActivity
@@ -48,8 +238,27 @@ function configureManifest() {
     m = m.replace(/(<intent-filter\b[\s\S]*?android\.intent\.category\.LAUNCHER[\s\S]*?<\/intent-filter>)/, `${leanbackFilter}\n$1`);
   }
 
+  // 5. Permisos para actualización de APK
+  if (!m.includes('REQUEST_INSTALL_PACKAGES')) {
+    m = m.replace('</manifest>', '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n</manifest>');
+  }
+
+  // 6. FileProvider para instalar APK descargada
+  if (!m.includes('${applicationId}.fileprovider') && !m.includes('androidx.core.content.FileProvider')) {
+    const providerXml = `        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="\${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>`;
+    m = m.replace('</application>', `${providerXml}\n    </application>`);
+  }
+
   fs.writeFileSync(MANIFEST_PATH, m, 'utf-8');
-  console.log('[prepare-android] AndroidManifest.xml configurado correctamente para Android TV.');
+  console.log('[prepare-android] AndroidManifest.xml configurado correctamente para Android TV e instalador.');
 }
 
 function copyBanners() {
@@ -136,6 +345,44 @@ function configureMainActivity() {
   if (!mainPath) return;
 
   let content = fs.readFileSync(mainPath, 'utf-8');
+
+  // Registrar plugins en onCreate si aún no están registrados
+  if (!content.includes('AppUpdaterPlugin.class')) {
+    if (content.includes('registerPlugin(ExoPlayerPlugin.class);')) {
+      content = content.replace(
+        'registerPlugin(ExoPlayerPlugin.class);',
+        'registerPlugin(AppUpdaterPlugin.class);\n        registerPlugin(ExoPlayerPlugin.class);'
+      );
+    } else if (content.includes('public class MainActivity extends BridgeActivity {')) {
+      const onCreateReplacement = `public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(android.os.Bundle savedInstanceState) {
+        registerPlugin(AppUpdaterPlugin.class);
+        registerPlugin(ExoPlayerPlugin.class);
+        super.onCreate(savedInstanceState);
+    }`;
+      content = content.replace('public class MainActivity extends BridgeActivity {', onCreateReplacement);
+    }
+  }
+
+  // WebSettings para reproducción de medios sin bloqueo y soporte óptimo de WebView
+  if (!content.includes('setMediaPlaybackRequiresUserGesture(false)')) {
+    const webSettingsCode = `
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            android.webkit.WebSettings ws = getBridge().getWebView().getSettings();
+            ws.setJavaScriptEnabled(true);
+            ws.setDomStorageEnabled(true);
+            ws.setMediaPlaybackRequiresUserGesture(false);
+            ws.setAllowFileAccess(true);
+            ws.setAllowContentAccess(true);
+        }`;
+
+    if (content.includes('super.onCreate(savedInstanceState);')) {
+      content = content.replace('super.onCreate(savedInstanceState);', `super.onCreate(savedInstanceState);${webSettingsCode}`);
+    }
+  }
+
+  // dispatchKeyEvent para mandos de Android TV
   if (!content.includes('dispatchKeyEvent')) {
     const dispatchMethod = `
     @Override
@@ -166,13 +413,16 @@ function configureMainActivity() {
     const lastBrace = content.lastIndexOf('}');
     if (lastBrace !== -1) {
       content = content.slice(0, lastBrace) + dispatchMethod + content.slice(lastBrace);
-      fs.writeFileSync(mainPath, content, 'utf-8');
-      console.log('[prepare-android] dispatchKeyEvent añadido a MainActivity.java.');
     }
   }
+
+  fs.writeFileSync(mainPath, content, 'utf-8');
+  console.log('[prepare-android] MainActivity.java configurado (Plugins, WebSettings, dispatchKeyEvent).');
 }
 
 try {
+  ensureAppUpdaterPlugin();
+  ensureFilePathsXml();
   configureManifest();
   copyBanners();
   configureStyles();

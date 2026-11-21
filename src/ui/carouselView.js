@@ -1,62 +1,43 @@
 // src/ui/carouselView.js
-// Vista en carrusel de las pestañas de categoría (Favoritos, Películas, Series, Colecciones…).
-//   modo 'posters': portadas grandes (todas del mismo tamaño) y debajo la sinopsis.
-//   modo 'logos'  : logo de cada título; debajo, el tráiler de TMDB que se reproduce solo, y la sinopsis.
-// Todo se ajusta a la altura disponible de la pantalla. Se maneja con mando/teclado:
-//   ◀ ▶ cambian de título · OK abre la ficha · ▲ vuelve a "Ordenar" · ratón/táctil: clic, rueda o deslizar.
+// Vista en carrusel tipo Apple TV / Android TV para las pestañas de categorías.
+// Permite modo "posters" (pósteres verticales 2:3) y modo "logos" (logos horizontales sobre fondo neutro).
+// Soporta tráilers en ventana (modo logos) y a pantalla completa (modo posters), navegación D-Pad y táctil.
+
+import { memoryCache, loadPoster } from '../metadata/posterCache.js';
 import { getAutoLogo } from '../metadata/autoLogo.js';
 import { fetchTmdbTrailer, fetchCollectionMovieTrailers } from '../metadata/tmdb.js';
-import { loadPoster, memoryCache } from '../metadata/posterCache.js';
-import { posterColor } from './home.js';
+
+let active = null;
+const LOAD_WINDOW = 3;
+const TRAILER_DELAY_MS = 900;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const LOAD_WINDOW = 5;        // elementos a cada lado del activo cuyas imágenes se cargan
-const TRAILER_DELAY_MS = 700; // espera antes de pedir/mostrar el tráiler (evita cargas al ir pasando rápido)
+const displayName = (t) => t.metadata?.name || t.nombre || t.title || 'Sin título';
 
-let active = null;
+const metaLine = (t) => {
+  const year = t.metadata?.date ? String(t.metadata.date).slice(0, 4) : (t.yearHint || '');
+  const rating = t.metadata?.rating ? `★ ${Number(t.metadata.rating).toFixed(1)}` : '';
+  const genres = Array.isArray(t.metadata?.genres) ? t.metadata.genres.slice(0, 3).join(' · ') : '';
+  return [year, rating, genres].filter(Boolean).join('   •   ');
+};
 
-const titleType = (t) =>
-  (t.isSaga || t.metadata?.type === 'collection') ? 'collection' : (t.tipo === 'serie' ? 'tv' : 'movie');
+const synopsisOf = (t) => t.metadata?.overview || t.overview || '';
 
-const isCollectionTitle = (t) =>
-  Boolean(t.isSaga || t.isVirtualSaga || t.metadata?.type === 'collection' || t.metadata?.tipo === 'collection' || t.grupo === 'Sagas');
-
-const displayName = (t) => t.metadata?.name || t.metadata?.title || t.nombre || '';
-
-function badgeOf(t) {
-  if (t.tipo === 'serie') return `${t.archivos.length} ep.`;
-  if (t.isSaga) return `${t.archivos.length} películas`;
-  if (t.tipo === 'deporte') return 'Deporte';
-  if (t.tipo === 'musica') return 'Música';
-  return t.archivos.length > 1 ? `${t.archivos.length} versiones` : 'Película';
+function posterColor(seed) {
+  let h = 0;
+  for (let i = 0; i < (seed || '').length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360}deg 35% 18%)`;
 }
 
-function metaLine(t) {
-  const m = t.metadata || {};
-  const rating = Number(m.rating);
-  return [
-    String(m.date || '').slice(0, 4) || t.yearHint || '',
-    Number.isFinite(rating) && rating > 0 ? `★ ${rating.toFixed(1)}` : '',
-    badgeOf(t),
-  ].filter(Boolean).join(' · ');
-}
+const titleType = (t) => (t.tipo === 'serie' || t.isSerie || t.isSeason || t.isEpisode ? 'tv' : 'movie');
+const isCollectionTitle = (t) => Boolean(t.isSaga || t.isVirtualSaga || t.tipo === 'saga' || t.tipo === 'coleccion');
 
-const synopsisOf = (t) => t.metadata?.overview || t.archivos?.[0]?.synopsis || '';
-
-/**
- * Obtiene los tráilers disponibles para un título.
- * Si es una colección o saga, obtiene en orden cronológico los tráilers de las películas que la componen.
- * @param {object} t
- * @param {object[]} [allTitles]
- * @param {AbortSignal} [signal]
- * @returns {Promise<Array<{ key: string, id?: number|string, name: string, date?: string }>>}
- */
-export async function getTitleTrailers(t, allTitles = [], signal) {
+async function getTitleTrailers(t, allTitles = [], signal) {
   if (!t) return [];
 
-  // Si ya están cacheados en este título, devolverlos
-  if (Array.isArray(t._collectionTrailers)) {
+  // Si ya tenemos trailers resueltos en memoria para este título
+  if (Array.isArray(t._collectionTrailers) && t._collectionTrailers.length > 0) {
     return t._collectionTrailers;
   }
 
@@ -159,93 +140,81 @@ export async function getTitleTrailers(t, allTitles = [], signal) {
     }
   }
 
-  t._collectionTrailers = trailers || [];
-  return t._collectionTrailers;
+  if (trailers && trailers.length > 0) {
+    t._collectionTrailers = trailers;
+  }
+  return trailers;
 }
 
-/**
- * Abre el reproductor de tráiler a pantalla completa.
- * Si recibe una lista de tráilers (colección), reproduce en orden cronológico los tráilers
- * de las películas que la componen, pasando de uno a otro automáticamente al terminar
- * y ciclando de vuelta al primero de forma continua.
- * @param {string|Array<{ key: string, name?: string }>} trailersInput
- * @param {string} [mainTitle]
- * @param {number} [initialIndex]
- */
-export function openFullscreenTrailer(trailersInput, mainTitle = 'Tráiler', initialIndex = 0) {
-  document.querySelector('.carousel-trailer-modal')?.remove();
+export function openFullscreenTrailer(trailers, titleName = '', initialIndex = 0) {
+  if (!trailers || !trailers.length) return;
 
-  let trailers = [];
-  if (typeof trailersInput === 'string') {
-    trailers = [{ key: trailersInput, name: mainTitle }];
-  } else if (Array.isArray(trailersInput)) {
-    trailers = trailersInput.filter(x => x?.key);
-  }
-  if (!trailers.length) return;
+  const existing = document.querySelector('.carousel-trailer-modal');
+  if (existing) existing.remove();
 
+  let activeIndex = Math.max(0, Math.min(trailers.length - 1, initialIndex));
   const isMulti = trailers.length > 1;
-  let activeIndex = Math.max(0, Math.min(trailers.length - 1, initialIndex || 0));
-  let advanceTimeout = null;
 
   const modal = document.createElement('div');
   modal.className = 'carousel-trailer-modal';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', `Tráiler: ${mainTitle}`);
+  modal.setAttribute('aria-label', `Tráiler de ${titleName}`);
 
   modal.innerHTML = `
     <div class="carousel-trailer-backdrop"></div>
-    <div class="carousel-trailer-content">
-      <div class="carousel-trailer-bar">
-        <div class="carousel-trailer-info">
-          <span class="carousel-trailer-main-title">${esc(mainTitle)}</span>
-          ${isMulti ? `<span class="carousel-trailer-seq-badge"></span>` : ''}
+    <div class="carousel-trailer-player-box">
+      <div class="carousel-trailer-header">
+        <div class="carousel-trailer-title-wrap">
+          <span class="carousel-trailer-badge">TRÁILER</span>
+          <span class="carousel-trailer-main-title">${esc(titleName)}</span>
+          ${isMulti ? `<span class="carousel-trailer-part-title" id="trailer-part-label"></span>` : ''}
         </div>
-        <div class="carousel-trailer-controls">
-          ${isMulti ? `
-            <button type="button" class="carousel-trailer-nav-btn prev" data-focusable title="Tráiler anterior" aria-label="Tráiler anterior">‹</button>
-            <button type="button" class="carousel-trailer-nav-btn next" data-focusable title="Siguiente tráiler" aria-label="Siguiente tráiler">›</button>
-          ` : ''}
-          <button type="button" class="carousel-trailer-close" data-focusable title="Cerrar tráiler" aria-label="Cerrar tráiler">✕</button>
-        </div>
+        <button type="button" class="carousel-trailer-close-btn" data-focusable aria-label="Cerrar tráiler">✕</button>
       </div>
-      <div class="carousel-trailer-frame-wrap"></div>
+      <div class="carousel-trailer-frame-container" id="trailer-frame-host"></div>
+      ${isMulti ? `
+      <div class="carousel-trailer-controls">
+        <button type="button" class="carousel-trailer-nav-btn prev" data-focusable aria-label="Tráiler anterior">‹ Anterior</button>
+        <span class="carousel-trailer-counter" id="trailer-counter-label">${activeIndex + 1} / ${trailers.length}</span>
+        <button type="button" class="carousel-trailer-nav-btn next" data-focusable aria-label="Siguiente tráiler">Siguiente ›</button>
+      </div>` : ''}
     </div>
   `;
 
   document.body.appendChild(modal);
 
-  const frameWrap = modal.querySelector('.carousel-trailer-frame-wrap');
-  const badgeEl = modal.querySelector('.carousel-trailer-seq-badge');
+  const frameHost = modal.querySelector('#trailer-frame-host');
+  const partLabel = modal.querySelector('#trailer-part-label');
+  const counterLabel = modal.querySelector('#trailer-counter-label');
+  const closeBtn = modal.querySelector('.carousel-trailer-close-btn');
   const prevBtn = modal.querySelector('.carousel-trailer-nav-btn.prev');
   const nextBtn = modal.querySelector('.carousel-trailer-nav-btn.next');
-  const closeBtn = modal.querySelector('.carousel-trailer-close');
+
+  let advanceTimer = null;
 
   function renderVideo(idx) {
-    clearTimeout(advanceTimeout);
+    clearTimeout(advanceTimer);
     activeIndex = (idx + trailers.length) % trailers.length;
     const cur = trailers[activeIndex];
-    const filmName = cur.name || mainTitle;
 
-    if (badgeEl) {
-      badgeEl.textContent = `Tráiler ${activeIndex + 1} de ${trailers.length}: ${filmName}`;
-      badgeEl.title = filmName;
+    if (partLabel) {
+      partLabel.textContent = cur.name ? `— ${cur.name}` : '';
+    }
+    if (counterLabel) {
+      counterLabel.textContent = `${activeIndex + 1} / ${trailers.length}`;
     }
 
-    const origin = typeof window !== 'undefined' ? (window.location.origin || 'http://localhost') : 'http://localhost';
-    const isLocal = origin.startsWith('http://localhost') || origin.startsWith('https://localhost') || origin.startsWith('capacitor://');
-    const ytOrigin = isLocal ? 'https://www.youtube.com' : origin;
+    const allKeys = trailers.map(x => x.key);
+    const playlistKeys = allKeys.slice(activeIndex).concat(allKeys.slice(0, activeIndex));
+    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cur.key)}`
+      + `?autoplay=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`
+      + `&loop=${isMulti ? '0' : '1'}&playlist=${encodeURIComponent(playlistKeys.join(','))}`;
 
-    const allKeys = trailers.map(t => t.key);
-    const playlist = allKeys.slice(activeIndex).concat(allKeys.slice(0, activeIndex)).join(',');
-    const src = `https://www.youtube.com/embed/${encodeURIComponent(cur.key)}`
-      + `?autoplay=1&mute=0&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`
-      + `&loop=1&playlist=${encodeURIComponent(playlist)}&origin=${encodeURIComponent(ytOrigin)}&widget_referrer=${encodeURIComponent(origin)}`;
-
-    frameWrap.innerHTML = `
+    frameHost.innerHTML = `
       <iframe
         src="${src}"
-        title="Tráiler: ${esc(filmName)}"
+        title="${esc(cur.name || titleName)}"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         allowfullscreen="true">
       </iframe>
@@ -253,49 +222,36 @@ export function openFullscreenTrailer(trailersInput, mainTitle = 'Tráiler', ini
   }
 
   const close = () => {
-    clearTimeout(advanceTimeout);
-    window.removeEventListener('keydown', onKey, true);
+    clearTimeout(advanceTimer);
     window.removeEventListener('message', onMessage);
-    modal.classList.add('closing');
-    setTimeout(() => modal.remove(), 200);
-    const returnTarget = document.querySelector('.carousel-trailer-btn:focus')
-      || document.querySelector('.carousel-trailer-btn')
-      || document.querySelector('.carousel-stage');
-    returnTarget?.focus?.({ preventScroll: true });
+    window.removeEventListener('keydown', onKeyDown, true);
+    modal.remove();
   };
 
-  const onKey = (e) => {
-    if (e.key === 'Escape' || e.key === 'Back' || e.key === 'BrowserBack') {
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape' || e.key === 'Backspace') {
       e.preventDefault();
       e.stopPropagation();
       close();
-      return;
-    }
-    if (isMulti) {
-      const activeEl = document.activeElement;
-      const onControls = activeEl && modal.querySelector('.carousel-trailer-controls')?.contains(activeEl);
-      if (!onControls) {
-        if (e.key === 'ArrowLeft') {
-          e.preventDefault();
-          e.stopPropagation();
-          renderVideo(activeIndex - 1);
-        } else if (e.key === 'ArrowRight') {
-          e.preventDefault();
-          e.stopPropagation();
-          renderVideo(activeIndex + 1);
-        }
-      }
+    } else if (isMulti && (e.key === 'ArrowLeft' || e.key === 'PageUp')) {
+      e.preventDefault();
+      e.stopPropagation();
+      renderVideo(activeIndex - 1);
+    } else if (isMulti && (e.key === 'ArrowRight' || e.key === 'PageDown')) {
+      e.preventDefault();
+      e.stopPropagation();
+      renderVideo(activeIndex + 1);
     }
   };
-  window.addEventListener('keydown', onKey, true);
+  window.addEventListener('keydown', onKeyDown, true);
 
   const onMessage = (e) => {
     if (!isMulti) return;
     try {
       const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
       if (data?.event === 'onStateChange' && data.info === 0) { // 0 = YT.PlayerState.ENDED
-        clearTimeout(advanceTimeout);
-        advanceTimeout = setTimeout(() => {
+        clearTimeout(advanceTimer);
+        advanceTimer = setTimeout(() => {
           renderVideo(activeIndex + 1);
         }, 350);
       }
@@ -438,17 +394,12 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     idx = (idx + trailers.length) % trailers.length;
     logoTrailerIdx = idx;
 
-    const origin = typeof window !== 'undefined' ? (window.location.origin || 'http://localhost') : 'http://localhost';
-    const isLocal = origin.startsWith('http://localhost') || origin.startsWith('https://localhost') || origin.startsWith('capacitor://');
-    const ytOrigin = isLocal ? 'https://www.youtube.com' : origin;
-
     const allKeys = trailers.map(x => x.key);
     const playlistKeys = allKeys.slice(idx).concat(allKeys.slice(0, idx));
     const curKey = playlistKeys[0];
-    const src = `https://www.youtube.com/embed/${encodeURIComponent(curKey)}`
+    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(curKey)}`
       + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&disablekb=1`
-      + `&loop=1&playlist=${encodeURIComponent(playlistKeys.join(','))}&enablejsapi=1`
-      + `&origin=${encodeURIComponent(ytOrigin)}&widget_referrer=${encodeURIComponent(origin)}`;
+      + `&loop=1&playlist=${encodeURIComponent(playlistKeys.join(','))}&enablejsapi=1`;
 
     const isMulti = trailers.length > 1;
     const filmName = trailers[idx].name || '';
@@ -502,26 +453,36 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
 
   // ---------------------------------------------------------------- posición y datos
   const view = host.querySelector('.carousel-view');
-  // Altura disponible en px: todos los tamaños del carrusel se calculan a partir de ella (se ajusta a la pantalla)
+  // Altura disponible en px: todos los tamaños del carrusel se calculan a partir de ella
   const fit = () => view.style.setProperty('--car-h', `${host.clientHeight}px`);
+
+  const getItemMetrics = () => {
+    const stageH = stage.clientHeight || Math.round(host.clientHeight * 0.62);
+    const itemH = Math.max(60, Math.round(stageH - 16));
+    const itemW = Math.round(itemH * (logos ? 16 / 7 : 2 / 3));
+    const rem = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).fontSize)) || 16;
+    const gap = Math.round(1.2 * rem);
+    return { itemW, itemH, gap };
+  };
 
   function center(smooth = true) {
     fit();
-    const el = els[cur];
-    if (!el) return;
+    stage.scrollLeft = 0;
+    stage.scrollTop = 0;
     const stageWidth = stage.clientWidth;
-    let x = 0;
-    if (el.offsetLeft > 0 || cur === 0) {
-      x = el.offsetLeft + el.offsetWidth / 2 - stageWidth / 2;
-    } else {
-      const itemW = el.offsetWidth || Math.round((stage.clientHeight - 16) * (logos ? 16 / 7 : 2 / 3));
-      const gap = 19.2;
-      x = cur * (itemW + gap) + itemW / 2 - stageWidth / 2;
-    }
+    if (!stageWidth) return;
+    const { itemW, gap } = getItemMetrics();
+    const x = cur * (itemW + gap) + itemW / 2 - stageWidth / 2;
     track.style.transition = smooth ? 'transform 0.28s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
     track.style.transform = `translate3d(${-Math.round(x)}px, 0, 0)`;
     if (!smooth) { void track.offsetWidth; track.style.transition = ''; }
   }
+
+  // Prevenir que el scroll nativo desplace la pista del carrusel
+  stage.addEventListener('scroll', () => {
+    stage.scrollLeft = 0;
+    stage.scrollTop = 0;
+  }, { passive: true });
 
   function setActive(i, { smooth = true } = {}) {
     cur = Math.max(0, Math.min(items.length - 1, i));

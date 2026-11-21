@@ -191,6 +191,8 @@
   padding: 8px 0;
   box-sizing: border-box;
   border-radius: 12px;
+  scroll-behavior: auto !important;
+  user-select: none;
 }
 .carousel-mode-logos .carousel-stage {
   position: relative;
@@ -201,6 +203,8 @@
   padding: 8px 0;
   box-sizing: border-box;
   border-radius: 12px;
+  scroll-behavior: auto !important;
+  user-select: none;
 }
 
 .carousel-track {
@@ -220,6 +224,9 @@
   flex: 0 0 auto !important;
   height: 100% !important;
   box-sizing: border-box !important;
+  width: calc((var(--car-h) * 0.62 - 16px) * (2 / 3)) !important;
+  max-width: calc((var(--car-h) * 0.62 - 16px) * (2 / 3)) !important;
+  min-width: calc((var(--car-h) * 0.62 - 16px) * (2 / 3)) !important;
   aspect-ratio: 2 / 3 !important;
   border-radius: 10px;
   overflow: hidden;
@@ -231,13 +238,15 @@
   opacity: 0.5;
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease, box-shadow 0.25s ease;
   cursor: pointer;
-  min-width: 0 !important;
 }
 .carousel-mode-logos .carousel-item {
   flex: 0 0 auto !important;
   height: 100% !important;
   box-sizing: border-box !important;
-  aspect-ratio: 2 / 3 !important;
+  width: calc((var(--car-h) * 0.62 - 16px) * (16 / 7)) !important;
+  max-width: calc((var(--car-h) * 0.62 - 16px) * (16 / 7)) !important;
+  min-width: calc((var(--car-h) * 0.62 - 16px) * (16 / 7)) !important;
+  aspect-ratio: 16 / 7 !important;
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(160deg, var(--pc, #333), #151515);
@@ -248,18 +257,8 @@
   opacity: 0.5;
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease, box-shadow 0.25s ease;
   cursor: pointer;
-  min-width: 0 !important;
 }
 .carousel-item.is-active,
-.carousel-stage:focus .carousel-item.is-active,
-.carousel-stage:focus-visible .carousel-item.is-active,
-.carousel-stage.dpad-focused .carousel-item.is-active {
-  transform: scale(1) !important;
-  opacity: 1 !important;
-  box-shadow: 0 0 0 3px #fff, 0 0 22px rgba(255, 255, 255, 0.5) !important;
-}
-.carousel-stage:focus .carousel-item.is-active,
-.carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-stage:focus .carousel-item.is-active,
 .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-stage.dpad-focused .carousel-item.is-active {
