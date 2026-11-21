@@ -5,7 +5,7 @@
 // Todo se ajusta a la altura disponible de la pantalla. Se maneja con mando/teclado:
 //   ◀ ▶ cambian de título · OK abre la ficha · ▲ vuelve a "Ordenar" · ratón/táctil: clic, rueda o deslizar.
 import { getAutoLogo } from '../metadata/autoLogo.js';
-import { fetchTmdbTrailer } from '../metadata/tmdb.js';
+import { fetchTmdbTrailer, fetchCollectionMovieTrailers } from '../metadata/tmdb.js';
 import { loadPoster, memoryCache } from '../metadata/posterCache.js';
 import { posterColor } from './home.js';
 
@@ -18,6 +18,9 @@ let active = null;
 
 const titleType = (t) =>
   (t.isSaga || t.metadata?.type === 'collection') ? 'collection' : (t.tipo === 'serie' ? 'tv' : 'movie');
+
+const isCollectionTitle = (t) =>
+  Boolean(t.isSaga || t.isVirtualSaga || t.metadata?.type === 'collection' || t.metadata?.tipo === 'collection' || t.grupo === 'Sagas');
 
 const displayName = (t) => t.metadata?.name || t.metadata?.title || t.nombre || '';
 
@@ -41,35 +44,213 @@ function metaLine(t) {
 
 const synopsisOf = (t) => t.metadata?.overview || t.archivos?.[0]?.synopsis || '';
 
+/**
+ * Obtiene los tráilers disponibles para un título.
+ * Si es una colección o saga, obtiene en orden cronológico los tráilers de las películas que la componen.
+ * @param {object} t
+ * @param {object[]} [allTitles]
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Array<{ key: string, id?: number|string, name: string, date?: string }>>}
+ */
+export async function getTitleTrailers(t, allTitles = [], signal) {
+  if (!t) return [];
 
-export function openFullscreenTrailer(key, title = 'Tráiler') {
+  // Si ya están cacheados en este título, devolverlos
+  if (Array.isArray(t._collectionTrailers)) {
+    return t._collectionTrailers;
+  }
+
+  // Si NO es colección: es una película estándar o serie
+  if (!isCollectionTitle(t)) {
+    if (t._trailerKey) {
+      return [{ key: t._trailerKey, name: displayName(t) }];
+    }
+    const id = t.metadata?.id || t.tmdbId;
+    if (!id) return [];
+    try {
+      const key = await fetchTmdbTrailer(titleType(t), id, signal);
+      if (key) {
+        t._trailerKey = key;
+        return [{ key, name: displayName(t) }];
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  // ES UNA COLECCIÓN O SAGA:
+  const colId = t.metadata?.id || t.tmdbId || t.origen?.collectionId;
+  let trailers = [];
+
+  // 1. Obtener partes oficiales de la colección desde TMDB (/collection/{id})
+  if (colId && String(colId).match(/^\d+$/)) {
+    try {
+      trailers = await fetchCollectionMovieTrailers(colId, signal);
+    } catch (_) {
+      trailers = [];
+    }
+  }
+
+  // 2. Si no hay trailers aún, buscar a partir de los archivos de la saga en la biblioteca
+  if ((!trailers || !trailers.length) && Array.isArray(t.archivos) && t.archivos.length > 0) {
+    const yearOf = (f) => Number(f.metadata?.date?.slice(0, 4) || f.fileName?.match(/\b(?:19|20)\d{2}\b/)?.[0] || 9999);
+    const sortedFiles = [...t.archivos].sort((a, b) => (
+      yearOf(a) - yearOf(b) ||
+      (a.metadata?.name || a.sagaName || a.label || '').localeCompare(b.metadata?.name || b.sagaName || b.label || '', 'es', { numeric: true })
+    ));
+
+    const seenIds = new Set();
+    const movieCandidates = [];
+    for (const f of sortedFiles) {
+      const mId = f.metadata?.id || f.tmdbId;
+      const filmName = f.metadata?.name || f.sagaName || f.label || '';
+      const key = mId ? `id_${mId}` : `name_${filmName}`;
+      if (seenIds.has(key)) continue;
+      seenIds.add(key);
+      if (mId) {
+        movieCandidates.push({ id: mId, name: filmName, date: f.metadata?.date || '' });
+      }
+    }
+
+    if (movieCandidates.length > 0) {
+      const fetched = await Promise.all(
+        movieCandidates.map(async (m) => {
+          try {
+            const key = await fetchTmdbTrailer('movie', m.id, signal);
+            if (!key) return null;
+            const year = m.date ? String(m.date).slice(0, 4) : '';
+            const titleWithYear = year && !m.name.includes(year) ? `${m.name} (${year})` : m.name;
+            return { key, id: m.id, name: titleWithYear, date: m.date };
+          } catch (_) {
+            return null;
+          }
+        })
+      );
+      trailers = fetched.filter(Boolean);
+    }
+  }
+
+  // 3. Si aún no hay trailers y tenemos títulos globales, buscar títulos sueltos asociados al canal de la saga
+  if ((!trailers || !trailers.length) && Array.isArray(allTitles) && allTitles.length > 0) {
+    const chId = String(t.channel?.id || t.id || '');
+    const related = allTitles.filter(x =>
+      !x.isSaga && !x.isVirtualSaga &&
+      (String(x.channel?.id) === chId || String(x.sagaChannelId) === chId || String(x.origen?.channelId) === chId)
+    );
+    if (related.length > 0) {
+      const yearOfTitle = (m) => Number(m.metadata?.date?.slice(0, 4) || m.yearHint || 9999);
+      related.sort((a, b) => yearOfTitle(a) - yearOfTitle(b));
+      const fetched = await Promise.all(
+        related.map(async (m) => {
+          const mId = m.metadata?.id || m.tmdbId;
+          if (!mId) return null;
+          try {
+            const key = await fetchTmdbTrailer('movie', mId, signal);
+            if (!key) return null;
+            const name = displayName(m);
+            const year = m.metadata?.date ? String(m.metadata.date).slice(0, 4) : '';
+            const titleWithYear = year && !name.includes(year) ? `${name} (${year})` : name;
+            return { key, id: mId, name: titleWithYear, date: m.metadata?.date || '' };
+          } catch (_) {
+            return null;
+          }
+        })
+      );
+      trailers = fetched.filter(Boolean);
+    }
+  }
+
+  t._collectionTrailers = trailers || [];
+  return t._collectionTrailers;
+}
+
+/**
+ * Abre el reproductor de tráiler a pantalla completa.
+ * Si recibe una lista de tráilers (colección), reproduce en orden cronológico los tráilers
+ * de las películas que la componen, pasando de uno a otro automáticamente al terminar
+ * y ciclando de vuelta al primero de forma continua.
+ * @param {string|Array<{ key: string, name?: string }>} trailersInput
+ * @param {string} [mainTitle]
+ * @param {number} [initialIndex]
+ */
+export function openFullscreenTrailer(trailersInput, mainTitle = 'Tráiler', initialIndex = 0) {
   document.querySelector('.carousel-trailer-modal')?.remove();
+
+  let trailers = [];
+  if (typeof trailersInput === 'string') {
+    trailers = [{ key: trailersInput, name: mainTitle }];
+  } else if (Array.isArray(trailersInput)) {
+    trailers = trailersInput.filter(x => x?.key);
+  }
+  if (!trailers.length) return;
+
+  const isMulti = trailers.length > 1;
+  let activeIndex = Math.max(0, Math.min(trailers.length - 1, initialIndex || 0));
+  let advanceTimeout = null;
 
   const modal = document.createElement('div');
   modal.className = 'carousel-trailer-modal';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', `Tráiler: ${title}`);
+  modal.setAttribute('aria-label', `Tráiler: ${mainTitle}`);
 
   modal.innerHTML = `
     <div class="carousel-trailer-backdrop"></div>
     <div class="carousel-trailer-content">
-      <button type="button" class="carousel-trailer-close" data-focusable aria-label="Cerrar tráiler">✕</button>
-      <div class="carousel-trailer-frame-wrap">
-        <iframe
-          src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(key)}?autoplay=1&controls=1&rel=0&modestbranding=1&playsinline=1"
-          title="Tráiler: ${esc(title)}"
-          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-          allowfullscreen>
-        </iframe>
+      <div class="carousel-trailer-bar">
+        <div class="carousel-trailer-info">
+          <span class="carousel-trailer-main-title">${esc(mainTitle)}</span>
+          ${isMulti ? `<span class="carousel-trailer-seq-badge"></span>` : ''}
+        </div>
+        <div class="carousel-trailer-controls">
+          ${isMulti ? `
+            <button type="button" class="carousel-trailer-nav-btn prev" data-focusable title="Tráiler anterior" aria-label="Tráiler anterior">‹</button>
+            <button type="button" class="carousel-trailer-nav-btn next" data-focusable title="Siguiente tráiler" aria-label="Siguiente tráiler">›</button>
+          ` : ''}
+          <button type="button" class="carousel-trailer-close" data-focusable title="Cerrar tráiler" aria-label="Cerrar tráiler">✕</button>
+        </div>
       </div>
+      <div class="carousel-trailer-frame-wrap"></div>
     </div>
   `;
 
   document.body.appendChild(modal);
 
+  const frameWrap = modal.querySelector('.carousel-trailer-frame-wrap');
+  const badgeEl = modal.querySelector('.carousel-trailer-seq-badge');
+  const prevBtn = modal.querySelector('.carousel-trailer-nav-btn.prev');
+  const nextBtn = modal.querySelector('.carousel-trailer-nav-btn.next');
+  const closeBtn = modal.querySelector('.carousel-trailer-close');
+
+  function renderVideo(idx) {
+    clearTimeout(advanceTimeout);
+    activeIndex = (idx + trailers.length) % trailers.length;
+    const cur = trailers[activeIndex];
+    const filmName = cur.name || mainTitle;
+
+    if (badgeEl) {
+      badgeEl.textContent = `Tráiler ${activeIndex + 1} de ${trailers.length}: ${filmName}`;
+      badgeEl.title = filmName;
+    }
+
+    const allKeys = trailers.map(t => t.key);
+    const playlist = allKeys.slice(activeIndex).concat(allKeys.slice(0, activeIndex)).join(',');
+    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cur.key)}`
+      + `?autoplay=1&controls=1&rel=0&modestbranding=1&playsinline=1&loop=1&playlist=${encodeURIComponent(playlist)}&enablejsapi=1`;
+
+    frameWrap.innerHTML = `
+      <iframe
+        src="${src}"
+        title="Tráiler: ${esc(filmName)}"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+        allowfullscreen>
+      </iframe>
+    `;
+  }
+
   const close = () => {
+    clearTimeout(advanceTimeout);
     window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('message', onMessage);
     modal.classList.add('closing');
     setTimeout(() => modal.remove(), 200);
     const returnTarget = document.querySelector('.carousel-trailer-btn:focus')
@@ -83,11 +264,54 @@ export function openFullscreenTrailer(key, title = 'Tráiler') {
       e.preventDefault();
       e.stopPropagation();
       close();
+      return;
+    }
+    if (isMulti) {
+      const activeEl = document.activeElement;
+      const onControls = activeEl && modal.querySelector('.carousel-trailer-controls')?.contains(activeEl);
+      if (!onControls) {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          e.stopPropagation();
+          renderVideo(activeIndex - 1);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          e.stopPropagation();
+          renderVideo(activeIndex + 1);
+        }
+      }
     }
   };
   window.addEventListener('keydown', onKey, true);
 
-  modal.querySelector('.carousel-trailer-close').onclick = (e) => {
+  const onMessage = (e) => {
+    if (!isMulti) return;
+    try {
+      const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+      if (data?.event === 'onStateChange' && data.info === 0) { // 0 = YT.PlayerState.ENDED
+        clearTimeout(advanceTimeout);
+        advanceTimeout = setTimeout(() => {
+          renderVideo(activeIndex + 1);
+        }, 350);
+      }
+    } catch (_) {}
+  };
+  window.addEventListener('message', onMessage);
+
+  if (prevBtn) {
+    prevBtn.onclick = (e) => {
+      e.stopPropagation();
+      renderVideo(activeIndex - 1);
+    };
+  }
+  if (nextBtn) {
+    nextBtn.onclick = (e) => {
+      e.stopPropagation();
+      renderVideo(activeIndex + 1);
+    };
+  }
+
+  closeBtn.onclick = (e) => {
     e.stopPropagation();
     close();
   };
@@ -96,7 +320,7 @@ export function openFullscreenTrailer(key, title = 'Tráiler') {
     close();
   };
 
-  const closeBtn = modal.querySelector('.carousel-trailer-close');
+  renderVideo(activeIndex);
   closeBtn?.focus?.();
 }
 
@@ -107,9 +331,9 @@ export function destroyCarousel() {
 
 /**
  * @param {HTMLElement} host
- * @param {{ items: object[], mode?: 'posters'|'logos', initialId?: string|null, onOpen?: (t: object) => void }} opts
+ * @param {{ items: object[], mode?: 'posters'|'logos', initialId?: string|null, allTitles?: object[], onOpen?: (t: object) => void }} opts
  */
-export function mountCarousel(host, { items, mode = 'posters', initialId = null, onOpen } = {}) {
+export function mountCarousel(host, { items, mode = 'posters', initialId = null, allTitles = [], onOpen } = {}) {
   destroyCarousel();
   if (!host || !items?.length) return null;
 
@@ -117,6 +341,9 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
   let cur = Math.max(0, items.findIndex((t) => String(t.id) === String(initialId)));
   let trailerTimer = null;
   let trailerToken = 0;
+  let logoTrailerTrailers = [];
+  let logoTrailerIdx = 0;
+  let logoAdvanceTimeout = null;
 
   host.innerHTML = `
     <div class="carousel-view carousel-mode-${logos ? 'logos' : 'posters'}">
@@ -194,28 +421,75 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
   // ---------------------------------------------------------------- tráiler (modo logos)
   function clearTrailer() {
     clearTimeout(trailerTimer);
+    clearTimeout(logoAdvanceTimeout);
     trailerToken++;
+    logoTrailerTrailers = [];
+    logoTrailerIdx = 0;
     if (trailerBox) trailerBox.innerHTML = '';
+  }
+
+  function renderLogoTrailer(trailers, idx) {
+    if (!trailerBox || !alive()) return;
+    idx = (idx + trailers.length) % trailers.length;
+    logoTrailerIdx = idx;
+
+    const allKeys = trailers.map(x => x.key);
+    // Orden de la playlist empezando por el actual y dando la vuelta
+    const playlistKeys = allKeys.slice(idx).concat(allKeys.slice(0, idx));
+    const curKey = playlistKeys[0];
+    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(curKey)}`
+      + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&disablekb=1`
+      + `&loop=1&playlist=${encodeURIComponent(playlistKeys.join(','))}&enablejsapi=1`;
+
+    const isMulti = trailers.length > 1;
+    const filmName = trailers[idx].name || '';
+    trailerBox.innerHTML = `
+      <div class="carousel-trailer-wrap">
+        ${isMulti ? `<div class="carousel-trailer-tag" title="${esc(filmName)}">Tráiler ${idx + 1}/${trailers.length} · ${esc(filmName)}</div>` : ''}
+        <iframe src="${src}" title="Tráiler" tabindex="-1" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+      </div>
+    `;
   }
 
   function showTrailer(t) {
     if (!trailerBox) return;
-    clearTimeout(trailerTimer);
+    clearTrailer();
     const token = ++trailerToken;
     trailerBox.innerHTML = '<div class="carousel-trailer-msg">Cargando tráiler…</div>';
     trailerTimer = setTimeout(async () => {
       if (!alive() || token !== trailerToken) return;
-      const id = t.metadata?.id || t.tmdbId;
-      let key = null;
-      try { key = id ? await fetchTmdbTrailer(titleType(t), id) : null; } catch (_) { key = null; }
+      let trailers = [];
+      try {
+        trailers = await getTitleTrailers(t, allTitles);
+      } catch (_) {
+        trailers = [];
+      }
       if (!alive() || token !== trailerToken) return;
-      if (!key) { trailerBox.innerHTML = '<div class="carousel-trailer-msg">Sin tráiler disponible</div>'; return; }
-      const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(key)}`
-        + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&disablekb=1`
-        + `&loop=1&playlist=${encodeURIComponent(key)}`;
-      trailerBox.innerHTML = `<iframe src="${src}" title="Tráiler" tabindex="-1" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+      if (!trailers.length) {
+        trailerBox.innerHTML = '<div class="carousel-trailer-msg">Sin tráiler disponible</div>';
+        return;
+      }
+      logoTrailerTrailers = trailers;
+      logoTrailerIdx = 0;
+      renderLogoTrailer(trailers, 0);
     }, TRAILER_DELAY_MS);
   }
+
+  function onWindowMessage(e) {
+    if (!alive() || !logoTrailerTrailers.length || logoTrailerTrailers.length <= 1) return;
+    try {
+      const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+      if (data?.event === 'onStateChange' && data.info === 0) { // 0 = YT.PlayerState.ENDED
+        clearTimeout(logoAdvanceTimeout);
+        logoAdvanceTimeout = setTimeout(() => {
+          if (!alive() || !logoTrailerTrailers.length) return;
+          logoTrailerIdx = (logoTrailerIdx + 1) % logoTrailerTrailers.length;
+          renderLogoTrailer(logoTrailerTrailers, logoTrailerIdx);
+        }, 350);
+      }
+    } catch (_) {}
+  }
+  window.addEventListener('message', onWindowMessage);
 
   // ---------------------------------------------------------------- posición y datos
   const view = host.querySelector('.carousel-view');
@@ -280,12 +554,8 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       }
       case 'ArrowUp': {
         stop();
-        const sortBar = document.querySelector('.category-sort-bar:not(.search-bar)');
-        const up = (sortBar?.classList.contains('is-expanded')
-          ? (sortBar.querySelector('.category-sort-btn.active') || sortBar.querySelector('.category-sort-btn'))
-          : sortBar?.querySelector('.category-sort-toggle'))
-          || sortBar?.querySelector('.category-sort-toggle')
-          || sortBar?.querySelector('[data-focusable]')
+        const up = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-nav-item.active');
         up?.focus({ preventScroll: true });
         break;
@@ -328,6 +598,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
 
   function destroy() {
     clearTrailer();
+    window.removeEventListener('message', onWindowMessage);
     document.querySelector('.carousel-trailer-modal')?.remove();
     window.removeEventListener('resize', onResize);
     if (active === api) active = null;
@@ -339,24 +610,15 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       e.stopPropagation();
       const t = items[cur];
       if (!t) return;
-      const id = t.metadata?.id || t.tmdbId;
-      if (!id) {
-        const textEl = trailerBtn.querySelector('.carousel-trailer-text');
-        if (textEl) textEl.textContent = 'Sin tráiler';
-        setTimeout(() => { if (textEl) textEl.textContent = 'Tráiler'; }, 2000);
-        return;
-      }
-      if (t._trailerKey) {
-        openFullscreenTrailer(t._trailerKey, displayName(t));
-        return;
-      }
+
       const textEl = trailerBtn.querySelector('.carousel-trailer-text');
       const prevText = textEl?.textContent || 'Tráiler';
       if (textEl) textEl.textContent = 'Buscando…';
       trailerBtn.disabled = true;
+
       try {
-        const key = await fetchTmdbTrailer(titleType(t), id);
-        if (!key) {
+        const trailers = await getTitleTrailers(t, allTitles);
+        if (!trailers.length) {
           if (textEl) textEl.textContent = 'Sin tráiler';
           setTimeout(() => {
             if (textEl) textEl.textContent = prevText;
@@ -364,10 +626,10 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
           }, 2000);
           return;
         }
-        t._trailerKey = key;
+
         if (textEl) textEl.textContent = prevText;
         trailerBtn.disabled = false;
-        openFullscreenTrailer(key, displayName(t));
+        openFullscreenTrailer(trailers, displayName(t), 0);
       } catch (_) {
         if (textEl) textEl.textContent = 'Error';
         setTimeout(() => {

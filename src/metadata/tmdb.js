@@ -113,6 +113,39 @@ export async function fetchTmdbCollectionParts(collectionId, signal) {
   }
 }
 
+/**
+ * Obtiene en orden cronológico los tráilers de las películas que componen una colección de TMDB.
+ * @param {string|number} collectionId ID de la colección en TMDB.
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Array<{ key: string, id: number, name: string, date: string }>>}
+ */
+export async function fetchCollectionMovieTrailers(collectionId, signal) {
+  if (!collectionId) return [];
+  const parts = await fetchTmdbCollectionParts(collectionId, signal);
+  if (!parts || !parts.length) return [];
+
+  const list = await Promise.all(
+    parts.map(async (part) => {
+      try {
+        const key = await fetchTmdbTrailer("movie", part.id, signal);
+        if (!key) return null;
+        const year = part.date ? String(part.date).slice(0, 4) : "";
+        const titleWithYear = year && !part.name.includes(year) ? `${part.name} (${year})` : part.name;
+        return {
+          key,
+          id: part.id,
+          name: titleWithYear,
+          date: part.date || "",
+        };
+      } catch (_) {
+        return null;
+      }
+    })
+  );
+
+  return list.filter(Boolean);
+}
+
 export async function validateTmdbKey() { return request("/configuration"); }
 
 export async function fetchTvExternalIds(tvId, signal) {
@@ -125,8 +158,11 @@ export async function fetchTvExternalIds(tvId, signal) {
 
 export async function fetchTmdbTrailer(type, id, signal) {
   if (!id) return null;
-  const endpoint = type === "serie" || type === "tv" ? "tv" : (type === "collection" ? null : "movie");
-  if (!endpoint) return null;
+  if (type === "collection") {
+    const trailers = await fetchCollectionMovieTrailers(id, signal);
+    return trailers[0]?.key || null;
+  }
+  const endpoint = type === "serie" || type === "tv" ? "tv" : "movie";
   try {
     const dataEs = await request(`/${endpoint}/${id}/videos`, {}, signal);
     const results = dataEs.results || [];

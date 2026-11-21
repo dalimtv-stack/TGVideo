@@ -117,17 +117,6 @@ export function focusInRow(target, { behavior = 'smooth' } = {}) {
 }
 
 /** Foco + revelado: en filas centra; fuera de ellas usa el desplazamiento mínimo. */
-function getCategorySortTarget() {
-  const sortBar = document.querySelector('.category-sort-bar:not(.search-bar)');
-  if (!sortBar) return null;
-  if (sortBar.classList.contains('is-expanded')) {
-    return sortBar.querySelector('.category-sort-btn.active')
-      || sortBar.querySelector('.category-sort-btn')
-      || sortBar.querySelector('.category-sort-toggle');
-  }
-  return sortBar.querySelector('.category-sort-toggle') || sortBar.querySelector('[data-focusable]');
-}
-
 function focusAndReveal(el) {
   if (!el) return;
   if (el.closest?.('.row-track')) { focusInRow(el); return; }
@@ -137,7 +126,7 @@ function focusAndReveal(el) {
 
 function move(dir) {
   // Si hay un modal abierto, limitar la navegación a los elementos dentro del modal
-  const modalEl = document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up');
+  const modalEl = document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up, .carousel-trailer-modal');
   const scope = modalEl || document;
   const items = [...scope.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
   if (!items.length) return;
@@ -263,7 +252,8 @@ function move(dir) {
         return;
       }
       if (dir === 'down') {
-        const target = getCategorySortTarget()
+        const target = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
         focusAndReveal(target);
         return;
@@ -289,7 +279,8 @@ function move(dir) {
         return;
       }
       if (dir === 'down') {
-        const target = getCategorySortTarget()
+        const target = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
         focusAndReveal(target);
         return;
@@ -309,7 +300,8 @@ function move(dir) {
       }
       if (dir === 'right') return;
       if (dir === 'down') {
-        const target = getCategorySortTarget()
+        const target = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]')
           || document.querySelector('.home-main .carousel-stage, .home-main .category-grid .lib-card[data-focusable], .home-main .row-track .lib-card[data-title]');
         focusAndReveal(target);
         return;
@@ -319,16 +311,13 @@ function move(dir) {
   }
 
   // 2.4 Si está en la barra de ordenación de categorías (.category-sort-bar)
-  const curSortBar = cur.closest('.category-sort-bar:not(.search-bar)');
+  const curSortBar = cur.closest('.category-sort-bar');
   if (curSortBar) {
     const sortBtns = [...curSortBar.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
     const idx = sortBtns.indexOf(cur);
-    if (dir === 'left') {
-      if (idx > 0) {
-        sortBtns[idx - 1].focus();
-        sortBtns[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-        return;
-      }
+    if (dir === 'left' && idx > 0) {
+      sortBtns[idx - 1].focus();
+      sortBtns[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
       return;
     }
     if (dir === 'right') {
@@ -376,17 +365,12 @@ function move(dir) {
   const curViewsBar = cur.closest('.category-views-bar');
   if (curViewsBar) {
     if (dir === 'left') {
-      const sortBar = document.querySelector('.category-sort-bar:not(.search-bar)');
-      if (sortBar) {
-        sortBar.classList.add('is-expanded');
-        sortBar.querySelector('.category-sort-toggle')?.setAttribute('aria-expanded', 'true');
-        const sortBtns = [...sortBar.querySelectorAll('.category-sort-btn[data-focusable]')].filter(e => !e.disabled);
-        const last = sortBtns[sortBtns.length - 1] || sortBar.querySelector('.category-sort-toggle');
-        if (last) {
-          last.focus();
-          last.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-          return;
-        }
+      const sortBtns = [...document.querySelectorAll('.category-sort-bar [data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+      const last = sortBtns[sortBtns.length - 1];
+      if (last) {
+        last.focus();
+        last.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
       }
     }
     if (dir === 'up') {
@@ -445,10 +429,11 @@ function move(dir) {
         return oRect.bottom <= curRect.top + 10;
       });
       if (isTopRow) {
-        const sortTarget = getCategorySortTarget();
-        if (sortTarget) {
-          sortTarget.focus();
-          sortTarget.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        const sortActive = document.querySelector('.category-sort-bar [data-focusable].active')
+          || document.querySelector('.category-sort-bar [data-focusable]');
+        if (sortActive) {
+          sortActive.focus();
+          sortActive.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
           return;
         }
         const activeNav = document.querySelector('.home-nav-item.active') || document.querySelector('.home-nav-item');
