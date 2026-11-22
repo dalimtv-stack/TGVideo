@@ -335,7 +335,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
         ${!logos ? `
         <div class="carousel-trailer-action">
           <button type="button" class="carousel-trailer-btn" data-focusable aria-label="Reproducir tráiler a pantalla completa">
-            <span class="carousel-trailer-icon">▶</span>
+            <span class="carousel-trailer-icon">🎬</span>
             <span class="carousel-trailer-text">Tráiler</span>
           </button>
         </div>` : ''}
