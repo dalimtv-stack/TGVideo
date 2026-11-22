@@ -452,9 +452,7 @@
   position: fixed;
   inset: 0;
   z-index: 99999;
-  background: rgba(0, 0, 0, 0.94);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: rgba(0, 0, 0, 0.96);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -594,13 +592,16 @@
 .carousel-trailer-frame-container,
 .carousel-trailer-frame-wrap {
   width: 100%;
+  max-width: 1100px;
+  position: relative;
   aspect-ratio: 16 / 9;
   max-height: calc(88vh - 70px);
   background: #000;
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.12);
+  transform: translateZ(0);
 }
 
 .carousel-trailer-frame-container iframe,
@@ -609,6 +610,21 @@
   height: 100%;
   border: 0;
   display: block;
+  background: #000;
+}
+
+@supports not (aspect-ratio: 16 / 9) {
+  .carousel-trailer-frame-container,
+  .carousel-trailer-frame-wrap {
+    height: 0;
+    padding-top: 56.25%;
+  }
+  .carousel-trailer-frame-container iframe,
+  .carousel-trailer-frame-wrap iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
 }
 
 .carousel-trailer-controls {
