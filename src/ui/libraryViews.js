@@ -4,6 +4,7 @@ import { extractTitleAndYear } from '../metadata/tmdb.js';
 import { getSagaMovieGroups } from './home.js';
 import { showCollectionPicker } from './collectionPicker.js';
 import { assignMovieToCollection, removeMovieFromCollection } from '../metadata/collections.js';
+import { renderAgeBadgeHtml } from './ageRating.js';
 
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
@@ -200,9 +201,12 @@ function applyDetailMetadata(t, profile) {
   }
   const info = detail.querySelector('.detail-metadata');
   if (info) {
-    const numRating = Number(metadata.rating);
+    const numRating = Number(metadata.rating ?? t.metadata?.rating);
     const ratingStr = Number.isFinite(numRating) && numRating > 0 ? `★ ${numRating.toFixed(1)}` : '';
-    info.textContent = [metadata.date?.slice(0, 4), ratingStr].filter(Boolean).join(' · ');
+    const ageBadge = renderAgeBadgeHtml(t);
+    const ratingWithAge = [ratingStr, ageBadge].filter(Boolean).join(' ');
+    const yearStr = (metadata.date || t.metadata?.date)?.slice(0, 4) || t.yearHint || '';
+    info.innerHTML = [yearStr, ratingWithAge].filter(Boolean).join(' · ');
   }
 
 

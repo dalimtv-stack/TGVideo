@@ -441,7 +441,26 @@ export async function enrichTitle(title, { signal } = {}) {
     id = match?.id;
   }
   if (!id) return null;
-  const data = await request(`/${type}/${id}`, {}, signal);
+  const append = type === "tv" ? "content_ratings" : "release_dates";
+  const data = await request(`/${type}/${id}`, { append_to_response: append }, signal);
+  let ageRating = "";
+  if (type === "movie") {
+    const esRelease = data.release_dates?.results?.find(r => r.iso_3166_1 === "ES");
+    const cert = esRelease?.release_dates?.find(d => d.certification)?.certification;
+    if (cert) ageRating = cert;
+    else {
+      const usRelease = data.release_dates?.results?.find(r => r.iso_3166_1 === "US");
+      const usCert = usRelease?.release_dates?.find(d => d.certification)?.certification;
+      if (usCert) ageRating = usCert;
+    }
+  } else {
+    const esRating = data.content_ratings?.results?.find(r => r.iso_3166_1 === "ES");
+    if (esRating?.rating) ageRating = esRating.rating;
+    else {
+      const usRating = data.content_ratings?.results?.find(r => r.iso_3166_1 === "US");
+      if (usRating?.rating) ageRating = usRating.rating;
+    }
+  }
   const col = data.belongs_to_collection;
   const collection = col ? {
     id: col.id,
@@ -451,7 +470,7 @@ export async function enrichTitle(title, { signal } = {}) {
   } : null;
   const metadata = { id: data.id, type, name: data.name || data.title, overview: data.overview, rating: data.vote_average,
     date: data.first_air_date || data.release_date, last_air_date: data.last_air_date || "", poster: imageUrl(data.poster_path), backdrop: imageUrl(data.backdrop_path, "w1280"),
-    collection };
+    collection, ageRating };
   await kv.set(cacheKey, metadata).catch(error => console.warn("[tmdb] Caché no disponible", error));
   title.metadata = metadata;
   return metadata;

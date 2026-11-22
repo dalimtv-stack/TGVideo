@@ -226,25 +226,17 @@ function move(dir) {
     const stage = document.querySelector('.home-main .carousel-stage');
     if (stage && stage.offsetParent) return stage;
 
-    const sortToggle = document.querySelector('.category-sort-toggle');
-    if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) return sortToggle;
-
-    const sortBar = document.querySelector('.category-sort-bar');
-    if (sortBar && sortBar.classList.contains('is-expanded')) {
-      const activeSort = sortBar.querySelector('.category-sort-btn.active');
-      if (activeSort && activeSort.offsetParent && !activeSort.disabled) return activeSort;
-      const firstSort = [...sortBar.querySelectorAll('.category-sort-btn')].find(e => e.offsetParent && !e.disabled);
-      if (firstSort) return firstSort;
-    }
-
-    const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
-    if (viewBtn && viewBtn.offsetParent && !viewBtn.disabled) return viewBtn;
-
     const firstGridCard = [...document.querySelectorAll('.home-main .category-grid .lib-card[data-focusable]')].find(e => e.offsetParent && !e.disabled);
     if (firstGridCard) return firstGridCard;
 
     const firstRowCard = document.querySelector('.home-main .row-track .lib-card[data-title]');
     if (firstRowCard) return firstRowCard;
+
+    const sortToggle = document.querySelector('.category-sort-toggle');
+    if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) return sortToggle;
+
+    const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
+    if (viewBtn && viewBtn.offsetParent && !viewBtn.disabled) return viewBtn;
 
     return null;
   }

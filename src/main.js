@@ -660,12 +660,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         const sortedItems = sortTitles(activeSection?.items || [], currentSort);
         return `
       <section class="category-view ${isCarousel ? 'category-view--carousel' : 'category-view--grid'}" aria-label="${esc(activeSection?.label || '')}">
-        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `
-          <div class="category-header category-header--grid">
-            ${categoryToolsHtml(false)}
-          </div>
-          <div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>
-        `}
+        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`}
       </section>`;
       })()
     : rows.map(r => `
@@ -688,7 +683,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       <header class="home-header ${isCarousel ? 'home-header--carousel' : ''}">
         <div class="home-logo" id="home-logo" title="TGVideo" role="banner">TGVideo</div>
         ${sectionDefs.length ? `<nav class="home-nav" aria-label="Secciones"><button class="home-nav-item nav-search-btn ${isSearch ? 'active' : ''}" data-focusable data-section="buscar" type="button" aria-label="Buscar" title="Buscar" aria-current="${isSearch ? 'page' : 'false'}"><span class="nav-search-icon" aria-hidden="true">🔍</span></button>${sectionDefs.map(section => `<button class="home-nav-item ${section.id === selectedSection ? 'active' : ''}" data-focusable data-section="${esc(section.id)}" type="button" aria-current="${section.id === selectedSection ? 'page' : 'false'}">${esc(section.label)}</button>`).join('')}</nav>` : ''}
-        ${isCategorySection && isCarousel ? categoryToolsHtml(true) : ''}
+        ${isCategorySection ? categoryToolsHtml(true) : ''}
         <div class="home-actions">
           <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
           <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile" title="${esc(profile.name)}" aria-label="Perfil: ${esc(profile.name)}">

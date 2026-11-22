@@ -135,8 +135,8 @@
   overflow: hidden !important;
   outline: none;
   flex: 0 0 auto;
-  height: clamp(280px, 44vh, 380px);
-  padding: 24px 0;
+  height: clamp(330px, 50vh, 450px);
+  padding: 30px 0;
   box-sizing: border-box;
   border-radius: 12px;
   scroll-behavior: auto !important;
@@ -149,17 +149,17 @@
   top: 0;
   display: flex;
   align-items: center;
-  gap: 1.4rem;
+  gap: 2.8rem;
   height: 100%;
   width: max-content;
   transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: transform;
 }
 
-/* Tarjeta en modo portadas: dimensiones fijas, holgura vertical para que no se corte arriba ni abajo */
+/* Tarjeta en modo portadas: dimensiones fijas, el resto a la mitad (scale 0.75) */
 .carousel-item {
   flex: 0 0 auto !important;
-  height: calc(100% - 36px) !important;
+  height: clamp(190px, 28vh, 260px) !important;
   box-sizing: border-box !important;
   aspect-ratio: 2 / 3 !important;
   width: auto !important;
@@ -171,18 +171,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transform: scale(0.84);
+  transform: scale(0.75);
   opacity: 0.52;
   transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
   cursor: pointer;
 }
 
-/* Portada con foco: notablemente más grande, destacada y nítida */
+/* Portada con foco: escala 1.5 (1,5x respecto a la base, doble del resto que queda a la mitad) */
 .carousel-item.is-active,
 .carousel-stage:focus .carousel-item.is-active,
 .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-stage.dpad-focused .carousel-item.is-active {
-  transform: scale(1.15) !important;
+  transform: scale(1.5) !important;
   opacity: 1 !important;
   box-shadow: 0 0 0 3px #fff, 0 4px 28px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(0, 0, 0, 0.8) !important;
   z-index: 5;

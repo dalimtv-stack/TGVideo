@@ -6,6 +6,7 @@
 import { memoryCache, loadPoster } from '../metadata/posterCache.js';
 import { getAutoLogo } from '../metadata/autoLogo.js';
 import { fetchTmdbTrailer, fetchCollectionMovieTrailers } from '../metadata/tmdb.js';
+import { renderAgeBadgeHtml } from './ageRating.js';
 
 let active = null;
 const LOAD_WINDOW = 3;
@@ -15,11 +16,14 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 const displayName = (t) => t.metadata?.name || t.nombre || t.title || 'Sin título';
 
-const metaLine = (t) => {
+const metaHtml = (t) => {
   const year = t.metadata?.date ? String(t.metadata.date).slice(0, 4) : (t.yearHint || '');
-  const rating = t.metadata?.rating ? `★ ${Number(t.metadata.rating).toFixed(1)}` : '';
+  const numRating = Number(t.metadata?.rating);
+  const ratingStr = Number.isFinite(numRating) && numRating > 0 ? `★ ${numRating.toFixed(1)}` : '';
+  const ageBadge = renderAgeBadgeHtml(t);
+  const ratingWithAge = [ratingStr, ageBadge].filter(Boolean).join(' ');
   const genres = Array.isArray(t.metadata?.genres) ? t.metadata.genres.slice(0, 3).join(' · ') : '';
-  return [year, rating, genres].filter(Boolean).join('   •   ');
+  return [year, ratingWithAge, genres].filter(Boolean).join('   •   ');
 };
 
 const synopsisOf = (t) => t.metadata?.overview || t.overview || '';
@@ -514,7 +518,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     loadWindow();
     center(smooth);
     titleEl.textContent = displayName(t);
-    metaEl.textContent = metaLine(t);
+    metaEl.innerHTML = metaHtml(t);
     synEl.textContent = synopsisOf(t) || 'Sin sinopsis disponible.';
     countEl.textContent = `${cur + 1} / ${items.length}`;
     if (logos) {
