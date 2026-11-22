@@ -232,8 +232,8 @@ function move(dir) {
     const firstRowCard = document.querySelector('.home-main .row-track .lib-card[data-title]');
     if (firstRowCard) return firstRowCard;
 
-    const sortToggle = document.querySelector('.category-sort-toggle');
-    if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) return sortToggle;
+    const sortBtn = document.querySelector('.category-sort-bar .category-sort-btn.active') || document.querySelector('.category-sort-bar .category-sort-btn');
+    if (sortBtn && sortBtn.offsetParent && !sortBtn.disabled) return sortBtn;
 
     const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
     if (viewBtn && viewBtn.offsetParent && !viewBtn.disabled) return viewBtn;
@@ -443,12 +443,6 @@ function move(dir) {
   const curViewsBar = cur.closest('.category-views-bar');
   if (curViewsBar) {
     if (dir === 'left') {
-      const sortToggle = document.querySelector('.category-sort-toggle');
-      if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) {
-        sortToggle.focus();
-        sortToggle.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-        return;
-      }
       const sortBtns = [...document.querySelectorAll('.category-sort-bar [data-focusable]')].filter(e => e.offsetParent && !e.disabled);
       const last = sortBtns[sortBtns.length - 1];
       if (last) {
@@ -524,10 +518,10 @@ function move(dir) {
         return oRect.bottom <= curRect.top + 10;
       });
       if (isTopRow) {
-        const sortToggle = document.querySelector('.category-sort-toggle');
-        if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) {
-          sortToggle.focus();
-          sortToggle.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        const sortBtn = document.querySelector('.category-sort-bar .category-sort-btn.active') || document.querySelector('.category-sort-bar .category-sort-btn');
+        if (sortBtn && sortBtn.offsetParent && !sortBtn.disabled) {
+          sortBtn.focus();
+          sortBtn.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
           return;
         }
         const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');

@@ -64,6 +64,18 @@ export function getAgeRatingInfo(raw) {
     return { label: 'APTA', color: '#0284c7', className: 'age-rating--apta' };
   }
 
+  // 7. NR / Not Rated / Sin calificar / SC / Unrated
+  if (
+    upper === 'NR' ||
+    upper === 'SC' ||
+    upper.includes('NOT RATED') ||
+    upper.includes('SIN CALIFICAR') ||
+    upper.includes('UNRATED') ||
+    upper.includes('NO RECOMENDADA')
+  ) {
+    return { label: 'NR', color: '#94a3b8', className: 'age-rating--nr' };
+  }
+
   return { label: str, color: '#0284c7', className: 'age-rating--custom' };
 }
 
@@ -74,9 +86,9 @@ export function resolveTitleAgeRating(t) {
 
   // Fallback: detectar en nombre del archivo o del título (ej: [18], (+16), 18+, etc.)
   const candidate = `${t.nombre || ''} ${t.archivos?.[0]?.name || ''}`;
-  const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X)\]/i)
-    || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X)\)/i)
-    || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7)\b/i);
+  const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X|NR)\]/i)
+    || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR)\)/i)
+    || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR)\b/i);
   if (m) {
     return getAgeRatingInfo(m[1]);
   }

@@ -234,6 +234,11 @@ export function parseAgeRatingFromTmdb(data, type) {
       const anyCert = r.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
       if (anyCert) return String(anyCert).trim();
     }
+
+    // Si existen estrenos o fecha pero ninguna entidad asignó certificado, en TMDB se muestra "NR"
+    if (results.length > 0 || data.release_date) {
+      return "NR";
+    }
   } else if (data.content_ratings) {
     const results = data.content_ratings?.results || [];
     const es = results.find(r => String(r.iso_3166_1 || '').toUpperCase() === "ES");
@@ -247,6 +252,10 @@ export function parseAgeRatingFromTmdb(data, type) {
 
     for (const r of results) {
       if (r.rating && String(r.rating).trim()) return String(r.rating).trim();
+    }
+
+    if (results.length > 0 || data.first_air_date) {
+      return "NR";
     }
   }
   return "";
@@ -404,10 +413,19 @@ export async function enrichTitle(title, { signal } = {}) {
   if (!["pelicula", "serie"].includes(title?.tipo)) return null;
   const ov = getOverride(title.id);
   if (ov) {
+    if (ov.id && !ov.ageRating && getTmdbKey()) {
+      fetchTmdbAgeRating(title.tipo === "serie" ? "tv" : "movie", ov.id, signal).then(rating => {
+        if (rating) {
+          ov.ageRating = rating;
+          setOverride(title.id, ov).catch(() => {});
+        }
+      }).catch(() => {});
+    }
     if (title.tipo === "pelicula" && ov.id && ov.collection === undefined && getTmdbKey()) {
       fetchTmdbFullDetails("movie", ov.id, signal).then(full => {
         if (full?.collection !== undefined) {
           ov.collection = full.collection;
+          if (full?.ageRating && !ov.ageRating) ov.ageRating = full.ageRating;
           setOverride(title.id, ov).catch(() => {});
         }
       }).catch(() => {});
@@ -417,10 +435,19 @@ export async function enrichTitle(title, { signal } = {}) {
   // Reenvío u otro mensaje: mismo TMDB en caption o ya conocido
   const byTmdb = title.tmdbId ? getOverrideByTmdbId(title.tmdbId) : null;
   if (byTmdb) {
+    if (byTmdb.id && !byTmdb.ageRating && getTmdbKey()) {
+      fetchTmdbAgeRating(title.tipo === "serie" ? "tv" : "movie", byTmdb.id, signal).then(rating => {
+        if (rating) {
+          byTmdb.ageRating = rating;
+          setOverride(title.id, byTmdb).catch(() => {});
+        }
+      }).catch(() => {});
+    }
     if (title.tipo === "pelicula" && byTmdb.id && byTmdb.collection === undefined && getTmdbKey()) {
       fetchTmdbFullDetails("movie", byTmdb.id, signal).then(full => {
         if (full?.collection !== undefined) {
           byTmdb.collection = full.collection;
+          if (full?.ageRating && !byTmdb.ageRating) byTmdb.ageRating = full.ageRating;
           setOverride(title.id, byTmdb).catch(() => {});
         }
       }).catch(() => {});
@@ -429,10 +456,19 @@ export async function enrichTitle(title, { signal } = {}) {
   }
   const manual = await kv.get(`manual_tmdb:${title.id}`).catch(() => null);
   if (manual) {
+    if (manual.id && !manual.ageRating && getTmdbKey()) {
+      fetchTmdbAgeRating(title.tipo === "serie" ? "tv" : "movie", manual.id, signal).then(rating => {
+        if (rating) {
+          manual.ageRating = rating;
+          setManualMetadata(title, manual).catch(() => {});
+        }
+      }).catch(() => {});
+    }
     if (title.tipo === "pelicula" && manual.id && manual.collection === undefined && getTmdbKey()) {
       fetchTmdbFullDetails("movie", manual.id, signal).then(full => {
         if (full?.collection !== undefined) {
           manual.collection = full.collection;
+          if (full?.ageRating && !manual.ageRating) manual.ageRating = full.ageRating;
           setManualMetadata(title, manual).catch(() => {});
         }
       }).catch(() => {});
@@ -459,7 +495,7 @@ export async function enrichTitle(title, { signal } = {}) {
         }
         await kv.set(cacheKey, cached).catch(() => {});
       } catch (_) {}
-    } else if (cached.id && cached.ageRating === undefined && getTmdbKey()) {
+    } else if (cached.id && !cached.ageRating && getTmdbKey()) {
       fetchTmdbAgeRating(type, cached.id, signal).then(rating => {
         if (rating) {
           cached.ageRating = rating;

@@ -348,6 +348,20 @@ function setSectionSort(profileId, sectionId, sortType) {
   } catch (_) {}
 }
 
+function getSectionSortOrder(profileId, sectionId, currentSort = 'nombre') {
+  try {
+    const saved = localStorage.getItem(`tg_sort_dir_${profileId}_${sectionId}`);
+    if (saved === 'asc' || saved === 'desc') return saved;
+  } catch (_) {}
+  return currentSort === 'nombre' ? 'asc' : 'desc';
+}
+
+function setSectionSortOrder(profileId, sectionId, order) {
+  try {
+    localStorage.setItem(`tg_sort_dir_${profileId}_${sectionId}`, order);
+  } catch (_) {}
+}
+
 function getSectionViewMode(profileId, sectionId) {
   try {
     return localStorage.getItem(`tg_view_${profileId}_${sectionId}`) || 'grid';
@@ -374,23 +388,25 @@ function viewModeShortLabel(mode) {
   return 'Cuadrícula';
 }
 
-function sortTitles(items, sortType) {
+function sortTitles(items, sortType, sortOrder = 'desc') {
   const list = [...items];
+  const mult = sortOrder === 'asc' ? 1 : -1;
+
   if (sortType === 'estreno') {
     return list.sort((a, b) => {
       const dateA = a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '';
       const dateB = b.metadata?.date || b.yearHint || b.metadata?.release_date || b.metadata?.first_air_date || '';
       if (dateA && dateB) {
-        const cmp = String(dateB).localeCompare(String(dateA));
-        if (cmp !== 0) return cmp;
+        const cmp = String(dateA).localeCompare(String(dateB));
+        if (cmp !== 0) return cmp * mult;
       } else if (dateA && !dateB) {
-        return -1;
+        return sortOrder === 'asc' ? -1 : 1;
       } else if (!dateA && dateB) {
-        return 1;
+        return sortOrder === 'asc' ? 1 : -1;
       }
       const msgA = a.ultimoMensajeFecha || 0;
       const msgB = b.ultimoMensajeFecha || 0;
-      if (msgB !== msgA) return msgB - msgA;
+      if (msgB !== msgA) return (msgA - msgB) * mult;
       const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
       const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
       return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
@@ -400,12 +416,12 @@ function sortTitles(items, sortType) {
     return list.sort((a, b) => {
       const rA = Number(a.metadata?.rating) || 0;
       const rB = Number(b.metadata?.rating) || 0;
-      if (rB !== rA) return rB - rA;
+      if (rB !== rA) return (rA - rB) * mult;
       const dateA = a.metadata?.date || a.yearHint || '';
       const dateB = b.metadata?.date || b.yearHint || '';
       if (dateA && dateB) {
-        const cmp = String(dateB).localeCompare(String(dateA));
-        if (cmp !== 0) return cmp;
+        const cmp = String(dateA).localeCompare(String(dateB));
+        if (cmp !== 0) return cmp * mult;
       }
       const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
       const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
@@ -415,7 +431,7 @@ function sortTitles(items, sortType) {
   return list.sort((a, b) => {
     const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
     const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
-    return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+    return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' }) * (sortOrder === 'desc' ? -1 : 1);
   });
 }
 
@@ -628,13 +644,14 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
   const categoryToolsHtml = (inHeader = false) => {
     const currentSort = getSectionSort(profile.id, selectedSection);
+    const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
     const isSortExpanded = Boolean(focusSort);
     return `
       <div class="${inHeader ? 'category-header--in-header' : 'category-header-inner'}" role="region" aria-label="Herramientas de ordenación y vista">
         <div class="category-sort-bar ${isSortExpanded ? 'is-expanded' : ''}" role="group" aria-label="Ordenar por">
-          <button type="button" class="category-sort-toggle" data-focusable aria-expanded="${isSortExpanded}" aria-haspopup="true" title="Desplegar opciones de ordenación">
+          <button type="button" class="category-sort-toggle" data-focusable aria-expanded="${isSortExpanded}" aria-haspopup="true" title="Desplegar opciones de ordenación (actual: orden ${currentOrder === 'asc' ? 'ascendente' : 'descendente'})">
             <span class="category-sort-label">Ordenar:</span>
-            <span class="category-sort-icon" aria-hidden="true">▾</span>
+            <span class="category-sort-icon" aria-hidden="true">${currentOrder === 'asc' ? '↑' : '↓'}</span>
           </button>
           <div class="category-sort-options">
             <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
@@ -657,7 +674,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     : isSearch ? searchViewHtml()
     : selectedSection !== 'inicio' ? (() => {
         const currentSort = getSectionSort(profile.id, selectedSection);
-        const sortedItems = sortTitles(activeSection?.items || [], currentSort);
+        const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
+        const sortedItems = sortTitles(activeSection?.items || [], currentSort, currentOrder);
         return `
       <section class="category-view ${isCarousel ? 'category-view--carousel' : 'category-view--grid'}" aria-label="${esc(activeSection?.label || '')}">
         ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`}
@@ -766,19 +784,24 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     }, { passive: true });
   }
 
-
-
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
     btn.onclick = (e) => {
       btn.blur();
-      const newSort = btn.dataset.sort;
+      const sortType = btn.dataset.sort;
       const currentSort = getSectionSort(profile.id, selectedSection);
-      if (newSort && newSort !== currentSort) {
-        setSectionSort(profile.id, selectedSection, newSort);
-        showHome(tg, sync, profile, { selectedSection, focusSort: newSort, fromPointer: e.detail > 0 });
+      const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
+
+      if (sortType === currentSort) {
+        // Al pulsar sobre el que ya estaba seleccionado (en rojo), se cambia el orden de descendente a ascendente (o viceversa)
+        const nextOrder = currentOrder === 'desc' ? 'asc' : 'desc';
+        setSectionSortOrder(profile.id, selectedSection, nextOrder);
+        showHome(tg, sync, profile, { selectedSection, focusSort: sortType, fromPointer: e.detail > 0 });
       } else {
-        sortBar?.classList.remove('is-expanded');
-        sortToggle?.setAttribute('aria-expanded', 'false');
+        // Al seleccionar un nuevo criterio, se aplica su orden por defecto
+        const defaultOrder = sortType === 'nombre' ? 'asc' : 'desc';
+        setSectionSort(profile.id, selectedSection, sortType);
+        setSectionSortOrder(profile.id, selectedSection, defaultOrder);
+        showHome(tg, sync, profile, { selectedSection, focusSort: sortType, fromPointer: e.detail > 0 });
       }
     };
   });
@@ -797,7 +820,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     const carouselHost = document.getElementById('carousel-host');
     if (carouselHost && activeSection?.items) {
       const currentSort = getSectionSort(profile.id, selectedSection);
-      const sortedItems = sortTitles(activeSection?.items || [], currentSort);
+      const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
+      const sortedItems = sortTitles(activeSection?.items || [], currentSort, currentOrder);
       mountCarousel(carouselHost, {
         items: sortedItems,
         mode: currentView,

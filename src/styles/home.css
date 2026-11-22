@@ -581,6 +581,12 @@
   background: rgba(2, 132, 199, 0.15) !important;
 }
 
+.age-rating-badge.age-rating--nr {
+  color: #94a3b8 !important;
+  border-color: #94a3b8 !important;
+  background: rgba(148, 163, 184, 0.16) !important;
+}
+
 .age-rating-badge.age-rating--7 {
   color: #22c55e !important; /* Verde */
   border-color: #22c55e !important;
@@ -615,9 +621,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
+  gap: 0.45rem;
   background: rgba(255, 255, 255, 0.05);
-  padding: 0.25rem 0.55rem;
+  padding: 0.25rem 0.65rem 0.25rem 0.8rem;
   border-radius: 9999px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   margin: 0;
@@ -625,78 +631,32 @@
   position: relative;
   user-select: none;
 }
-.category-sort-toggle {
-  appearance: none;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--theme-text-muted, #aaa);
-  padding: 0.3rem 0.65rem;
-  border-radius: 9999px;
-  font-size: calc(0.82rem * var(--ui-font-scale, 1));
-  font-weight: 600;
-  cursor: pointer;
+.category-sort-label-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-  -webkit-tap-highlight-color: transparent;
-  outline: none;
-}
-@media (hover: hover) and (pointer: fine) {
-  .category-sort-toggle:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.12);
-  }
-}
-.category-sort-toggle:focus {
-  outline: none;
-}
-.category-sort-toggle:focus-visible,
-.category-sort-toggle.dpad-focused {
-  color: #fff !important;
-  border-color: #fff !important;
-  outline: 2px solid #fff !important;
-  outline-offset: 2px !important;
-  background: rgba(255, 255, 255, 0.22) !important;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.45) !important;
+  gap: 0.25rem;
+  user-select: none;
 }
 .category-sort-label {
   font-size: calc(0.85rem * var(--ui-font-scale, 1));
-  color: var(--theme-text-muted, #888);
-  margin-right: 0.1rem;
+  color: var(--theme-text-muted, #aaa);
   font-weight: 500;
 }
 .category-sort-icon {
-  font-size: 0.7rem;
-  opacity: 0.75;
-  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  display: inline-block;
+  font-size: 1.15rem; /* Más grande para indicar claramente el sentido de ordenación */
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--theme-accent, #e50914);
   line-height: 1;
-}
-.category-sort-bar.is-expanded .category-sort-icon,
-.category-sort-bar:focus-within .category-sort-icon {
-  transform: rotate(180deg);
+  vertical-align: middle;
+  margin-left: 0.15rem;
 }
 .category-sort-options {
-  display: none;
+  display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-}
-.category-sort-bar.is-expanded .category-sort-options,
-.category-sort-bar:focus-within .category-sort-options {
-  display: inline-flex;
-  animation: fadeInSort 0.16s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes fadeInSort {
-  from {
-    opacity: 0;
-    transform: translateX(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
 }
 .category-sort-btn {
   appearance: none;

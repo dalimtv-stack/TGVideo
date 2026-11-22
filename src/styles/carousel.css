@@ -174,17 +174,18 @@
   justify-content: center;
   transform: scale(0.88);
   opacity: 0.52;
-  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), margin 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
+  /* Se excluye margin de transition para que el cálculo de centrado no sufra retardo ni desvíos laterales */
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
   cursor: pointer;
 }
 
-/* Portada con foco: escala 1.76 con margen lateral de 1.9rem para separación perfecta con sus vecinas */
+/* Portada con foco: escala 1.76 con margen lateral de 2.5rem para separación perfecta y holgada con sus vecinas */
 .carousel-item.is-active,
 .carousel-stage:focus .carousel-item.is-active,
 .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-stage.dpad-focused .carousel-item.is-active {
   transform: scale(1.76) !important;
-  margin: 0 1.9rem !important;
+  margin: 0 2.5rem !important;
   opacity: 1 !important;
   box-shadow: 0 0 0 3px #fff, 0 4px 28px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(0, 0, 0, 0.8) !important;
   z-index: 5;
