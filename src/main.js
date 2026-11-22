@@ -40,6 +40,9 @@ import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/s
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
 import { createLibraryViews } from './ui/libraryViews.js';
+import { setupTvPlatform } from './core/platform.js';
+
+setupTvPlatform();
 
 const kv = createKV();
 const LIB_KEY = 'library_v2';
@@ -1151,6 +1154,7 @@ async function showProfileSelector(tg, sync) {
 
 // ---------- Arranque ----------
 async function start() {
+  setupTvPlatform();
   showLoading('Conectando con Telegram…');
 
   const tg = createTelegramClient({
