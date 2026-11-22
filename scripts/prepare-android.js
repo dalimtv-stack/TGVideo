@@ -375,8 +375,6 @@ function configureMainActivity() {
             ws.setMediaPlaybackRequiresUserGesture(false);
             ws.setAllowFileAccess(true);
             ws.setAllowContentAccess(true);
-            ws.setUseWideViewPort(true);
-            ws.setLoadWithOverviewMode(true);
             ws.setTextZoom(100);
             getBridge().getWebView().setBackgroundColor(android.graphics.Color.BLACK);
         }`;
