@@ -211,18 +211,25 @@ export function openFullscreenTrailer(trailers, titleName = '', initialIndex = 0
 
     const allKeys = trailers.map(x => x.key);
     const playlistKeys = allKeys.slice(activeIndex).concat(allKeys.slice(0, activeIndex));
-    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cur.key)}`
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://localhost';
+    const src = `https://www.youtube.com/embed/${encodeURIComponent(cur.key)}`
       + `?autoplay=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1`
+      + `&origin=${encodeURIComponent(origin)}`
+      + `&widget_referrer=${encodeURIComponent(origin)}`
       + `&loop=${isMulti ? '0' : '1'}&playlist=${encodeURIComponent(playlistKeys.join(','))}`;
 
     frameHost.innerHTML = `
       <iframe
         src="${src}"
         title="${esc(cur.name || titleName)}"
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-        allowfullscreen="true">
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+        allowfullscreen>
       </iframe>
     `;
+
+    if (frameHost && frameHost.clientWidth > 0 && frameHost.clientHeight === 0) {
+      frameHost.style.height = `${Math.round(frameHost.clientWidth * 9 / 16)}px`;
+    }
   }
 
   const close = () => {
@@ -401,16 +408,17 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     const allKeys = trailers.map(x => x.key);
     const playlistKeys = allKeys.slice(idx).concat(allKeys.slice(0, idx));
     const curKey = playlistKeys[0];
-    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(curKey)}`
+    const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://localhost';
+    const src = `https://www.youtube.com/embed/${encodeURIComponent(curKey)}`
       + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&disablekb=1`
-      + `&loop=1&playlist=${encodeURIComponent(playlistKeys.join(','))}&enablejsapi=1`;
+      + `&loop=1&playlist=${encodeURIComponent(playlistKeys.join(','))}&enablejsapi=1&origin=${encodeURIComponent(origin)}`;
 
     const isMulti = trailers.length > 1;
     const filmName = trailers[idx].name || '';
     trailerBox.innerHTML = `
       <div class="carousel-trailer-wrap">
         ${isMulti ? `<div class="carousel-trailer-tag" title="${esc(filmName)}">Tráiler ${idx + 1}/${trailers.length} · ${esc(filmName)}</div>` : ''}
-        <iframe src="${src}" title="Tráiler" tabindex="-1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen="true"></iframe>
+        <iframe src="${src}" title="Tráiler" tabindex="-1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen></iframe>
       </div>
     `;
   }
