@@ -29,7 +29,9 @@ export function isAndroidTV() {
 }
 
 /**
- * Configura la escala y el viewport de televisión para igualar exactamente la visualización de PC a 1080p.
+ * Inicializa la configuración de entorno para Android TV y Fire TV.
+ * Añade la clase 'is-tv' al documento para estilos dedicados y garantiza
+ * que el viewport se mantenga en device-width para evitar zooms o recortes.
  */
 export function setupTvPlatform() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -37,17 +39,14 @@ export function setupTvPlatform() {
 
   document.documentElement.classList.add('is-tv');
 
-  // Si el viewport no se ha establecido en 1920, forzarlo
+  // Asegurar siempre viewport nativo estándar para evitar recorte o sobre-escalado
   const vp = document.querySelector('meta[name="viewport"]');
-  if (vp && !vp.content.includes('width=1920')) {
-    vp.setAttribute('content', 'width=1920, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+  if (vp && vp.content.includes('width=1920')) {
+    vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
   }
 
-  // Si por limitaciones del motor WebView el ancho lógico efectivo sigue siendo menor a 1600px,
-  // ajustar el tamaño de fuente raíz dinámicamente para mantener proporciones idénticas a PC 1080p.
-  const width = window.innerWidth;
-  if (width > 0 && width < 1600) {
-    const factor = Math.max(0.65, Math.min(1.0, width / 1920));
-    document.documentElement.style.fontSize = `${(16 * factor).toFixed(2)}px`;
+  // Restaurar el tamaño de fuente si fue modificado inline
+  if (document.documentElement.style.fontSize) {
+    document.documentElement.style.fontSize = '';
   }
 }
