@@ -213,6 +213,57 @@ export async function clearManualMetadata(title) {
   title.tmdbId = null;
 }
 
+export function parseAgeRatingFromTmdb(data, type) {
+  if (!data) return "";
+  const isTv = type === "tv" || type === "serie";
+  if (!isTv && data.release_dates) {
+    const results = data.release_dates?.results || [];
+    const es = results.find(r => String(r.iso_3166_1 || '').toUpperCase() === "ES");
+    const esCert = es?.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
+    if (esCert) return String(esCert).trim();
+
+    const latam = results.find(r => ["MX", "AR", "CO", "CL"].includes(String(r.iso_3166_1 || '').toUpperCase()));
+    const latamCert = latam?.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
+    if (latamCert) return String(latamCert).trim();
+
+    const usOrGb = results.find(r => ["US", "GB"].includes(String(r.iso_3166_1 || '').toUpperCase()));
+    const usCert = usOrGb?.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
+    if (usCert) return String(usCert).trim();
+
+    for (const r of results) {
+      const anyCert = r.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
+      if (anyCert) return String(anyCert).trim();
+    }
+  } else if (data.content_ratings) {
+    const results = data.content_ratings?.results || [];
+    const es = results.find(r => String(r.iso_3166_1 || '').toUpperCase() === "ES");
+    if (es?.rating && String(es.rating).trim()) return String(es.rating).trim();
+
+    const latam = results.find(r => ["MX", "AR", "CO", "CL"].includes(String(r.iso_3166_1 || '').toUpperCase()));
+    if (latam?.rating && String(latam.rating).trim()) return String(latam.rating).trim();
+
+    const usOrGb = results.find(r => ["US", "GB"].includes(String(r.iso_3166_1 || '').toUpperCase()));
+    if (usOrGb?.rating && String(usOrGb.rating).trim()) return String(usOrGb.rating).trim();
+
+    for (const r of results) {
+      if (r.rating && String(r.rating).trim()) return String(r.rating).trim();
+    }
+  }
+  return "";
+}
+
+export async function fetchTmdbAgeRating(type, id, signal) {
+  if (!id || !getTmdbKey()) return "";
+  const endpoint = type === "serie" || type === "tv" ? "tv" : "movie";
+  const append = endpoint === "tv" ? "content_ratings" : "release_dates";
+  try {
+    const data = await request(`/${endpoint}/${id}`, { append_to_response: append }, signal);
+    return parseAgeRatingFromTmdb(data, endpoint);
+  } catch (_) {
+    return "";
+  }
+}
+
 export async function fetchTmdbFullDetails(type, id, signal) {
   const endpoint = type === "collection" ? "collection" : (type === "serie" || type === "tv" ? "tv" : "movie");
   if (endpoint === "collection") return {};
@@ -224,15 +275,7 @@ export async function fetchTmdbFullDetails(type, id, signal) {
     const writer = crew.find(c => c.job === "Screenplay" || c.job === "Writer" || c.job === "Story")?.name || "";
     const cast = (data.credits?.cast || []).slice(0, 5).map(c => c.name).join(", ");
     const imdbId = data.external_ids?.imdb_id || data.imdb_id || "";
-    let ageRating = "";
-    if (endpoint === "movie") {
-      const esRelease = data.release_dates?.results?.find(r => r.iso_3166_1 === "ES");
-      const cert = esRelease?.release_dates?.find(d => d.certification)?.certification;
-      if (cert) ageRating = cert;
-    } else {
-      const esRating = data.content_ratings?.results?.find(r => r.iso_3166_1 === "ES");
-      if (esRating?.rating) ageRating = esRating.rating;
-    }
+    const ageRating = parseAgeRatingFromTmdb(data, endpoint);
     const col = data.belongs_to_collection;
     const collection = col ? {
       id: col.id,
@@ -411,8 +454,19 @@ export async function enrichTitle(title, { signal } = {}) {
       try {
         const full = await fetchTmdbFullDetails("movie", cached.id, signal);
         cached.collection = full?.collection || null;
+        if (full?.ageRating && !cached.ageRating) {
+          cached.ageRating = full.ageRating;
+        }
         await kv.set(cacheKey, cached).catch(() => {});
       } catch (_) {}
+    } else if (cached.id && cached.ageRating === undefined && getTmdbKey()) {
+      fetchTmdbAgeRating(type, cached.id, signal).then(rating => {
+        if (rating) {
+          cached.ageRating = rating;
+          title.metadata = cached;
+          kv.set(cacheKey, cached).catch(() => {});
+        }
+      }).catch(() => {});
     }
     title.metadata = cached;
     return cached;
@@ -443,24 +497,7 @@ export async function enrichTitle(title, { signal } = {}) {
   if (!id) return null;
   const append = type === "tv" ? "content_ratings" : "release_dates";
   const data = await request(`/${type}/${id}`, { append_to_response: append }, signal);
-  let ageRating = "";
-  if (type === "movie") {
-    const esRelease = data.release_dates?.results?.find(r => r.iso_3166_1 === "ES");
-    const cert = esRelease?.release_dates?.find(d => d.certification)?.certification;
-    if (cert) ageRating = cert;
-    else {
-      const usRelease = data.release_dates?.results?.find(r => r.iso_3166_1 === "US");
-      const usCert = usRelease?.release_dates?.find(d => d.certification)?.certification;
-      if (usCert) ageRating = usCert;
-    }
-  } else {
-    const esRating = data.content_ratings?.results?.find(r => r.iso_3166_1 === "ES");
-    if (esRating?.rating) ageRating = esRating.rating;
-    else {
-      const usRating = data.content_ratings?.results?.find(r => r.iso_3166_1 === "US");
-      if (usRating?.rating) ageRating = usRating.rating;
-    }
-  }
+  const ageRating = parseAgeRatingFromTmdb(data, type);
   const col = data.belongs_to_collection;
   const collection = col ? {
     id: col.id,

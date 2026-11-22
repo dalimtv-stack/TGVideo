@@ -556,6 +556,7 @@ function move(dir) {
     const playBtn = detailScreen.querySelector('#d-play');
     const favBtn = detailScreen.querySelector('#d-fav');
     const watchedBtn = detailScreen.querySelector('#d-watched');
+    const trailerBtn = detailScreen.querySelector('#d-trailer');
     const seasonActive = detailScreen.querySelector('.seasons-track .season-btn.active') || detailScreen.querySelector('.seasons-track .season-btn');
     const curSeasonTrack = cur.closest('.seasons-track');
     const curEpList = cur.closest('#ep-list');
@@ -749,6 +750,43 @@ function move(dir) {
         return;
       }
       if (dir === 'right') {
+        const target = trailerBtn || imagesBtn || fixMetaBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'up') {
+        const target = imagesBtn || fixMetaBtn || synToggle || backBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'down') {
+        const target = seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      return;
+    }
+
+    // 3.45 Botón Tráiler (#d-trailer)
+    if (cur === trailerBtn) {
+      if (dir === 'left') {
+        const target = watchedBtn || favBtn || playBtn || backBtn;
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'right') {
         const target = imagesBtn || fixMetaBtn;
         if (target) {
           target.focus();
@@ -790,7 +828,7 @@ function move(dir) {
         return;
       }
       if (dir === 'up') {
-        const target = favBtn || watchedBtn || playBtn || synToggle || backBtn;
+        const target = playBtn || favBtn || watchedBtn || trailerBtn || synToggle || backBtn;
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -830,7 +868,7 @@ function move(dir) {
             target.focus();
             target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           } else {
-            const target = playBtn || seasonActive || favBtn || watchedBtn || synToggle || backBtn;
+            const target = seasonActive || playBtn || favBtn || watchedBtn || trailerBtn || synToggle || backBtn;
             if (target) {
               target.focus();
               target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -864,7 +902,7 @@ function move(dir) {
           epItems[epIdx - 1].focus();
           epItems[epIdx - 1].scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         } else {
-          const target = playBtn || seasonActive || favBtn || watchedBtn || synToggle || backBtn;
+          const target = seasonActive || playBtn || favBtn || watchedBtn || trailerBtn || synToggle || backBtn;
           if (target) {
             target.focus();
             target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });

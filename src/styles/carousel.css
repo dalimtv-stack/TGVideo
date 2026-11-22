@@ -30,14 +30,15 @@
   }
 }
 
-/* ---- La home en modo carrusel: aprovecha el alto sin banners intrusivos ---- */
+/* ---- La home en modo carrusel: sube un poco hacia arriba para maximizar el espacio ---- */
 .home-main--carousel {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   overflow: hidden;
-  padding-top: 0.5rem;
-  padding-bottom: 0.8rem;
+  padding-top: 0.15rem;
+  margin-top: -0.35rem;
+  padding-bottom: 0.6rem;
 }
 
 .home-screen--carousel .category-view {
@@ -135,8 +136,8 @@
   overflow: hidden !important;
   outline: none;
   flex: 0 0 auto;
-  height: clamp(330px, 50vh, 450px);
-  padding: 30px 0;
+  height: clamp(340px, 52vh, 460px);
+  padding: 24px 0;
   box-sizing: border-box;
   border-radius: 12px;
   scroll-behavior: auto !important;
@@ -149,17 +150,17 @@
   top: 0;
   display: flex;
   align-items: center;
-  gap: 2.8rem;
+  gap: 0.85rem;
   height: 100%;
   width: max-content;
   transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: transform;
 }
 
-/* Tarjeta en modo portadas: dimensiones fijas, el resto a la mitad (scale 0.75) */
+/* Tarjeta en modo portadas: dimensiones fijas, las no enfocadas más juntas y a escala 0.88 */
 .carousel-item {
   flex: 0 0 auto !important;
-  height: clamp(190px, 28vh, 260px) !important;
+  height: clamp(170px, 25vh, 235px) !important;
   box-sizing: border-box !important;
   aspect-ratio: 2 / 3 !important;
   width: auto !important;
@@ -171,18 +172,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transform: scale(0.75);
+  transform: scale(0.88);
   opacity: 0.52;
-  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), margin 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
   cursor: pointer;
 }
 
-/* Portada con foco: escala 1.5 (1,5x respecto a la base, doble del resto que queda a la mitad) */
+/* Portada con foco: escala 1.76 con margen lateral de 1.9rem para separación perfecta con sus vecinas */
 .carousel-item.is-active,
 .carousel-stage:focus .carousel-item.is-active,
 .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-stage.dpad-focused .carousel-item.is-active {
-  transform: scale(1.5) !important;
+  transform: scale(1.76) !important;
+  margin: 0 1.9rem !important;
   opacity: 1 !important;
   box-shadow: 0 0 0 3px #fff, 0 4px 28px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(0, 0, 0, 0.8) !important;
   z-index: 5;

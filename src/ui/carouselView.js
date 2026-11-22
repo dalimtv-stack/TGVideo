@@ -37,7 +37,7 @@ function posterColor(seed) {
 const titleType = (t) => (t.tipo === 'serie' || t.isSerie || t.isSeason || t.isEpisode ? 'tv' : 'movie');
 const isCollectionTitle = (t) => Boolean(t.isSaga || t.isVirtualSaga || t.tipo === 'saga' || t.tipo === 'coleccion');
 
-async function getTitleTrailers(t, allTitles = [], signal) {
+export async function getTitleTrailers(t, allTitles = [], signal) {
   if (!t) return [];
 
   // Si ya tenemos trailers resueltos en memoria para este título
@@ -472,7 +472,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     const itemH = isLogos ? 110 : Math.max(60, Math.round(stageH - 24));
     const itemW = isLogos ? 250 : Math.round(itemH * (2 / 3));
     const rem = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).fontSize)) || 16;
-    const gap = Math.round(1.2 * rem);
+    const gap = isLogos ? Math.round(1.4 * rem) : Math.round(0.85 * rem);
     return { itemW, itemH, gap };
   };
 

@@ -5,6 +5,8 @@ import { getSagaMovieGroups } from './home.js';
 import { showCollectionPicker } from './collectionPicker.js';
 import { assignMovieToCollection, removeMovieFromCollection } from '../metadata/collections.js';
 import { renderAgeBadgeHtml } from './ageRating.js';
+import { getTitleTrailers, openFullscreenTrailer } from './carouselView.js';
+import { fetchTmdbAgeRating } from '../metadata/tmdb.js';
 
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
@@ -302,6 +304,10 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
             <button class="btn-icon-action" data-focusable id="d-watched" type="button" title="Marcar como visto" aria-label="Marcar como visto">
               <span class="btn-action-icon" aria-hidden="true">✓</span>
               <span class="btn-action-tooltip">Marcar como visto</span>
+            </button>
+            <button class="btn-icon-action" data-focusable id="d-trailer" type="button" title="Ver tráiler" aria-label="Ver tráiler">
+              <span class="btn-action-icon" aria-hidden="true">▶</span>
+              <span class="btn-action-tooltip">Tráiler</span>
             </button>
           </div>
         </div>
@@ -607,6 +613,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
 
   const favBtn = document.getElementById('d-fav');
   const watchedBtn = document.getElementById('d-watched');
+  const trailerBtn = document.getElementById('d-trailer');
 
   const updateActionButtons = () => {
     if (favBtn && profile?.id) {
@@ -657,6 +664,55 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       }
       renderEpisodes(currentSeason);
     };
+  }
+
+  if (trailerBtn) {
+    trailerBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const tipEl = trailerBtn.querySelector('.btn-action-tooltip');
+      const prevTip = tipEl?.textContent || 'Tráiler';
+      trailerBtn.disabled = true;
+      if (tipEl) tipEl.textContent = 'Buscando...';
+      try {
+        const trailers = await getTitleTrailers(t, getTitles() || []);
+        if (!trailers || !trailers.length) {
+          if (tipEl) tipEl.textContent = 'Sin tráiler';
+          setTimeout(() => {
+            if (tipEl) tipEl.textContent = prevTip;
+            trailerBtn.disabled = false;
+          }, 2000);
+          return;
+        }
+        if (tipEl) tipEl.textContent = prevTip;
+        trailerBtn.disabled = false;
+        openFullscreenTrailer(trailers, t.metadata?.name || t.nombre || '', 0);
+      } catch (_) {
+        if (tipEl) tipEl.textContent = 'Error';
+        setTimeout(() => {
+          if (tipEl) tipEl.textContent = prevTip;
+          trailerBtn.disabled = false;
+        }, 2000);
+      }
+    });
+  }
+
+  // Si la edad recomendada no vino en la caché previa, consultar TMDB y refrescar el distintivo
+  if (t?.metadata?.id && !t.metadata?.ageRating) {
+    fetchTmdbAgeRating(t.tipo === 'serie' ? 'tv' : 'movie', t.metadata.id).then(age => {
+      if (age) {
+        if (!t.metadata) t.metadata = {};
+        t.metadata.ageRating = age;
+        const infoEl = document.querySelector('.detail-metadata');
+        if (infoEl) {
+          const numR = Number(t.metadata.rating);
+          const rStr = Number.isFinite(numR) && numR > 0 ? `★ ${numR.toFixed(1)}` : '';
+          const aBadge = renderAgeBadgeHtml(t);
+          const rWithA = [rStr, aBadge].filter(Boolean).join(' ');
+          const yStr = (t.metadata.date)?.slice(0, 4) || t.yearHint || '';
+          infoEl.innerHTML = [yStr, rWithA].filter(Boolean).join(' · ');
+        }
+      }
+    }).catch(() => {});
   }
   focusFirst('#d-play, .season-btn.active, #ep-list .ep[data-focusable]');
 }
