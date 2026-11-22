@@ -219,11 +219,8 @@ function configureManifest() {
     }
   }
 
-  // 3. Banner, icono y aceleración por hardware en MainActivity
+  // 3. Banner e icono en MainActivity
   m = m.replace(/<activity\b[^>]*MainActivity[^>]*>/, (tag) => {
-    if (!tag.includes('android:hardwareAccelerated=')) {
-      tag = tag.replace('<activity', '<activity android:hardwareAccelerated="true"');
-    }
     if (!tag.includes('android:banner=')) {
       tag = tag.replace(/>$/, ' android:banner="@drawable/banner" android:icon="@drawable/banner" android:logo="@drawable/banner">');
     } else if (!tag.includes('android:icon=')) {
@@ -368,13 +365,9 @@ function configureMainActivity() {
     }
   }
 
-  // WebSettings y flags de aceleración por hardware para vídeo HTML5 y WebView en Fire TV / Android TV
+  // WebSettings para reproducción de medios sin bloqueo, soporte óptimo de WebView y control de escala en Android TV
   if (!content.includes('setMediaPlaybackRequiresUserGesture(false)')) {
     const webSettingsCode = `
-        getWindow().setFlags(
-            android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-        );
         if (getBridge() != null && getBridge().getWebView() != null) {
             android.webkit.WebSettings ws = getBridge().getWebView().getSettings();
             ws.setJavaScriptEnabled(true);
@@ -389,7 +382,8 @@ function configureMainActivity() {
         }`;
 
     if (content.includes('super.onCreate(savedInstanceState);')) {
-      content = content.replace('super.onCreate(savedInstanceState);', `super.onCreate(savedInstanceState);${webSettingsCode}`);
+      const hwCode = `\n        getWindow().setFlags(android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);`;
+      content = content.replace('super.onCreate(savedInstanceState);', `super.onCreate(savedInstanceState);${hwCode}${webSettingsCode}`);
     }
   }
 
