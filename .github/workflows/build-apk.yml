@@ -198,9 +198,38 @@ jobs:
                       count=1
                   )
 
+              if "REQUEST_INSTALL_PACKAGES" not in m:
+                  m = m.replace('</manifest>', '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n</manifest>')
+
+              if "${applicationId}.fileprovider" not in m and "androidx.core.content.FileProvider" not in m:
+                  provider_xml = (
+                      "        <provider\n"
+                      "            android:name=\"androidx.core.content.FileProvider\"\n"
+                      "            android:authorities=\"${applicationId}.fileprovider\"\n"
+                      "            android:exported=\"false\"\n"
+                      "            android:grantUriPermissions=\"true\">\n"
+                      "            <meta-data\n"
+                      "                android:name=\"android.support.FILE_PROVIDER_PATHS\"\n"
+                      "                android:resource=\"@xml/file_paths\" />\n"
+                      "        </provider>"
+                  )
+                  m = m.replace('</application>', provider_xml + '\n    </application>')
+
               with open(manifest_path, "w", encoding="utf-8") as f:
                   f.write(m)
-              print("AndroidManifest.xml configurado para Leanback / Android TV y cleartextTraffic.")
+              print("AndroidManifest.xml configurado para Leanback / Android TV, FileProvider y cleartextTraffic.")
+
+          # Crear file_paths.xml para AppUpdaterPlugin FileProvider
+          xml_dir = "android/app/src/main/res/xml"
+          os.makedirs(xml_dir, exist_ok=True)
+          with open(os.path.join(xml_dir, "file_paths.xml"), "w", encoding="utf-8") as f:
+              f.write(
+                  '<?xml version="1.0" encoding="utf-8"?>\n'
+                  '<paths xmlns:android="http://schemas.android.com/apk/res/android">\n'
+                  '    <external-cache-path name="external_cache" path="." />\n'
+                  '    <cache-path name="cache" path="." />\n'
+                  '</paths>\n'
+              )
 
           # Fondo negro para estilos
           for styles_path in ["android/app/src/main/res/values/styles.xml", "android/app/src/main/res/values-night/styles.xml"]:
@@ -906,6 +935,166 @@ jobs:
               f.write(plugin_code)
           print("ExoPlayerPlugin.java inyectado exitosamente.")
 
+          updater_plugin_file = os.path.join(java_pkg_dir, "AppUpdaterPlugin.java")
+          updater_code = """package com.tgvideo.app;
+
+          import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Build;
+          import androidx.core.content.FileProvider;
+
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+
+          import java.io.BufferedInputStream;
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+
+          @CapacitorPlugin(name = "AppUpdaterPlugin")
+          public class AppUpdaterPlugin extends Plugin {
+
+              @Override
+              public void load() {
+                  super.load();
+                  cleanOldUpdateApk();
+              }
+
+              private void cleanOldUpdateApk() {
+                  try {
+            Context context = getContext();
+            if (context == null) return;
+            File cacheDir = context.getExternalCacheDir();
+            if (cacheDir != null) {
+                File f = new File(cacheDir, "tgvideo_update.apk");
+                if (f.exists()) f.delete();
+            }
+            File intCache = context.getCacheDir();
+            if (intCache != null) {
+                File f = new File(intCache, "tgvideo_update.apk");
+                if (f.exists()) f.delete();
+            }
+                  } catch (Exception ignored) {}
+              }
+
+              @PluginMethod
+              public void downloadAndInstall(PluginCall call) {
+                  String urlString = call.getString("url");
+                  if (urlString == null || urlString.isEmpty()) {
+            call.reject("URL de descarga no proporcionada");
+            return;
+                  }
+
+                  call.resolve();
+
+                  new Thread(() -> {
+            HttpURLConnection connection = null;
+            InputStream input = null;
+            OutputStream output = null;
+            try {
+                Context context = getContext();
+                File cacheDir = context.getExternalCacheDir();
+                if (cacheDir == null) cacheDir = context.getCacheDir();
+
+                File apkFile = new File(cacheDir, "tgvideo_update.apk");
+                if (apkFile.exists()) {
+                    apkFile.delete();
+                }
+
+                URL url = new URL(urlString);
+                int redirectCount = 0;
+                while (redirectCount < 5) {
+                    connection = (HttpURLConnection) url.openConnection();
+                    connection.setInstanceFollowRedirects(true);
+                    connection.setRequestProperty("User-Agent", "TGVideo-AppUpdater");
+                    connection.connect();
+
+                    int status = connection.getResponseCode();
+                    if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
+                        status == HttpURLConnection.HTTP_MOVED_PERM ||
+                        status == 307 || status == 308) {
+                        String newUrl = connection.getHeaderField("Location");
+                        connection.disconnect();
+                        url = new URL(newUrl);
+                        redirectCount++;
+                    } else {
+                        break;
+                    }
+                }
+
+                int fileLength = connection.getContentLength();
+                input = new BufferedInputStream(connection.getInputStream(), 8192);
+                output = new FileOutputStream(apkFile);
+
+                byte[] data = new byte[8192];
+                long total = 0;
+                int count;
+                long lastNotifyTime = 0;
+
+                while ((count = input.read(data)) != -1) {
+                    total += count;
+                    output.write(data, 0, count);
+
+                    long now = System.currentTimeMillis();
+                    if (now - lastNotifyTime > 250 && fileLength > 0) {
+                        lastNotifyTime = now;
+                        int percent = (int) ((total * 100) / fileLength);
+                        JSObject progressObj = new JSObject();
+                        progressObj.put("percent", percent);
+                        progressObj.put("bytesDownloaded", total);
+                        progressObj.put("totalBytes", fileLength);
+                        notifyListeners("onUpdateProgress", progressObj);
+                    }
+                }
+
+                output.flush();
+                output.close();
+                output = null;
+                input.close();
+                input = null;
+
+                JSObject doneObj = new JSObject();
+                doneObj.put("percent", 100);
+                doneObj.put("bytesDownloaded", total);
+                doneObj.put("totalBytes", total);
+                notifyListeners("onUpdateProgress", doneObj);
+
+                Uri apkUri = FileProvider.getUriForFile(
+                    context,
+                    context.getPackageName() + ".fileprovider",
+                    apkFile
+                );
+
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+
+            } catch (Exception e) {
+                JSObject errObj = new JSObject();
+                errObj.put("error", e.getMessage());
+                notifyListeners("onUpdateError", errObj);
+            } finally {
+                try { if (output != null) output.close(); } catch (Exception ignored) {}
+                try { if (input != null) input.close(); } catch (Exception ignored) {}
+                if (connection != null) connection.disconnect();
+            }
+                  }).start();
+              }
+          }
+          """
+          with open(updater_plugin_file, "w", encoding="utf-8") as f:
+              f.write(updater_code)
+          print("AppUpdaterPlugin.java inyectado exitosamente.")
+
           # 3. Registrar plugin en MainActivity.java
           main_activity = os.path.join(java_pkg_dir, "MainActivity.java")
           if os.path.exists(main_activity):
@@ -916,6 +1105,7 @@ jobs:
                       "public class MainActivity extends BridgeActivity {\n"
                       "    @Override\n"
                       "    public void onCreate(android.os.Bundle savedInstanceState) {\n"
+                      "        registerPlugin(AppUpdaterPlugin.class);\n"
                       "        registerPlugin(ExoPlayerPlugin.class);\n"
                       "        super.onCreate(savedInstanceState);\n"
                       "        getWindow().setFlags(android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);\n"
