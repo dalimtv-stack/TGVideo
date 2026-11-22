@@ -1002,6 +1002,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
 // ---------- Selector de perfiles ----------
 async function showProfileSelector(tg, sync) {
+  applyProfileScale(null);
   showLoading('Cargando perfiles…');
 
   let profiles = [];
@@ -1155,6 +1156,7 @@ async function showProfileSelector(tg, sync) {
 // ---------- Arranque ----------
 async function start() {
   setupTvPlatform();
+  applyProfileScale(null);
   showLoading('Conectando con Telegram…');
 
   const tg = createTelegramClient({
