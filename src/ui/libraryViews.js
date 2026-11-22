@@ -306,7 +306,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
               <span class="btn-action-tooltip">Marcar como visto</span>
             </button>
             <button class="btn-icon-action" data-focusable id="d-trailer" type="button" title="Ver tráiler" aria-label="Ver tráiler">
-              <span class="btn-action-icon" aria-hidden="true">▶</span>
+              <span class="btn-action-icon" aria-hidden="true">🎬</span>
               <span class="btn-action-tooltip">Tráiler</span>
             </button>
           </div>
