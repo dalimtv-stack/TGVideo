@@ -1,89 +1,43 @@
 /* src/styles/carousel.css */
 /* Vista en carrusel de las pestañas de categoría. Usa las variables del tema (skins). */
 
-/* ---- Cabecera recogida en vista Carrusel y Logos (ganar espacio en 1080p TV y móviles) ---- */
+/* ---- Cabecera en modo carrusel: barra superior sólida con herramientas integradas ---- */
 .home-screen--carousel .home-header--carousel {
-  position: absolute;
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
-  z-index: 40;
-  padding-top: max(0.6rem, calc(var(--sat, env(safe-area-inset-top, 0px)) + 0.35rem));
-  padding-left: max(1rem, calc(var(--sal, env(safe-area-inset-left, 0px)) + 0.6rem));
-  padding-right: max(1rem, calc(var(--sar, env(safe-area-inset-right, 0px)) + 0.6rem));
-  padding-bottom: 0.45rem;
-  background: transparent;
-  pointer-events: none;
-  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.25s ease;
+  z-index: 100;
+  background: rgba(20, 20, 20, 0.95);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.home-screen--carousel .home-header--carousel .home-logo {
-  pointer-events: auto;
-  cursor: pointer;
-  z-index: 45;
+/* Herramientas de ordenación y vistas en la barra de arriba en modo carrusel */
+.category-header--in-header {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.95rem;
-  border-radius: 9999px;
-  background: rgba(15, 15, 15, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  transition: all 0.2s ease;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  -webkit-tap-highlight-color: transparent;
+  gap: 0.6rem;
+  margin: 0 1.2rem;
+  flex: 0 0 auto;
 }
 
-.home-screen--carousel .home-header--carousel .home-logo:hover,
-.home-screen--carousel .home-header--carousel .home-logo:focus,
-.home-screen--carousel .home-header--carousel .home-logo:focus-visible,
-.home-screen--carousel .home-header--carousel .home-logo.dpad-focused {
-  background: rgba(255, 255, 255, 0.24) !important;
-  border-color: #fff !important;
-  outline: 2px solid #fff !important;
-  outline-offset: 2px !important;
-  box-shadow: 0 0 14px rgba(255, 255, 255, 0.55) !important;
+@media (max-width: 760px) {
+  .category-header--in-header {
+    order: 4;
+    width: 100%;
+    margin: 0.35rem 0 0;
+    justify-content: center;
+  }
 }
 
-/* Ocultar secciones y acciones en estado recogido */
-.home-screen--carousel .home-header--carousel:not(.is-expanded) .home-nav,
-.home-screen--carousel .home-header--carousel:not(.is-expanded) .home-actions {
-  transform: translateY(-130%);
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, visibility 0.25s;
-}
-
-/* Estado desplegado al interactuar con el logo o enfocar con el mando */
-.home-screen--carousel .home-header--carousel.is-expanded {
-  background: rgba(10, 10, 10, 0.96);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  pointer-events: auto;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.85);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.home-screen--carousel .home-header--carousel.is-expanded .home-nav,
-.home-screen--carousel .home-header--carousel.is-expanded .home-actions {
-  transform: translateY(0);
-  opacity: 1;
-  pointer-events: auto;
-  visibility: visible;
-}
-
-/* ---- La home en modo carrusel: deja espacio seguro arriba para no solapar con el logo ni el notch ---- */
+/* ---- La home en modo carrusel: aprovecha el alto sin banners intrusivos ---- */
 .home-main--carousel {
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  padding-top: max(3.2rem, calc(var(--sat, env(safe-area-inset-top, 0px)) + 2.8rem));
-  padding-bottom: 1.5rem;
+  flex: 1 1 auto;
+  overflow: hidden;
+  padding-top: 0.5rem;
+  padding-bottom: 0.8rem;
 }
 
 .home-screen--carousel .category-view {
@@ -91,32 +45,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding-top: 0;
-  padding-bottom: 0;
-  padding-left: max(0.5rem, var(--sal, env(safe-area-inset-left, 0px)));
-  padding-right: max(0.5rem, var(--sar, env(safe-area-inset-right, 0px)));
-}
-
-/* Cabecera de categoría (Ordenar y Modo de Vista): siempre visible, nunca tapada */
-.home-screen--carousel .category-header {
-  position: relative;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  margin: 0 auto 0.4rem;
-  padding-left: max(0.5rem, var(--sal, 0px));
-  padding-right: max(0.5rem, var(--sar, 0px));
-  min-height: 2.6rem;
-}
-
-@media (min-width: 900px) and (min-height: 600px) {
-  /* En pantallas grandes y 1080p TV: margen izquierdo para equilibrar con el logo TGVideo */
-  .home-screen--carousel .category-header {
-    padding-left: max(1rem, calc(var(--sal, 0px) + 8rem));
-  }
+  padding: 0;
 }
 
 /* ---- Barra de modos de vista y ordenación ---- */
@@ -206,8 +135,8 @@
   overflow: hidden !important;
   outline: none;
   flex: 0 0 auto;
-  height: clamp(260px, calc(var(--car-h, 520px) * 0.58), 400px);
-  padding: 14px 0;
+  height: clamp(280px, 44vh, 380px);
+  padding: 24px 0;
   box-sizing: border-box;
   border-radius: 12px;
   scroll-behavior: auto !important;
@@ -227,10 +156,10 @@
   will-change: transform;
 }
 
-/* Tarjeta en modo portadas: dimensiones fijas, estables, sin oscilaciones */
+/* Tarjeta en modo portadas: dimensiones fijas, holgura vertical para que no se corte arriba ni abajo */
 .carousel-item {
   flex: 0 0 auto !important;
-  height: 100% !important;
+  height: calc(100% - 36px) !important;
   box-sizing: border-box !important;
   aspect-ratio: 2 / 3 !important;
   width: auto !important;
@@ -242,7 +171,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transform: scale(0.82);
+  transform: scale(0.84);
   opacity: 0.52;
   transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
   cursor: pointer;
@@ -413,6 +342,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* En el carrusel de logos, el tráiler aparece 1,5 veces más grande */
+.carousel-mode-logos .carousel-trailer {
+  height: clamp(240px, 51vh, 420px);
+  max-width: 95%;
+  aspect-ratio: 16 / 9;
 }
 .carousel-trailer-wrap {
   position: relative;

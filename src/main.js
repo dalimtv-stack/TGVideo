@@ -626,6 +626,30 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   const currentView = isCategorySection ? getSectionViewMode(profile.id, selectedSection) : 'grid';
   const isCarousel = isCategorySection && (currentView === 'posters' || currentView === 'logos');
 
+  const categoryToolsHtml = (inHeader = false) => {
+    const currentSort = getSectionSort(profile.id, selectedSection);
+    const isSortExpanded = Boolean(focusSort);
+    return `
+      <div class="${inHeader ? 'category-header--in-header' : 'category-header-inner'}" role="region" aria-label="Herramientas de ordenación y vista">
+        <div class="category-sort-bar ${isSortExpanded ? 'is-expanded' : ''}" role="group" aria-label="Ordenar por">
+          <button type="button" class="category-sort-toggle" data-focusable aria-expanded="${isSortExpanded}" aria-haspopup="true" title="Desplegar opciones de ordenación">
+            <span class="category-sort-label">Ordenar:</span>
+            <span class="category-sort-icon" aria-hidden="true">▾</span>
+          </button>
+          <div class="category-sort-options">
+            <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
+            <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
+            <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
+          </div>
+        </div>
+        <div class="category-views-bar" role="group" aria-label="Modo de vista">
+          <span class="category-views-label">Vista:</span>
+          <button type="button" class="category-view-btn" data-focusable data-view="${currentView}" title="Cambiar modo de vista" aria-label="Cambiar vista, actual: ${viewModeShortLabel(currentView)}">${viewModeShortLabel(currentView)}</button>
+        </div>
+      </div>`;
+  };
+
+
   const body = !titles.length ? `
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
@@ -634,27 +658,14 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     : selectedSection !== 'inicio' ? (() => {
         const currentSort = getSectionSort(profile.id, selectedSection);
         const sortedItems = sortTitles(activeSection?.items || [], currentSort);
-        const isSortExpanded = Boolean(focusSort);
         return `
-      <section class="category-view" aria-label="${esc(activeSection?.label || '')}">
-        <div class="category-header">
-          <div class="category-sort-bar ${isSortExpanded ? 'is-expanded' : ''}" role="group" aria-label="Ordenar por">
-            <button type="button" class="category-sort-toggle" data-focusable aria-expanded="${isSortExpanded}" aria-haspopup="true" title="Desplegar opciones de ordenación">
-              <span class="category-sort-label">Ordenar:</span>
-              <span class="category-sort-icon" aria-hidden="true">▾</span>
-            </button>
-            <div class="category-sort-options">
-              <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
-              <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
-              <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
-            </div>
+      <section class="category-view ${isCarousel ? 'category-view--carousel' : 'category-view--grid'}" aria-label="${esc(activeSection?.label || '')}">
+        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `
+          <div class="category-header category-header--grid">
+            ${categoryToolsHtml(false)}
           </div>
-          <div class="category-views-bar" role="group" aria-label="Modo de vista">
-            <span class="category-views-label">Vista:</span>
-            <button type="button" class="category-view-btn" data-focusable data-view="${currentView}" title="Cambiar modo de vista" aria-label="Cambiar vista, actual: ${viewModeShortLabel(currentView)}">${viewModeShortLabel(currentView)}</button>
-          </div>
-        </div>
-        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`}
+          <div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>
+        `}
       </section>`;
       })()
     : rows.map(r => `
@@ -675,8 +686,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   showScreen(`
     <div class="screen home-screen ${isCarousel ? 'home-screen--carousel' : ''}">
       <header class="home-header ${isCarousel ? 'home-header--carousel' : ''}">
-        <div class="home-logo" tabindex="${isCarousel ? '0' : '-1'}" ${isCarousel ? 'data-focusable' : ''} id="home-logo" title="${isCarousel ? 'Mostrar menú de navegación' : 'TGVideo'}" role="${isCarousel ? 'button' : 'banner'}">TGVideo</div>
+        <div class="home-logo" id="home-logo" title="TGVideo" role="banner">TGVideo</div>
         ${sectionDefs.length ? `<nav class="home-nav" aria-label="Secciones"><button class="home-nav-item nav-search-btn ${isSearch ? 'active' : ''}" data-focusable data-section="buscar" type="button" aria-label="Buscar" title="Buscar" aria-current="${isSearch ? 'page' : 'false'}"><span class="nav-search-icon" aria-hidden="true">🔍</span></button>${sectionDefs.map(section => `<button class="home-nav-item ${section.id === selectedSection ? 'active' : ''}" data-focusable data-section="${esc(section.id)}" type="button" aria-current="${section.id === selectedSection ? 'page' : 'false'}">${esc(section.label)}</button>`).join('')}</nav>` : ''}
+        ${isCategorySection && isCarousel ? categoryToolsHtml(true) : ''}
         <div class="home-actions">
           <button class="btn-icon" data-focusable id="btn-reload" title="Actualizar biblioteca" aria-label="Actualizar">↻</button>
           <div class="home-profile" tabindex="0" data-focusable id="btn-change-profile" title="${esc(profile.name)}" aria-label="Perfil: ${esc(profile.name)}">
@@ -760,26 +772,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     }, { passive: true });
   }
 
-  // Despliegue de la cabecera en vista carrusel al interactuar con el logo TGVideo
-  const carouselHeader = document.querySelector('.home-header--carousel');
-  const homeLogo = document.querySelector('#home-logo');
-  if (carouselHeader && homeLogo) {
-    const toggleHeader = (e) => {
-      e.stopPropagation();
-      carouselHeader.classList.toggle('is-expanded');
-    };
-    homeLogo.onclick = toggleHeader;
-    // En D-Pad / mando de TV: si el foco entra a cualquier elemento del header, se despliega
-    carouselHeader.addEventListener('focusin', () => {
-      carouselHeader.classList.add('is-expanded');
-    });
-    // Cerrar al pulsar fuera (sin focusout agresivo que rompía los taps en iOS/móviles)
-    document.addEventListener('click', (e) => {
-      if (!carouselHeader.contains(e.target)) {
-        carouselHeader.classList.remove('is-expanded');
-      }
-    }, { passive: true });
-  }
+
 
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
     btn.onclick = (e) => {

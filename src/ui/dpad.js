@@ -223,6 +223,9 @@ function move(dir) {
   }
 
   function getSubheaderOrContent() {
+    const stage = document.querySelector('.home-main .carousel-stage');
+    if (stage && stage.offsetParent) return stage;
+
     const sortToggle = document.querySelector('.category-sort-toggle');
     if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) return sortToggle;
 
@@ -236,9 +239,6 @@ function move(dir) {
 
     const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
     if (viewBtn && viewBtn.offsetParent && !viewBtn.disabled) return viewBtn;
-
-    const stage = document.querySelector('.home-main .carousel-stage');
-    if (stage && stage.offsetParent) return stage;
 
     const firstGridCard = [...document.querySelectorAll('.home-main .category-grid .lib-card[data-focusable]')].find(e => e.offsetParent && !e.disabled);
     if (firstGridCard) return firstGridCard;
@@ -294,10 +294,16 @@ function move(dir) {
         if (idx >= 0 && idx < tabs.length - 1) {
           tabs[idx + 1].focus();
           tabs[idx + 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-        } else if (reloadBtn) {
-          reloadBtn.focus();
-        } else if (profileBtn) {
-          profileBtn.focus();
+        } else {
+          const headerTools = curHeader.querySelector('.category-header--in-header [data-focusable]');
+          if (headerTools) {
+            headerTools.focus();
+            headerTools.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          } else if (reloadBtn) {
+            reloadBtn.focus();
+          } else if (profileBtn) {
+            profileBtn.focus();
+          }
         }
         return;
       }
@@ -317,6 +323,12 @@ function move(dir) {
     // 2.2 En el botón Actualizar (#btn-reload)
     if (cur === reloadBtn) {
       if (dir === 'left') {
+        const headerTool = curHeader.querySelector('.category-header--in-header .category-view-btn') || curHeader.querySelector('.category-header--in-header [data-focusable]');
+        if (headerTool) {
+          headerTool.focus();
+          headerTool.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          return;
+        }
         const tabs = nav ? [...nav.querySelectorAll('.home-nav-item[data-focusable]')].filter(e => e.offsetParent && !e.disabled) : [];
         if (tabs.length) {
           const lastTab = tabs[tabs.length - 1];
@@ -368,10 +380,20 @@ function move(dir) {
   if (curSortBar) {
     const sortBtns = [...curSortBar.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
     const idx = sortBtns.indexOf(cur);
-    if (dir === 'left' && idx > 0) {
-      sortBtns[idx - 1].focus();
-      sortBtns[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-      return;
+    if (dir === 'left') {
+      if (idx > 0) {
+        sortBtns[idx - 1].focus();
+        sortBtns[idx - 1].scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        return;
+      }
+      if (curSortBar.closest('.category-header--in-header')) {
+        const activeNav = document.querySelector('.home-nav-item.active') || [...document.querySelectorAll('.home-nav-item[data-focusable]')].pop();
+        if (activeNav) {
+          activeNav.focus();
+          activeNav.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          return;
+        }
+      }
     }
     if (dir === 'right') {
       if (idx >= 0 && idx < sortBtns.length - 1) {
@@ -415,6 +437,12 @@ function move(dir) {
         first.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
         return;
       }
+    }
+    if (dir === 'right' && curViewsBar.closest('.category-header--in-header')) {
+      const reloadBtn = document.querySelector('#btn-reload');
+      const profileBtn = document.querySelector('#btn-change-profile');
+      if (reloadBtn) { reloadBtn.focus(); return; }
+      if (profileBtn) { profileBtn.focus(); return; }
     }
     return;
   }
@@ -463,6 +491,12 @@ function move(dir) {
         first.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
         return;
       }
+    }
+    if (dir === 'right' && curViewsBar.closest('.category-header--in-header')) {
+      const reloadBtn = document.querySelector('#btn-reload');
+      const profileBtn = document.querySelector('#btn-change-profile');
+      if (reloadBtn) { reloadBtn.focus(); return; }
+      if (profileBtn) { profileBtn.focus(); return; }
     }
     return;
   }
@@ -572,7 +606,7 @@ function move(dir) {
         return;
       }
       if (dir === 'down') {
-        const target = watchedBtn || favBtn || playBtn || synToggle || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        const target = playBtn || favBtn || watchedBtn || synToggle || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -593,7 +627,7 @@ function move(dir) {
         return;
       }
       if (dir === 'down') {
-        const target = watchedBtn || favBtn || playBtn || synToggle || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
+        const target = playBtn || favBtn || watchedBtn || synToggle || seasonActive || detailScreen.querySelector('#ep-list .ep[data-focusable]');
         if (target) {
           target.focus();
           target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -804,7 +838,7 @@ function move(dir) {
             target.focus();
             target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           } else {
-            const target = watchedBtn || favBtn || playBtn || seasonActive || synToggle || backBtn;
+            const target = playBtn || seasonActive || favBtn || watchedBtn || synToggle || backBtn;
             if (target) {
               target.focus();
               target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
@@ -838,7 +872,7 @@ function move(dir) {
           epItems[epIdx - 1].focus();
           epItems[epIdx - 1].scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
         } else {
-          const target = seasonActive || favBtn || watchedBtn || playBtn || synToggle || backBtn;
+          const target = playBtn || seasonActive || favBtn || watchedBtn || synToggle || backBtn;
           if (target) {
             target.focus();
             target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });

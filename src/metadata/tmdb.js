@@ -24,6 +24,10 @@ export function extractTitleAndYear(name = "") {
     str = str.slice(0, lastMatch.index) + " " + str.slice(lastMatch.index + lastMatch[0].length);
   }
 
+  // Eliminar carácter "ª" si está pegado a "[" o tras fecha/corchetes/paréntesis
+  str = str.replace(/([\)\]])\s*ª/g, "$1");
+  str = str.replace(/\s*ª\s*(?=\[|$)/g, " ");
+
   // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis: [BlurayRip], [480p], [Dual], etc.
   const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
   const bracketQualityRe = new RegExp("\\[[^\\]]*" + qualityKw + "[^\\]]*\\]", "gi");
@@ -57,6 +61,8 @@ export function extractTitleAndYear(name = "") {
   // 8. Normalizar separadores sin destruir puntos en siglas/abreviaturas como "L.A."
   str = str.replace(/([a-zA-Z0-9]{2,})\.([a-zA-Z0-9]{2,})/g, "$1 $2");
   str = str.replace(/_/g, " ");
+  str = str.replace(/[\s\-_–—]+ª\s*$/g, "");
+  str = str.replace(/\s+ª\s+/g, " ");
   str = str.replace(/[-–—\s]+$/, "").replace(/^\s*[-–—]+/, "").replace(/\s+/g, " ").trim();
 
   return { title: str || name, year };
