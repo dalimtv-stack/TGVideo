@@ -21,9 +21,33 @@ export function isAndroidTV() {
   const ua = navigator.userAgent || '';
   const isTvUA = /Android.*TV|SMART-TV|AFT|GoogleTV|Chromecast|BRAVIA|MIBOX|SHIELD|Nexus Player|Leanback/i.test(ua);
   const isAndroid = !!(window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android' || /Android/i.test(ua));
-  
+
   // En la APK de Android: si está en orientación apaisada y es operado sin pantalla táctil (mando a distancia)
   const isTvLandscapeApp = isAndroid && (window.innerWidth > window.innerHeight) && (navigator.maxTouchPoints === 0 || isTvUA);
-  
+
   return isTvUA || isTvLandscapeApp;
+}
+
+/**
+ * Configura la escala y el viewport de televisión para igualar exactamente la visualización de PC a 1080p.
+ */
+export function setupTvPlatform() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (!isAndroidTV()) return;
+
+  document.documentElement.classList.add('is-tv');
+
+  // Si el viewport no se ha establecido en 1920, forzarlo
+  const vp = document.querySelector('meta[name="viewport"]');
+  if (vp && !vp.content.includes('width=1920')) {
+    vp.setAttribute('content', 'width=1920, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+  }
+
+  // Si por limitaciones del motor WebView el ancho lógico efectivo sigue siendo menor a 1600px,
+  // ajustar el tamaño de fuente raíz dinámicamente para mantener proporciones idénticas a PC 1080p.
+  const width = window.innerWidth;
+  if (width > 0 && width < 1600) {
+    const factor = Math.max(0.65, Math.min(1.0, width / 1920));
+    document.documentElement.style.fontSize = `${(16 * factor).toFixed(2)}px`;
+  }
 }
