@@ -35,3 +35,15 @@ body[data-skin="oled"] {
   --theme-accent: #e50914;
 }
 
+
+/* Escala de respaldo para pantallas de TV con resolución lógica reducida (< 1400px) */
+@media screen and (max-width: 1400px) {
+  html.is-tv:not([data-ui-scale]) {
+    --ui-scale: 0.85;
+  }
+}
+@media screen and (max-width: 1050px) {
+  html.is-tv:not([data-ui-scale]) {
+    --ui-scale: 0.72;
+  }
+}
