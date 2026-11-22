@@ -437,6 +437,17 @@
   font-size: 1.05rem;
   line-height: 1.2;
 }
+.settings-overlay:has(.device-settings-form) .settings-dialog {
+  width: min(460px, 92vw);
+  max-height: 88vh;
+  padding: 0.85rem 1.25rem;
+}
+.settings-overlay:has(.device-settings-form) header {
+  margin-bottom: 0.45rem;
+}
+.settings-overlay:has(.device-settings-form) h2 {
+  font-size: 1.05rem;
+}
 .settings-overlay:has(.device-settings-form) .settings-subtitle {
   font-size: 0.74rem;
   color: #888;
