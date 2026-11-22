@@ -687,3 +687,22 @@
     font-size: 1.1rem;
   }
 }
+
+/* Fire TV / Android TV: el vídeo de YouTube se pinta en una capa de hardware.
+   Esquinas redondeadas + overflow:hidden + transform + animaciones de opacidad
+   obligan a recortarlo y la imagen sale negra (los subtítulos sí se ven). */
+html.is-tv .carousel-trailer,
+html.is-tv .carousel-trailer-frame-container,
+html.is-tv .carousel-trailer-frame-wrap {
+  border-radius: 0 !important;
+  overflow: visible !important;
+  transform: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+html.is-tv .carousel-trailer-modal,
+html.is-tv .carousel-trailer-modal.closing {
+  animation: none !important;
+  opacity: 1 !important;
+  background: #000;
+}

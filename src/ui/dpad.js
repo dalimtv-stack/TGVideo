@@ -1085,6 +1085,20 @@ export function initDpad() {
       }
     }
 
+    // Fuera del reproductor, PLAY/PAUSE del mando actúa como OK
+    const isPlayPauseOutside = e.key === 'MediaPlayPause' || e.key === 'MediaPlay' || e.key === 'MediaPause' ||
+      e.key === 'Play' || e.key === 'Pause' || e.key === 'ToggleMediaPlayPause' ||
+      e.keyCode === 179 || e.keyCode === 85 || e.keyCode === 126 || e.keyCode === 127 || e.keyCode === 250;
+    if (isPlayPauseOutside && !activePlayerController) {
+      const el = document.activeElement;
+      if (el && el !== document.body && el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        e.stopPropagation();
+        el.click();
+      }
+      return;
+    }
+
     const isInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName);
     const isRange = e.target.tagName === 'INPUT' && e.target.type === 'range';
     const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };

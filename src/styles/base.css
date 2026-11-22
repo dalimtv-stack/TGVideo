@@ -112,7 +112,7 @@ html.is-tv .profiles-title {
 html.is-tv .profiles-grid {
   gap: 1.5rem;
 }
-html.is-tv .avatar {
+html.is-tv .profiles-screen .avatar:not(.small) {
   width: 105px;
   height: 105px;
   font-size: 2.5rem;
