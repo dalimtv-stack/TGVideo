@@ -710,7 +710,6 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   document.querySelectorAll('.home-nav-item').forEach(button => {
     button.onclick = (e) => {
       button.blur();
-      carouselHeader?.classList.remove('is-expanded');
       button.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       destroyCarousel();
       showHome(tg, sync, profile, { selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
