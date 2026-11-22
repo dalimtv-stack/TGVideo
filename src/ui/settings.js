@@ -1,3 +1,4 @@
+import { isAndroidTV } from '../core/platform.js';
 import { startAppUpdate } from '../core/updater.js';
 import { checkForUpdate } from '../core/updateCheck.js';
 import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
@@ -54,14 +55,33 @@ export function getDeviceSettings(profile) {
     chosenPlayer = 'artplayer';
   }
 
+  // Escala predeterminada según tipo de pantalla si el dispositivo no ha guardado aún una preferencia
+  let defaultScaleIndex = 4; // 'Grande (1.12)' para PC y monitores de escritorio
+  if (typeof window !== 'undefined') {
+    if (isAndroidTV()) {
+      const dpr = window.devicePixelRatio || 1;
+      const width = window.innerWidth;
+      // En Android TV a 1080p, la densidad del sistema (320dpi) reduce los píxeles CSS lógicos a ~960px.
+      // Ajustamos la escala inicial para que tenga exactamente la misma proporción (10-11 portadas por fila) que en PC a 1080p:
+      if (width <= 1000 || dpr >= 1.8) {
+        defaultScaleIndex = 1; // 0.72 ("Muy pequeño": 10-11 portadas por fila en 960px)
+      } else if (width <= 1400 || dpr >= 1.3) {
+        defaultScaleIndex = 2; // 0.85 ("Pequeño": 9-10 portadas por fila en 1280px)
+      }
+    }
+  }
+
+  // Se prioriza la escala específica de este hardware (localStorage o perfil bajo deviceId)
+  const deviceSpecificScale = devProfile.ui_scale ?? localScale;
+  const resolvedScale = (deviceSpecificScale !== null && deviceSpecificScale !== undefined)
+    ? normalizeScaleIndex(deviceSpecificScale, defaultScaleIndex)
+    : defaultScaleIndex;
+
   return {
     deviceId,
     player: chosenPlayer,
     skipSeconds: Number(devProfile.skip_seconds || localSkip || profile?.skip_seconds || legacyLocalSkip || 10),
-    uiScale: normalizeScaleIndex(
-      devProfile.ui_scale ?? localScale ?? profile?.cover_scale ?? profile?.ui_scale ?? legacyLocalScale,
-      4
-    ),
+    uiScale: resolvedScale,
   };
 }
 

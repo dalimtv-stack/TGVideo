@@ -365,7 +365,7 @@ function configureMainActivity() {
     }
   }
 
-  // WebSettings para reproducción de medios sin bloqueo y soporte óptimo de WebView
+  // WebSettings para reproducción de medios sin bloqueo, soporte óptimo de WebView y control de escala en Android TV
   if (!content.includes('setMediaPlaybackRequiresUserGesture(false)')) {
     const webSettingsCode = `
         if (getBridge() != null && getBridge().getWebView() != null) {
@@ -375,6 +375,9 @@ function configureMainActivity() {
             ws.setMediaPlaybackRequiresUserGesture(false);
             ws.setAllowFileAccess(true);
             ws.setAllowContentAccess(true);
+            ws.setUseWideViewPort(true);
+            ws.setLoadWithOverviewMode(true);
+            ws.setTextZoom(100);
         }`;
 
     if (content.includes('super.onCreate(savedInstanceState);')) {
