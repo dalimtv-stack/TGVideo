@@ -45,6 +45,15 @@ export function getDeviceSettings(profile) {
   const legacyLocalPlayer = typeof localStorage !== 'undefined' && profile?.id ? localStorage.getItem(`tgvideo_player_${profile.id}`) : null;
   const localSkip = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_skip') : null;
   const legacyLocalSkip = typeof localStorage !== 'undefined' && profile?.id ? localStorage.getItem(`tgvideo_skip_${profile.id}`) : null;
+
+  // En Android TV / Fire TV, resetear valores heredados de escritorio si no han sido calibrados expresamente
+  if (typeof window !== 'undefined' && isAndroidTV()) {
+    if (localStorage.getItem('tgvideo_tv_scale_calibrated') !== 'v2') {
+      localStorage.removeItem('tgvideo_device_scale');
+      localStorage.setItem('tgvideo_tv_scale_calibrated', 'v2');
+    }
+  }
+
   const localScale = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_scale') : null;
   const legacyLocalScale = typeof localStorage !== 'undefined' && profile?.id ? localStorage.getItem(`tgvideo_scale_${profile.id}`) : null;
 
