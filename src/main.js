@@ -527,6 +527,10 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       loadOverrides(sync).catch(() => {});
       sync.pullProfile(profile.id).then(async remote => {
         if (!remote) return;
+        if (remote.progress) {
+          const mergedPrg = sync.mergeProgress(loadProgress(profile.id), remote.progress);
+          writeFullProgress(profile.id, mergedPrg);
+        }
         const remoteFavs = mergeFavorites(remote.favorites || [], remote.profile?.favorites || []);
         const localFavs = loadFavorites(profile.id);
         const mergedFavs = mergeFavorites(localFavs, remoteFavs);

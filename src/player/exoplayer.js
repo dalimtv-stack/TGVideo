@@ -297,9 +297,14 @@ export async function playExoPlayer(opts) {
       try { await resetExportedSenders(client); } catch (_) {}
     }
 
-    const fileKey = String(file?.id || file?.messageId || file?.key || '');
+    const fileKey = String(file?.key || file?.id || file?.messageId || '');
     if (currentDuration > 0 && fileKey) {
-      saveProgress(profile.id, fileKey, Math.floor(currentPosition), Math.floor(currentDuration));
+      const progress = saveProgress(profile.id, fileKey, Math.floor(currentPosition), Math.floor(currentDuration));
+      if (sync && profile?.id) {
+        try {
+          sync.pushProfile({ profile, progress }).catch(() => {});
+        } catch (_) {}
+      }
     }
     mount.innerHTML = '';
     if (!isSwitching) onClose?.();
@@ -402,6 +407,16 @@ export async function playExoPlayer(opts) {
       if (isPlaying) {
         hideLoading();
         showOsd();
+      } else {
+        const fileKey = String(file?.key || file?.id || file?.messageId || '');
+        if (fileKey && currentDuration > 0) {
+          const progress = saveProgress(profile.id, fileKey, Math.floor(currentPosition), Math.floor(currentDuration));
+          if (sync && profile?.id) {
+            try {
+              sync.schedulePush({ profile, progress });
+            } catch (_) {}
+          }
+        }
       }
     });
 
@@ -437,9 +452,14 @@ export async function playExoPlayer(opts) {
       const now = Date.now();
       if (now - lastProgressSave > 5000 && currentDuration > 0) {
         lastProgressSave = now;
-        const fileKey = String(file?.id || file?.messageId || file?.key || '');
+        const fileKey = String(file?.key || file?.id || file?.messageId || '');
         if (fileKey) {
-          saveProgress(profile.id, fileKey, Math.floor(currentPosition), Math.floor(currentDuration));
+          const progress = saveProgress(profile.id, fileKey, Math.floor(currentPosition), Math.floor(currentDuration));
+          if (sync && profile?.id) {
+            try {
+              sync.schedulePush({ profile, progress });
+            } catch (_) {}
+          }
         }
       }
     });
@@ -447,6 +467,15 @@ export async function playExoPlayer(opts) {
     endedListener = await ExoPlayerPlugin.addListener('onEnded', () => {
       isPlaying = false;
       showOsd();
+      const fileKey = String(file?.key || file?.id || file?.messageId || '');
+      if (fileKey && currentDuration > 0) {
+        const progress = saveProgress(profile.id, fileKey, Math.floor(currentDuration), Math.floor(currentDuration), true);
+        if (sync && profile?.id) {
+          try {
+            sync.schedulePush({ profile, progress }, 0);
+          } catch (_) {}
+        }
+      }
       if (nextFile && onNext) {
         closePlayer({ isSwitching: true });
         onNext(nextFile);

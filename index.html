@@ -3,6 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" id="app-viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <script>
+      (function() {
+        try {
+          var ua = navigator.userAgent || '';
+          var isTvUA = /Android.*TV|SMART-TV|AFT|GoogleTV|Chromecast|BRAVIA|MIBOX|SHIELD|Nexus Player|Leanback/i.test(ua);
+          var isAndroid = /Android/i.test(ua);
+          var isTv = isTvUA || (isAndroid && window.innerWidth > window.innerHeight && navigator.maxTouchPoints === 0);
+          if (isTv) {
+            document.documentElement.classList.add('is-tv');
+            var w = window.innerWidth;
+            if (w > 0 && w < 1500) {
+              var factor = Math.min(1.0, Math.max(0.60, w / 1440));
+              document.documentElement.style.zoom = factor.toFixed(3);
+            }
+          }
+        } catch (_) {}
+      })();
+    </script>
     <meta name="theme-color" content="#0f0f0f" />
     <title>TGVideo</title>
     <link rel="manifest" href="/manifest.webmanifest" />

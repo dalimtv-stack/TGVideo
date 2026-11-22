@@ -1,7 +1,7 @@
 // src/sync/telegramSync.js
 // Sincronización bidireccional vía canal de Telegram (Perfiles::TGVideo::tgstorage)
 import { Api } from 'telegram';
-import { loadFavorites, mergeFavorites } from '../player/progress.js';
+import { loadFavorites, mergeFavorites, loadProgress } from '../player/progress.js';
 import { readImagePrefs, mergeImagePrefMaps } from '../metadata/imagePrefs.js';
 import { createImagePrefsSync } from './imagePrefsSync.js';
 
@@ -431,6 +431,13 @@ export function createTelegramSync({ getClient, peerOf }) {
       if (snapshot.profile) {
         snapshot.profile.image_prefs = currentImg;
       }
+
+      // Asegurar que el progreso local quede incluido y fusionado exhaustivamente
+      const localPrg = typeof loadProgress === 'function' ? loadProgress(pid) : {};
+      const currentPrg = snapshot.progress && Object.keys(snapshot.progress).length > 0
+        ? mergeProgress(localPrg, snapshot.progress)
+        : localPrg;
+      snapshot.progress = currentPrg;
 
       const json = JSON.stringify(snapshot);
 

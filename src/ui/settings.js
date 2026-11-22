@@ -48,9 +48,9 @@ export function getDeviceSettings(profile) {
 
   // En Android TV / Fire TV, resetear valores heredados de escritorio si no han sido calibrados expresamente
   if (typeof window !== 'undefined' && isAndroidTV()) {
-    if (localStorage.getItem('tgvideo_tv_scale_calibrated') !== 'v2') {
+    if (localStorage.getItem('tgvideo_tv_scale_calibrated') !== 'v3') {
       localStorage.removeItem('tgvideo_device_scale');
-      localStorage.setItem('tgvideo_tv_scale_calibrated', 'v2');
+      localStorage.setItem('tgvideo_tv_scale_calibrated', 'v3');
     }
   }
 
@@ -68,15 +68,9 @@ export function getDeviceSettings(profile) {
   let defaultScaleIndex = 4; // 'Grande (1.12)' para PC y monitores de escritorio
   if (typeof window !== 'undefined') {
     if (isAndroidTV()) {
-      const dpr = window.devicePixelRatio || 1;
-      const width = window.innerWidth;
-      // En Android TV a 1080p, la densidad del sistema (320dpi) reduce los píxeles CSS lógicos a ~960px.
-      // Ajustamos la escala inicial para que tenga exactamente la misma proporción (10-11 portadas por fila) que en PC a 1080p:
-      if (width <= 1000 || dpr >= 1.8) {
-        defaultScaleIndex = 1; // 0.72 ("Muy pequeño": 10-11 portadas por fila en 960px)
-      } else if (width <= 1400 || dpr >= 1.3) {
-        defaultScaleIndex = 2; // 0.85 ("Pequeño": 9-10 portadas por fila en 1280px)
-      }
+      // Con el ajuste de escala de píxeles (zoom) de TV activo, la escala 1.0 (Normal)
+      // muestra exactamente la misma proporción (10-11 portadas por fila) que en PC de escritorio
+      defaultScaleIndex = 3; // 'Normal (1.0)'
     }
   }
 
