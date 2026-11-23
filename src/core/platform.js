@@ -59,10 +59,15 @@ export function applyDevicePixelZoom(customZoom) {
 
   // Automático: si es televisor, escala proporcional para equivaler a ~1440px
   if (isAndroidTV()) {
-    const width = window.innerWidth;
-    if (width > 0 && width < 1500) {
+    // Tomar en cuenta el zoom ya aplicado para que el ancho base sea estable y no oscile al cambiar de pestaña
+    const currentZoom = parseFloat(document.documentElement.style.zoom) || 1.0;
+    const baseWidth = (window.innerWidth && currentZoom > 0)
+      ? Math.round(window.innerWidth * currentZoom)
+      : (window.screen?.width || 1280);
+
+    if (baseWidth > 0 && baseWidth < 1500) {
       const targetWidth = 1440;
-      const factor = Math.min(1.0, Math.max(0.60, width / targetWidth));
+      const factor = Math.min(1.0, Math.max(0.60, baseWidth / targetWidth));
       document.documentElement.style.zoom = factor.toFixed(3);
     } else {
       document.documentElement.style.zoom = '';

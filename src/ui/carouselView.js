@@ -424,8 +424,14 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     const playlistKeys = allKeys.slice(idx).concat(allKeys.slice(0, idx));
     const curKey = playlistKeys[0];
     const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://localhost';
+    const isTv = isAndroidTV();
+    // En Android TV reproducir con sonido (mute=0); en iPhone/navegadores web silenciado por directiva de autoplay
+    const muteParam = isTv ? '0' : '1';
+    // En Android TV ocultar controles para aspecto cinemático; en iPhone/pantallas táctiles mostrar controles para pulsar Play si no arranca solo
+    const controlsParam = isTv ? '0' : '1';
     const src = `https://www.youtube.com/embed/${encodeURIComponent(curKey)}`
-      + `?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&disablekb=1`
+      + `?autoplay=1&mute=${muteParam}&controls=${controlsParam}&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3`
+      + `${isTv ? '&disablekb=1' : ''}`
       + `&loop=1&playlist=${encodeURIComponent(playlistKeys.join(','))}&enablejsapi=1&origin=${encodeURIComponent(origin)}`;
 
     const isMulti = trailers.length > 1;
@@ -433,9 +439,16 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     trailerBox.innerHTML = `
       <div class="carousel-trailer-wrap">
         ${isMulti ? `<div class="carousel-trailer-tag" title="${esc(filmName)}">Tráiler ${idx + 1}/${trailers.length} · ${esc(filmName)}</div>` : ''}
-        <iframe src="${src}" title="Tráiler" tabindex="-1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen></iframe>
+        <iframe src="${src}" title="Tráiler" tabindex="-1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen playsinline webkit-playsinline></iframe>
       </div>
     `;
+
+    trailerBox.onclick = (e) => {
+      if (e.target !== trailerBox.querySelector('iframe') && logoTrailerTrailers.length > 0) {
+        const t = items[cur];
+        openFullscreenTrailer(logoTrailerTrailers, displayName(t), logoTrailerIdx);
+      }
+    };
   }
 
   function showTrailer(t) {
@@ -515,8 +528,8 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       const { itemW, gap } = getItemMetrics();
       const rem = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).fontSize)) || 16;
       const uiScale = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'))) || 1.32;
-      const scaleFactor = uiScale * 1.3865;
-      const activeMargin = logos ? 0 : Math.round(4.25 * rem * scaleFactor);
+      const postersScale = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--carousel-posters-scale'))) || (uiScale * 1.3865);
+      const activeMargin = logos ? 0 : Math.round(4.25 * rem * postersScale);
       targetX = cur * (itemW + gap) + activeMargin + itemW / 2 - stageWidth / 2;
     }
 

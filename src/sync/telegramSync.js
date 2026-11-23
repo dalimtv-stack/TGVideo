@@ -314,6 +314,8 @@ export function createTelegramSync({ getClient, peerOf }) {
             10,
           favorites: mergeFavorites(data.profile?.favorites || [], data.favorites || []),
           image_prefs: mergeImagePrefMaps(data.image_prefs || {}, data.profile?.image_prefs || {}),
+          devices: data.profile?.devices || {},
+          ui_scale: data.profile?.ui_scale,
           lastSync: f.timestamp,
           messageId: f.messageId,
         });

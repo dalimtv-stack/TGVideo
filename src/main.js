@@ -523,6 +523,13 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
         const mergedImg = await pullAndMergeImagePrefs(profile, sync, remoteImg);
         profile.image_prefs = mergedImg;
 
+        if (remote.profile?.devices) {
+          profile.devices = { ...(remote.profile.devices || {}), ...(profile.devices || {}) };
+        }
+        if (remote.profile?.ui_scale !== undefined && profile.ui_scale === undefined) {
+          profile.ui_scale = remote.profile.ui_scale;
+        }
+
         if (mergedFavs.length > remoteFavs.length) {
           sync.pushProfile({
             profile,

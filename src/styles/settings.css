@@ -767,3 +767,61 @@ html.is-tv .settings-overlay:has(.device-settings-form) .settings-dialog {
   max-height: 97vh !important;
   padding: 0.5rem 0.85rem !important;
 }
+/* Grid adaptativo para el modal Skin (2 columnas en TV y pantallas anchas) */
+.skin-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.skin-settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+@media (min-width: 680px) {
+  .skin-settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.8rem 1.1rem;
+    align-items: start;
+  }
+}
+
+.skin-settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+html.is-tv .skin-settings-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 0.5rem 0.9rem !important;
+  align-items: start !important;
+}
+
+html.is-tv .settings-dialog--fullscreen {
+  width: min(920px, 96vw) !important;
+  height: auto !important;
+  max-height: 96vh !important;
+  padding: 0.55rem 0.95rem !important;
+}
+
+html.is-tv .settings-dialog--fullscreen header {
+  margin-bottom: 0.35rem !important;
+}
+
+html.is-tv .settings-dialog--fullscreen .settings-section {
+  padding: 0.4rem 0.65rem !important;
+  margin-top: 0 !important;
+}
+
+html.is-tv .settings-dialog--fullscreen .ui-scale-setting {
+  margin-bottom: 0.2rem !important;
+}
+
+html.is-tv .settings-dialog--fullscreen .ui-scale-ticks {
+  margin-top: 0.15rem !important;
+}

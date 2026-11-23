@@ -26,16 +26,26 @@ export const UI_SCALE_LEVELS = [
 ];
 
 function normalizeScaleIndex(value, fallback = 5) {
+  if (value === null || value === undefined) return fallback;
   if (value === 'diminuto') return 0;
   if (value === 'muy-pequeno') return 1;
   if (value === 'pequeno') return 2;
   if (value === 'normal') return 3;
   if (value === 'grande' || value === 'muy-grande') return 4;
   if (value === 'gigante' || value === 'enorme') return 5;
+  const foundById = UI_SCALE_LEVELS.findIndex(level => level.id === String(value));
+  if (foundById !== -1 && (typeof value === 'string' && (value.startsWith('-') || value === '0'))) {
+    return foundById;
+  }
   const index = Number(value);
-  return Number.isFinite(index)
-    ? Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, Math.round(index)))
-    : fallback;
+  if (Number.isFinite(index)) {
+    if (index >= 0 && index < UI_SCALE_LEVELS.length) {
+      return Math.round(index);
+    }
+    const byNegativeId = UI_SCALE_LEVELS.findIndex(level => level.id === String(Math.round(index)));
+    if (byNegativeId !== -1) return byNegativeId;
+  }
+  return fallback;
 }
 
 export const CAROUSEL_POSTERS_SCALE_LEVELS = UI_SCALE_LEVELS.map(level => ({
@@ -733,36 +743,42 @@ function showSkinSettings(profile, sync, onChanged) {
   const device = getDeviceSettings(profile);
   const { overlay, close } = modal('Skin', `
     <form class="skin-settings-form">
-      <fieldset class="settings-section">
-        <legend class="settings-legend">Novedades</legend>
-        <button type="button" class="btn-ghost" data-focusable id="btn-skin-news">Configurar Novedades</button>
-      </fieldset>
-      <fieldset class="settings-section">
-        <legend class="settings-legend">Escalas</legend>
-        <label class="ui-scale-setting">
-          <span class="ui-scale-header"><span>Escala de portadas y letras:</span><strong class="ui-scale-value" id="skin-scale-label"></strong></span>
-          <input name="uiScale" type="range" class="settings-slider" min="0" max="${UI_SCALE_LEVELS.length - 1}" step="1" value="${device.uiScale}" data-focusable>
-          <span class="ui-scale-ticks">${UI_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
-        </label>
-        <label class="ui-scale-setting">
-          <span class="ui-scale-header"><span>Escala de Carrusel Portadas:</span><strong class="ui-scale-value" id="skin-posters-label"></strong></span>
-          <input name="carouselPostersScale" type="range" class="settings-slider" min="0" max="${CAROUSEL_POSTERS_SCALE_LEVELS.length - 1}" step="1" value="${device.carouselPostersScale}" data-focusable>
-          <span class="ui-scale-ticks">${CAROUSEL_POSTERS_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
-        </label>
-        <label class="ui-scale-setting">
-          <span class="ui-scale-header"><span>Escala Carrusel Logos:</span><strong class="ui-scale-value" id="skin-logos-label"></strong></span>
-          <input name="carouselLogosScale" type="range" class="settings-slider" min="0" max="${CAROUSEL_LOGOS_SCALE_LEVELS.length - 1}" step="1" value="${device.carouselLogosScale}" data-focusable>
-          <span class="ui-scale-ticks">${CAROUSEL_LOGOS_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
-        </label>
-      </fieldset>
-      <fieldset class="settings-section">
-        <legend class="settings-legend">Resolución</legend>
-        <label class="ui-scale-setting">
-          <span class="ui-scale-header"><span>Resolución de pantalla (píxeles):</span><strong class="ui-scale-value" id="skin-zoom-label"></strong></span>
-          <input name="pixelZoom" type="range" class="settings-slider" min="0" max="${PIXEL_ZOOM_LEVELS.length - 1}" step="1" value="${device.pixelZoomIndex}" data-focusable>
-          <span class="ui-scale-ticks">${PIXEL_ZOOM_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
-        </label>
-      </fieldset>
+      <div class="skin-settings-grid">
+        <div class="skin-settings-col">
+          <fieldset class="settings-section">
+            <legend class="settings-legend">Novedades</legend>
+            <button type="button" class="btn-ghost" data-focusable id="btn-skin-news">Configurar Novedades</button>
+          </fieldset>
+          <fieldset class="settings-section" style="margin-top:0.4rem;">
+            <legend class="settings-legend">Resolución</legend>
+            <label class="ui-scale-setting">
+              <span class="ui-scale-header"><span>Resolución de pantalla (píxeles):</span><strong class="ui-scale-value" id="skin-zoom-label"></strong></span>
+              <input name="pixelZoom" type="range" class="settings-slider" min="0" max="${PIXEL_ZOOM_LEVELS.length - 1}" step="1" value="${device.pixelZoomIndex}" data-focusable>
+              <span class="ui-scale-ticks">${PIXEL_ZOOM_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
+            </label>
+          </fieldset>
+        </div>
+        <div class="skin-settings-col">
+          <fieldset class="settings-section">
+            <legend class="settings-legend">Escalas</legend>
+            <label class="ui-scale-setting">
+              <span class="ui-scale-header"><span>Escala de portadas y letras:</span><strong class="ui-scale-value" id="skin-scale-label"></strong></span>
+              <input name="uiScale" type="range" class="settings-slider" min="0" max="${UI_SCALE_LEVELS.length - 1}" step="1" value="${device.uiScale}" data-focusable>
+              <span class="ui-scale-ticks">${UI_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
+            </label>
+            <label class="ui-scale-setting">
+              <span class="ui-scale-header"><span>Escala de Carrusel Portadas:</span><strong class="ui-scale-value" id="skin-posters-label"></strong></span>
+              <input name="carouselPostersScale" type="range" class="settings-slider" min="0" max="${CAROUSEL_POSTERS_SCALE_LEVELS.length - 1}" step="1" value="${device.carouselPostersScale}" data-focusable>
+              <span class="ui-scale-ticks">${CAROUSEL_POSTERS_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
+            </label>
+            <label class="ui-scale-setting">
+              <span class="ui-scale-header"><span>Escala Carrusel Logos:</span><strong class="ui-scale-value" id="skin-logos-label"></strong></span>
+              <input name="carouselLogosScale" type="range" class="settings-slider" min="0" max="${CAROUSEL_LOGOS_SCALE_LEVELS.length - 1}" step="1" value="${device.carouselLogosScale}" data-focusable>
+              <span class="ui-scale-ticks">${CAROUSEL_LOGOS_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
+            </label>
+          </fieldset>
+        </div>
+      </div>
       <p class="settings-status" role="status"></p>
       <div class="settings-actions"><button class="btn" data-focusable type="submit">Guardar en este dispositivo</button></div>
     </form>
@@ -826,6 +842,16 @@ function showSkinSettings(profile, sync, onChanged) {
     applyProfileScale(profile);
     close();
     onChanged();
+
+    // Enfocar el botón "Guardar en este dispositivo" del modal anterior (Ajustes de dispositivo)
+    setTimeout(() => {
+      const prevForm = document.querySelector('.device-settings-form');
+      const saveBtn = prevForm?.querySelector('button[type="submit"]');
+      if (saveBtn) {
+        saveBtn.focus({ preventScroll: true });
+        saveBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }, 60);
     (async () => {
       try {
         const remote = await sync.pullProfile(profile.id);
