@@ -1,16 +1,245 @@
 /* Selector de imágenes de la ficha (engranaje) */
 .detail-nav-actions { display: inline-flex; gap: 0.6rem; align-items: center; }
-.imgpick { padding: 0.75rem 1rem 1rem; display: flex; flex-direction: column; gap: 0.75rem; max-height: 70vh; overflow-y: auto; }
+
+/* Diálogo del selector de imágenes: adaptación fluida al tamaño de la pantalla */
+.settings-dialog.imgpick-dialog,
+.settings-dialog:has(.imgpick),
+.settings-overlay:has(.imgpick) .settings-dialog {
+  width: min(1380px, 94vw) !important;
+  max-width: 95vw !important;
+  max-height: 90vh !important;
+  padding: 1.2rem 1.4rem !important;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-dialog.imgpick-dialog header,
+.settings-overlay:has(.imgpick) .settings-dialog header {
+  margin-bottom: 0.6rem;
+  flex: none;
+}
+
+.imgpick {
+  padding: 0.25rem 0.25rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: calc(90vh - 90px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .imgpick-opt { width: 100%; justify-content: center; }
 .imgpick-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .imgpick-msg { opacity: 0.8; margin: 0.25rem 0; }
-.imgpick-grid { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
-.imgpick-grid.imgpick-backdrop { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-.imgpick-grid.imgpick-logo { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
-.imgpick-item { background: rgba(255,255,255,0.08); border: 2px solid transparent; border-radius: 8px; padding: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; min-height: 80px; }
-.imgpick-item img { width: 100%; height: auto; max-height: 220px; object-fit: contain; border-radius: 4px; }
-.imgpick-item.is-current { border-color: #e50914; }
-.imgpick-item:focus, .imgpick-item:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+/* Carpetas por idioma */
+.imgpick-folders {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.35rem 0 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.imgpick-folder-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ddd;
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.imgpick-folder-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.imgpick-folder-btn.is-active {
+  background: #e50914;
+  border-color: #e50914;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(229, 9, 20, 0.4);
+}
+
+.imgpick-folder-btn:focus,
+.imgpick-folder-btn:focus-visible,
+.imgpick-folder-btn.dpad-focused {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  transform: scale(1.04);
+}
+
+.imgpick-folder-icon {
+  font-size: 0.95rem;
+}
+
+.imgpick-folder-badge {
+  background: rgba(0, 0, 0, 0.35);
+  color: #eee;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.imgpick-folder-btn.is-active .imgpick-folder-badge {
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+}
+
+/* Rejilla responsive de imágenes: adaptable a pantallas grandes (PC, TV 1080p/4K) */
+.imgpick-grid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  align-content: start;
+}
+.imgpick-grid.imgpick-backdrop {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.imgpick-grid.imgpick-logo {
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}
+
+@media (min-width: 768px) {
+  .imgpick-grid {
+    grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+    gap: 0.8rem;
+  }
+  .imgpick-grid.imgpick-backdrop {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 0.9rem;
+  }
+  .imgpick-grid.imgpick-logo {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 0.85rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .imgpick-grid {
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+    gap: 0.9rem;
+  }
+  .imgpick-grid.imgpick-backdrop {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+  }
+  .imgpick-grid.imgpick-logo {
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 0.95rem;
+  }
+}
+
+@media (min-width: 1600px) {
+  .imgpick-grid {
+    grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+    gap: 1rem;
+  }
+  .imgpick-grid.imgpick-backdrop {
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1.1rem;
+  }
+}
+
+.imgpick-item {
+  position: relative;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  padding: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.imgpick-grid .imgpick-item {
+  aspect-ratio: 2 / 3;
+}
+.imgpick-grid.imgpick-backdrop .imgpick-item {
+  aspect-ratio: 16 / 9;
+}
+.imgpick-grid.imgpick-logo .imgpick-item {
+  aspect-ratio: 16 / 7;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.imgpick-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 5px;
+  display: block;
+}
+
+.imgpick-grid.imgpick-logo .imgpick-item img {
+  object-fit: contain;
+}
+
+.imgpick-item.is-current {
+  border-color: #e50914;
+  box-shadow: 0 0 10px rgba(229, 9, 20, 0.5);
+}
+
+.imgpick-item.is-current::after {
+  content: '✓';
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: #e50914;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.imgpick-item:focus,
+.imgpick-item:focus-visible,
+.imgpick-item.dpad-focused {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  transform: scale(1.04);
+  z-index: 2;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.imgpick-lang-tag {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
 
 /* Selector de proveedor de imágenes (TMDB / Fanart.tv): botones, navegables con mando */
 .imgpick-providers { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }

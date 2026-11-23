@@ -81,8 +81,16 @@ async function request(path, params = {}, signal) {
   const key = getTmdbKey();
   if (!key) throw new Error("Introduce tu clave de TMDB en Ajustes globales.");
   const url = new URL(API + path);
-  url.searchParams.set("language", "es-ES");
-  for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
+  if (!("language" in params)) {
+    url.searchParams.set("language", "es-ES");
+  }
+  for (const [name, value] of Object.entries(params)) {
+    if (value === null || value === undefined) {
+      url.searchParams.delete(name);
+    } else {
+      url.searchParams.set(name, value);
+    }
+  }
   const headers = {};
   if (key.includes(".")) headers.Authorization = `Bearer ${key}`;
   else url.searchParams.set("api_key", key);
@@ -93,16 +101,22 @@ async function request(path, params = {}, signal) {
 // Imágenes disponibles en TMDB para un título: { poster: [...], backdrop: [...], logo: [...] }
 export async function fetchTmdbImages(type, id, signal) {
   const endpoint = type === "collection" ? "collection" : (type === "serie" || type === "tv" ? "tv" : "movie");
-  const data = await request(`/${endpoint}/${id}/images`, { include_image_language: "es,en,null" }, signal);
-  const rank = (x) => (x.iso_639_1 === "es" ? 0 : x.iso_639_1 === "en" ? 1 : 2);
+  const data = await request(`/${endpoint}/${id}/images`, { language: null }, signal);
+  const rank = (x) => (x.iso_639_1 === "es" ? 0 : x.iso_639_1 === "en" ? 1 : !x.iso_639_1 ? 2 : 3);
   const build = (list = [], thumb, full) => [...list]
-    .sort((a, b) => rank(a) - rank(b) || (b.vote_average || 0) - (a.vote_average || 0))
-    .slice(0, 40)
-    .map((x) => ({ thumb: imageUrl(x.file_path, thumb), url: imageUrl(x.file_path, full), lang: x.iso_639_1 || "" }));
+    .sort((a, b) => rank(a) - rank(b) || (b.vote_average || 0) - (a.vote_average || 0) || (b.vote_count || 0) - (a.vote_count || 0))
+    .slice(0, 500)
+    .map((x) => ({
+      thumb: imageUrl(x.file_path, thumb),
+      url: imageUrl(x.file_path, full),
+      lang: x.iso_639_1 || "",
+      vote: x.vote_average || 0,
+      likes: x.vote_count || 0,
+    }));
   return {
-    poster: build(data.posters, "w185", "w500"),
-    backdrop: build(data.backdrops, "w300", "w1280"),
-    logo: build(data.logos, "w300", "w500"),
+    poster: build(data?.posters, "w185", "w500"),
+    backdrop: build(data?.backdrops, "w300", "w1280"),
+    logo: build(data?.logos, "w300", "w500"),
   };
 }
 
