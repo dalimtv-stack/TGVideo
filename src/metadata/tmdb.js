@@ -636,36 +636,34 @@ export async function enrichTitle(title, { signal } = {}) {
       }).catch(() => {});
     }
 
-    // Asegurar puntuación de IMDb si aún no se tiene
+    // Asegurar puntuación de IMDb en segundo plano para no bloquear la biblioteca
     const effectiveImdbId = cached.imdbId || title.imdbId;
     if (effectiveImdbId && !cached.hasImdbRating) {
-      try {
-        const r = await fetchImdbRating(effectiveImdbId, type, signal);
+      fetchImdbRating(effectiveImdbId, type, signal).then(r => {
         if (r && Number.isFinite(r) && r > 0) {
           if (!cached.tmdbRating && cached.rating && cached.rating !== r) cached.tmdbRating = cached.rating;
           cached.imdbId = effectiveImdbId;
           cached.rating = r;
           cached.imdbRating = r;
           cached.hasImdbRating = true;
-          await kv.set(cacheKey, cached).catch(() => {});
+          kv.set(cacheKey, cached).catch(() => {});
         }
-      } catch (_) {}
+      }).catch(() => {});
     } else if (!cached.hasImdbRating && cached.id && getTmdbKey()) {
-      try {
-        const ext = await fetchExternalIds(type, cached.id, signal);
+      fetchExternalIds(type, cached.id, signal).then(async ext => {
         const iId = ext?.imdb_id;
         if (iId) {
           cached.imdbId = iId;
-          const r = await fetchImdbRating(iId, type, signal);
+          const r = await fetchImdbRating(iId, type, signal).catch(() => null);
           if (r && Number.isFinite(r) && r > 0) {
             if (!cached.tmdbRating && cached.rating && cached.rating !== r) cached.tmdbRating = cached.rating;
             cached.rating = r;
             cached.imdbRating = r;
             cached.hasImdbRating = true;
           }
-          await kv.set(cacheKey, cached).catch(() => {});
+          kv.set(cacheKey, cached).catch(() => {});
         }
-      } catch (_) {}
+      }).catch(() => {});
     }
 
     title.metadata = cached;

@@ -7,10 +7,10 @@
 .settings-dialog.imgpick-dialog-menu,
 .settings-dialog:not(.imgpick-dialog-grid):has(.imgpick),
 .settings-overlay:not(:has(.imgpick-dialog-grid)) .settings-dialog:has(.imgpick) {
-  width: min(520px, 92vw) !important;
+  width: min(520px, 94vw) !important;
   max-width: 520px !important;
-  max-height: 85vh !important;
-  padding: 1.5rem !important;
+  max-height: min(96vh, calc(100vh - 1.25rem)) !important;
+  padding: 1.1rem 1.35rem !important;
   display: flex;
   flex-direction: column;
 }
@@ -31,16 +31,16 @@
 /* Solo cuando se abre la rejilla de imágenes para elegir póster/fondo/logo
    se expande el diálogo al ancho completo para pantallas grandes (TV, PC) */
 .settings-dialog.imgpick-dialog-grid {
-  width: min(1380px, 94vw) !important;
-  max-width: 95vw !important;
-  max-height: 90vh !important;
-  padding: 1.2rem 1.4rem !important;
+  width: min(1380px, 96vw) !important;
+  max-width: 96vw !important;
+  max-height: min(97vh, calc(100vh - 0.75rem)) !important;
+  padding: 0.85rem 1.15rem !important;
   display: flex;
   flex-direction: column;
 }
 
 .settings-dialog.imgpick-dialog-grid header {
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.45rem;
   flex: none;
 }
 
@@ -48,8 +48,10 @@
   padding: 0.25rem 0.25rem 0.5rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  max-height: calc(90vh - 90px);
+  gap: 0.65rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(97vh - 75px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -321,4 +323,21 @@
   background: #0ea5e9 !important;
   border-color: #0ea5e9 !important;
   box-shadow: 0 0 16px rgba(14, 165, 233, 0.6) !important;
+}
+
+/* Adaptación de imágenes de la ficha para Android TV */
+html.is-tv .settings-dialog.imgpick-dialog-menu,
+html.is-tv .settings-dialog:not(.imgpick-dialog-grid):has(.imgpick) {
+  max-height: 97vh !important;
+  padding: 0.85rem 1.15rem !important;
+}
+
+html.is-tv .settings-dialog.imgpick-dialog-grid {
+  max-height: 98vh !important;
+  padding: 0.65rem 0.95rem !important;
+}
+
+html.is-tv .imgpick {
+  max-height: calc(98vh - 65px) !important;
+  gap: 0.45rem !important;
 }

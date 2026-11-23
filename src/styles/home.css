@@ -651,7 +651,7 @@
   color: var(--theme-text-muted, #aaa);
   padding: 0.3rem 0.65rem;
   border-radius: 9999px;
-  font-size: calc(0.82rem * var(--ui-font-scale, 1));
+  font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
@@ -681,7 +681,7 @@
   box-shadow: 0 0 10px rgba(255, 255, 255, 0.45) !important;
 }
 .category-sort-label {
-  font-size: calc(0.85rem * var(--ui-font-scale, 1));
+  font-size: 0.85rem;
   color: var(--theme-text-muted, #888);
   margin-right: 0.1rem;
   font-weight: 500;
@@ -723,7 +723,7 @@
   color: var(--theme-text-muted, #aaa);
   padding: 0.35rem 0.85rem;
   border-radius: 9999px;
-  font-size: calc(0.82rem * var(--ui-font-scale, 1));
+  font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -862,4 +862,12 @@ html.is-tv .home-header--carousel {
 
 html.is-tv .category-sort-options {
   background: rgba(20, 20, 20, 0.98) !important;
+}
+
+/* Modales en Android TV: ajuste de altura máxima y márgenes para aprovechar la pantalla completa */
+html.is-tv .settings-overlay {
+  padding: 0.4rem 0.75rem !important;
+}
+html.is-tv .settings-dialog {
+  max-height: 97vh !important;
 }

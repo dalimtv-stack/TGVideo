@@ -892,7 +892,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     } else if (focusSort && !fromPointer) {
       document.querySelector('.category-sort-bar')?.classList.add('is-expanded');
       el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);
-    } else if (isCarousel && focusTitleId) {
+    } else if (isCarousel) {
       el = document.querySelector('.carousel-stage');
     }
     if (focusRowId && focusExpandBtn) {
@@ -949,7 +949,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         const newTitles = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
         if (newTitles.length !== beforeCount) {
           TITLES_CACHE = newTitles;
-          if (document.querySelector('.home-screen')) {
+          if (document.querySelector('.home-screen') && !document.querySelector('.carousel-stage:focus, .carousel-stage.dpad-focused') && (selectedSection === 'inicio' || selectedSection === 'colecciones')) {
             showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
           }
         }
@@ -994,9 +994,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     if (!metadataController.signal.aborted && TITLES_CACHE) {
       const before = TITLES_CACHE.length;
       TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
-      const currentSort = getSectionSort(profile.id, selectedSection);
-      if ((TITLES_CACHE.length !== before || currentSort === 'puntuacion') && document.querySelector('.home-screen')) {
-        showHome(tg, sync, profile, { focusSort: currentSort, fromPointer: true });
+      if (TITLES_CACHE.length !== before && document.querySelector('.home-screen') && !document.querySelector('.carousel-stage:focus, .carousel-stage.dpad-focused') && (selectedSection === 'inicio' || selectedSection === 'colecciones')) {
+        showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
       }
     }
   }).catch(() => {});
