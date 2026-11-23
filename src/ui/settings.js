@@ -26,25 +26,25 @@ export const UI_SCALE_LEVELS = [
 ];
 
 function normalizeScaleIndex(value, fallback = 5) {
-  if (value === null || value === undefined) return fallback;
+  if (value === null || value === undefined || value === '') return fallback;
   if (value === 'diminuto') return 0;
   if (value === 'muy-pequeno') return 1;
   if (value === 'pequeno') return 2;
   if (value === 'normal') return 3;
   if (value === 'grande' || value === 'muy-grande') return 4;
   if (value === 'gigante' || value === 'enorme') return 5;
-  const foundById = UI_SCALE_LEVELS.findIndex(level => level.id === String(value));
-  if (foundById !== -1 && (typeof value === 'string' && (value.startsWith('-') || value === '0'))) {
-    return foundById;
-  }
-  const index = Number(value);
-  if (Number.isFinite(index)) {
-    if (index >= 0 && index < UI_SCALE_LEVELS.length) {
-      return Math.round(index);
+  const num = Number(value);
+  if (Number.isFinite(num)) {
+    if (num < 0) {
+      const byNegativeId = UI_SCALE_LEVELS.findIndex(level => level.id === String(Math.round(num)));
+      if (byNegativeId !== -1) return byNegativeId;
     }
-    const byNegativeId = UI_SCALE_LEVELS.findIndex(level => level.id === String(Math.round(index)));
-    if (byNegativeId !== -1) return byNegativeId;
+    if (num >= 0 && num < UI_SCALE_LEVELS.length) {
+      return Math.round(num);
+    }
   }
+  const foundById = UI_SCALE_LEVELS.findIndex(level => level.id === String(value));
+  if (foundById !== -1) return foundById;
   return fallback;
 }
 
@@ -167,8 +167,10 @@ export function applyProfileScale(profile) {
   if (typeof document !== 'undefined') {
     document.documentElement.style.setProperty('--ui-scale', String(conf.scale));
     document.documentElement.setAttribute('data-ui-scale', conf.id);
-    const posterIdx = Math.max(0, Math.min(CAROUSEL_POSTERS_SCALE_LEVELS.length - 1, dev.carouselPostersScale));
-    const logoIdx = Math.max(0, Math.min(CAROUSEL_LOGOS_SCALE_LEVELS.length - 1, dev.carouselLogosScale));
+    const rawPosterIdx = dev.carouselPostersScale;
+    const posterIdx = Math.max(0, Math.min(CAROUSEL_POSTERS_SCALE_LEVELS.length - 1, isNaN(rawPosterIdx) ? 5 : rawPosterIdx));
+    const rawLogoIdx = dev.carouselLogosScale;
+    const logoIdx = Math.max(0, Math.min(CAROUSEL_LOGOS_SCALE_LEVELS.length - 1, isNaN(rawLogoIdx) ? 5 : rawLogoIdx));
     document.documentElement.style.setProperty('--carousel-posters-scale', String(CAROUSEL_POSTERS_SCALE_LEVELS[posterIdx].scale));
     document.documentElement.style.setProperty('--carousel-logos-scale', String(CAROUSEL_LOGOS_SCALE_LEVELS[logoIdx].scale));
   }
