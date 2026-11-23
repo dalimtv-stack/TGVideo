@@ -40,7 +40,7 @@ import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/s
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
 import { createLibraryViews } from './ui/libraryViews.js';
-import { setupTvPlatform } from './core/platform.js';
+import { setupTvPlatform, isAndroidApp } from './core/platform.js';
 
 setupTvPlatform();
 
@@ -845,12 +845,14 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
     onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
     onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
+    if (isAndroidApp()) {
     checkForUpdate().then(updateInfo => {
-    if (updateInfo?.hasUpdate) {
-      const dot = document.getElementById('profile-update-dot');
-      if (dot) dot.style.display = 'block';
-    }
-  }).catch(() => {});
+      if (updateInfo?.hasUpdate) {
+        const dot = document.getElementById('profile-update-dot');
+        if (dot) dot.style.display = 'block';
+      }
+    }).catch(() => {});
+  }
 
   document.getElementById('btn-reload').onclick = () => {
     showUpdateDialog({

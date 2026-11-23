@@ -8,7 +8,8 @@
   background-color: #141414;
   background-image: linear-gradient(180deg, color-mix(in srgb, var(--pc) 45%, #141414) 0%, #141414 420px);
   background-repeat: no-repeat;
-  min-height: 100dvh;
+  min-height: 100%;
+  flex: 1 1 auto;
 }
 
 #d-back {

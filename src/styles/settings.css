@@ -426,7 +426,8 @@
   width: min(540px, 94vw);
   max-height: 94vh;
   padding: 0.65rem 0.95rem;
-  overflow-y: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
   overscroll-behavior: contain;
 }
 .settings-overlay:has(.device-settings-form) .settings-dialog header {

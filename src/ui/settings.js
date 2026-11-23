@@ -1,4 +1,4 @@
-import { isAndroidTV, isAndroidApp } from '../core/platform.js';
+import { isAndroidTV, isAndroidApp, applyDevicePixelZoom } from '../core/platform.js';
 import { startAppUpdate } from '../core/updater.js';
 import { checkForUpdate, CURRENT_VERSION } from '../core/updateCheck.js';
 import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
@@ -80,11 +80,17 @@ export function getDeviceSettings(profile) {
     ? normalizeScaleIndex(deviceSpecificScale, defaultScaleIndex)
     : defaultScaleIndex;
 
+  const localPixelZoom = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_pixel_zoom') : null;
+  const devPixelZoom = devProfile.pixel_zoom ?? localPixelZoom ?? 'auto';
+  const resolvedPixelZoomIdx = normalizePixelZoomIndex(devPixelZoom, 0);
+
   return {
     deviceId,
     player: chosenPlayer,
     skipSeconds: Number(devProfile.skip_seconds || localSkip || profile?.skip_seconds || legacyLocalSkip || 10),
     uiScale: resolvedScale,
+    pixelZoom: devPixelZoom,
+    pixelZoomIndex: resolvedPixelZoomIdx,
   };
 }
 
@@ -517,6 +523,7 @@ function deviceSettings(profile, sync, onChanged) {
   const currentPlayer = (!isAndroidApp && devSettings.player === 'exoplayer') ? 'artplayer' : devSettings.player;
   const currentSkip = devSettings.skipSeconds;
   const currentScale = devSettings.uiScale;
+  const currentPixelZoomIdx = devSettings.pixelZoomIndex;
 
   const exoPlayerOption = isAndroidApp ? `
               <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
@@ -567,8 +574,14 @@ function deviceSettings(profile, sync, onChanged) {
             </div>
             <label class="ui-scale-setting device-scale-setting">
               <span class="ui-scale-header"><span>Escala de portadas y letras:</span><strong class="ui-scale-value" id="device-scale-label"></strong></span>
-              <input name="uiScale" type="range" class="settings-slider" min="0" max="6" step="1" value="${currentScale}" data-focusable>
+              <input name="uiScale" type="range" class="settings-slider" min="0" max="${UI_SCALE_LEVELS.length - 1}" step="1" value="${currentScale}" data-focusable>
               <span class="ui-scale-ticks">${UI_SCALE_LEVELS.map(level => `<span>${esc(level.label.replace(' (predeterminado)', ''))}</span>`).join('')}</span>
+            </label>
+
+            <label class="ui-scale-setting device-pixel-zoom-setting" style="margin-top:0.65rem;">
+              <span class="ui-scale-header"><span>Resolución de pantalla (píxeles):</span><strong class="ui-scale-value" id="device-pixel-zoom-label"></strong></span>
+              <input name="pixelZoom" type="range" class="settings-slider" min="0" max="${PIXEL_ZOOM_LEVELS.length - 1}" step="1" value="${currentPixelZoomIdx}" data-focusable>
+              <span class="ui-scale-ticks">${PIXEL_ZOOM_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
             </label>
           </fieldset>
 
@@ -589,6 +602,17 @@ function deviceSettings(profile, sync, onChanged) {
   };
   scaleInput?.addEventListener('input', updateScalePreview);
   updateScalePreview();
+
+  const zoomInput = overlay.querySelector('input[name="pixelZoom"]');
+  const zoomLabel = overlay.querySelector('#device-pixel-zoom-label');
+  const updateZoomPreview = () => {
+    const idx = Math.max(0, Math.min(PIXEL_ZOOM_LEVELS.length - 1, Number(zoomInput?.value) || 0));
+    const level = PIXEL_ZOOM_LEVELS[idx];
+    if (zoomLabel) zoomLabel.textContent = level.label;
+    applyDevicePixelZoom(level.value);
+  };
+  zoomInput?.addEventListener('input', updateZoomPreview);
+  updateZoomPreview();
 
   overlay.querySelectorAll('.settings-radio-label').forEach(label => {
     const radio = label.querySelector('input[type="radio"]');
@@ -621,11 +645,15 @@ function deviceSettings(profile, sync, onChanged) {
 
     const deviceId = getDeviceId();
 
+    const pixelZoomIdx = Math.max(0, Math.min(PIXEL_ZOOM_LEVELS.length - 1, Number(form.elements.pixelZoom?.value) || 0));
+    const pixelZoomVal = PIXEL_ZOOM_LEVELS[pixelZoomIdx].value;
+
     // Guardado local inmediato para este dispositivo
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('tgvideo_device_player', player);
       localStorage.setItem('tgvideo_device_skip', String(skipSeconds));
       localStorage.setItem('tgvideo_device_scale', String(uiScale));
+      localStorage.setItem('tgvideo_device_pixel_zoom', String(pixelZoomVal));
       // Compatibilidad retroactiva con claves por perfil
       localStorage.setItem(`tgvideo_player_${profile.id}`, player);
       localStorage.setItem(`tgvideo_skip_${profile.id}`, String(skipSeconds));
@@ -638,10 +666,13 @@ function deviceSettings(profile, sync, onChanged) {
       player,
       skip_seconds: skipSeconds,
       ui_scale: uiScale,
+      pixel_zoom: pixelZoomVal,
       updated_at: Date.now()
     };
     profile.player = player;
     profile.skip_seconds = skipSeconds;
+
+    applyDevicePixelZoom(pixelZoomVal);
 
     applyProfileScale(profile);
     close();

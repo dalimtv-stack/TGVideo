@@ -12,6 +12,19 @@
           var isTv = isTvUA || (isAndroid && window.innerWidth > window.innerHeight && navigator.maxTouchPoints === 0);
           if (isTv) {
             document.documentElement.classList.add('is-tv');
+          }
+          var savedZoom = null;
+          try {
+            var raw = localStorage.getItem('tgvideo_device_pixel_zoom');
+            if (raw && raw !== 'auto') {
+              var n = parseFloat(raw);
+              if (!isNaN(n) && n >= 0.4 && n <= 1.6) savedZoom = n;
+            }
+          } catch (_) {}
+
+          if (savedZoom !== null) {
+            document.documentElement.style.zoom = savedZoom.toFixed(3);
+          } else if (isTv) {
             var w = window.innerWidth;
             if (w > 0 && w < 1500) {
               var factor = Math.min(1.0, Math.max(0.60, w / 1440));
