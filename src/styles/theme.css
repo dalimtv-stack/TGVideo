@@ -1,4 +1,3 @@
-
 /* src/styles/theme.css */
 /* Sistema de diseño y variables preparado para soporte de skins intercambiables */
 :root {
@@ -6,8 +5,8 @@
   --sab: env(safe-area-inset-bottom, 0px);
   --sal: env(safe-area-inset-left, 0px);
   --sar: env(safe-area-inset-right, 0px);
-  --ui-scale: 1.12;
-  --ui-font-scale: calc(var(--ui-scale, 1.12) / 1.12);
+  --ui-scale: 1.32;
+  --ui-font-scale: calc(var(--ui-scale, 1.32) / 1.32);
 
   /* Paleta base de la skin por defecto (Netflix Dark) */
   --theme-bg: #141414;

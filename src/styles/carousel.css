@@ -726,38 +726,40 @@ html.is-tv .carousel-trailer-modal {
 /* ==========================================================================
    Escala de portadas y letras en Carrusel Portadas (Ajustes de dispositivo)
    Afecta exclusivamente a portadas y textos del carrusel, nunca a Ordenar/Vista.
+   El nivel -3 (escala 0.85) equivale al valor de Enorme previo (1.32 / 1.12 = 1.1786).
+   Factor de escala = var(--ui-scale, 1.32) * 1.3865.
    ========================================================================== */
 .carousel-mode-posters .carousel-stage {
-  height: calc(clamp(340px, 52vh, 460px) * (var(--ui-scale, 1.12) / 1.12));
+  height: calc(clamp(340px, 52vh, 460px) * (var(--ui-scale, 1.32) * 1.3865));
 }
 
 .carousel-mode-posters .carousel-item {
-  height: calc(clamp(170px, 25vh, 235px) * (var(--ui-scale, 1.12) / 1.12)) !important;
+  height: calc(clamp(170px, 25vh, 235px) * (var(--ui-scale, 1.32) * 1.3865)) !important;
 }
 
 .carousel-mode-posters .carousel-item.is-active,
 .carousel-mode-posters .carousel-stage:focus .carousel-item.is-active,
 .carousel-mode-posters .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-mode-posters .carousel-stage.dpad-focused .carousel-item.is-active {
-  margin: 0 calc(4.25rem * (var(--ui-scale, 1.12) / 1.12)) !important;
+  margin: 0 calc(4.25rem * (var(--ui-scale, 1.32) * 1.3865)) !important;
 }
 
 .carousel-mode-posters .carousel-title {
-  font-size: calc(clamp(1.1rem, calc(var(--car-h, 520px) * 0.045), 1.8rem) * (var(--ui-scale, 1.12) / 1.12));
+  font-size: calc(clamp(1.1rem, calc(var(--car-h, 520px) * 0.045), 1.8rem) * (var(--ui-scale, 1.32) * 1.3865));
 }
 
 .carousel-mode-posters .carousel-meta {
-  font-size: calc(clamp(0.8rem, calc(var(--car-h, 520px) * 0.026), 0.98rem) * (var(--ui-scale, 1.12) / 1.12));
+  font-size: calc(clamp(0.8rem, calc(var(--car-h, 520px) * 0.026), 0.98rem) * (var(--ui-scale, 1.32) * 1.3865));
 }
 
 .carousel-mode-posters .carousel-synopsis {
-  font-size: calc(clamp(0.85rem, calc(var(--car-h, 520px) * 0.028), 1.05rem) * (var(--ui-scale, 1.12) / 1.12));
+  font-size: calc(clamp(0.85rem, calc(var(--car-h, 520px) * 0.028), 1.05rem) * (var(--ui-scale, 1.32) * 1.3865));
 }
 
 .carousel-mode-posters .carousel-count {
-  font-size: calc(0.8rem * (var(--ui-scale, 1.12) / 1.12));
+  font-size: calc(0.8rem * (var(--ui-scale, 1.32) * 1.3865));
 }
 
 .carousel-mode-posters .age-rating-badge {
-  font-size: calc(0.76rem * (var(--ui-scale, 1.12) / 1.12));
+  font-size: calc(0.76rem * (var(--ui-scale, 1.32) * 1.3865));
 }

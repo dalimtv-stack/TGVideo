@@ -545,9 +545,10 @@
   margin: 0;
 }
 .device-settings-form .ui-scale-ticks {
-  font-size: 0.58rem;
+  font-size: 0.65rem;
+  font-weight: 600;
   margin-top: 0.15rem;
-  color: #777;
+  color: #888;
   display: flex;
   justify-content: space-between;
 }

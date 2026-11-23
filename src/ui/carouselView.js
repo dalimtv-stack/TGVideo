@@ -514,8 +514,8 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     } else {
       const { itemW, gap } = getItemMetrics();
       const rem = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).fontSize)) || 16;
-      const uiScale = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'))) || 1.12;
-      const scaleFactor = uiScale / 1.12;
+      const uiScale = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'))) || 1.32;
+      const scaleFactor = uiScale * 1.3865;
       const activeMargin = logos ? 0 : Math.round(4.25 * rem * scaleFactor);
       targetX = cur * (itemW + gap) + activeMargin + itemW / 2 - stageWidth / 2;
     }

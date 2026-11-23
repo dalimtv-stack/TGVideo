@@ -12,16 +12,26 @@ import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js'
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const UI_SCALE_LEVELS = [
-  { id: 'diminuto', label: 'Diminuto', scale: 0.60 },
-  { id: 'muy-pequeno', label: 'Muy pequeño', scale: 0.72 },
-  { id: 'pequeno', label: 'Pequeño', scale: 0.85 },
-  { id: 'normal', label: 'Normal', scale: 1.0 },
-  { id: 'grande', label: 'Grande (predeterminado)', scale: 1.12 },
-  { id: 'muy-grande', label: 'Muy Grande', scale: 1.22 },
-  { id: 'gigante', label: 'Enorme', scale: 1.32 },
+  { id: '-5', label: '-5', tickLabel: '-5', scale: 0.60 },
+  { id: '-4', label: '-4', tickLabel: '-4', scale: 0.72 },
+  { id: '-3', label: '-3', tickLabel: '-3', scale: 0.85 },
+  { id: '-2', label: '-2', tickLabel: '-2', scale: 1.00 },
+  { id: '-1', label: '-1', tickLabel: '-1', scale: 1.16 },
+  { id: '0', label: '0 (predeterminado)', tickLabel: '0', scale: 1.32 },
+  { id: '1', label: '1', tickLabel: '1', scale: 1.48 },
+  { id: '2', label: '2', tickLabel: '2', scale: 1.64 },
+  { id: '3', label: '3', tickLabel: '3', scale: 1.80 },
+  { id: '4', label: '4', tickLabel: '4', scale: 1.96 },
+  { id: '5', label: '5', tickLabel: '5', scale: 2.12 },
 ];
 
-function normalizeScaleIndex(value, fallback = 4) {
+function normalizeScaleIndex(value, fallback = 5) {
+  if (value === 'diminuto') return 0;
+  if (value === 'muy-pequeno') return 1;
+  if (value === 'pequeno') return 2;
+  if (value === 'normal') return 3;
+  if (value === 'grande' || value === 'muy-grande') return 4;
+  if (value === 'gigante' || value === 'enorme') return 5;
   const index = Number(value);
   return Number.isFinite(index)
     ? Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, Math.round(index)))
@@ -90,15 +100,8 @@ export function getDeviceSettings(profile) {
     chosenPlayer = 'artplayer';
   }
 
-  // Escala predeterminada según tipo de pantalla si el dispositivo no ha guardado aún una preferencia
-  let defaultScaleIndex = 4; // 'Grande (1.12)' para PC y monitores de escritorio
-  if (typeof window !== 'undefined') {
-    if (isAndroidTV()) {
-      // Con el ajuste de escala de píxeles (zoom) de TV activo, la escala 1.0 (Normal)
-      // muestra exactamente la misma proporción (10-11 portadas por fila) que en PC de escritorio
-      defaultScaleIndex = 3; // 'Normal (1.0)'
-    }
-  }
+  // Escala predeterminada: 0 (Enorme, escala 1.32)
+  let defaultScaleIndex = 5; // '0 (predeterminado - valores actuales de Enorme 1.32)'
 
   // Se prioriza la escala específica de este hardware (localStorage o perfil bajo deviceId)
   const deviceSpecificScale = devProfile.ui_scale ?? localScale;
@@ -123,7 +126,7 @@ export function getDeviceSettings(profile) {
 export function applyProfileScale(profile) {
   const dev = getDeviceSettings(profile);
   const rawIdx = dev.uiScale;
-  const validIdx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, isNaN(rawIdx) ? 3 : rawIdx));
+  const validIdx = Math.max(0, Math.min(UI_SCALE_LEVELS.length - 1, isNaN(rawIdx) ? 5 : rawIdx));
   const conf = UI_SCALE_LEVELS[validIdx];
   if (typeof document !== 'undefined') {
     document.documentElement.style.setProperty('--ui-scale', String(conf.scale));
