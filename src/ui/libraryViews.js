@@ -493,14 +493,14 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
         <div class="ep-state">
           ${p?.is_completed ? '<span class="ep-visto-badge">✓ Visto</span>' : pct ? Math.round(pct) + '%' : ''}
-          ${t.isSaga ? `<button class="btn-icon-circle saga-film-btn-meta" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>` : ''}
+          ${(t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1)) ? `<button class="btn-icon-circle saga-film-btn-meta" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>` : ''}
         </div>
       </div>`;
     }).join('');
     container.querySelectorAll('.ep').forEach(el => {
       el.onclick = () => { const f = t.archivos.find(x => x.key === el.dataset.key); if (f) play(f); };
     });
-    if (t.isSaga) {
+    if (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1)) {
       container.querySelectorAll('.saga-film-btn-meta').forEach(metaBtn => {
         metaBtn.onclick = (e) => {
           e.stopPropagation();
@@ -517,26 +517,68 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
             yearHint: parsedFilm.year,
             channel: t.channel || f.channel,
             archivos: [f],
-            metadata: f.metadata || null,
-            tmdbId: f.tmdbId || f.metadata?.id || null,
+            metadata: f.metadata || (t.isSaga ? null : t.metadata) || null,
+            tmdbId: f.tmdbId || f.metadata?.id || (t.isSaga ? null : t.tmdbId) || null,
           };
           showMetadataModal(filmTitleObj, (updatedMeta) => {
             f.metadata = updatedMeta;
             f.tmdbId = updatedMeta.id;
             f.sagaName = updatedMeta.name || f.sagaName;
-            const allTitles = getTitles() || [];
-            const loose = allTitles.find(x => !x.isSaga && x.archivos?.some(a => a.key === f.key));
-            if (loose) {
-              loose.metadata = updatedMeta;
-              loose.tmdbId = updatedMeta.id;
-              loose.nombre = updatedMeta.name || loose.nombre;
+
+            if (t.isSaga) {
+              const allTitles = getTitles() || [];
+              const loose = allTitles.find(x => !x.isSaga && x.archivos?.some(a => a.key === f.key));
+              if (loose) {
+                loose.metadata = updatedMeta;
+                loose.tmdbId = updatedMeta.id;
+                loose.nombre = updatedMeta.name || loose.nombre;
+              }
+              if (getTitles()) {
+                const attachFn = attachAutoCollections || (x => x);
+                setTitles(attachFn(mergeMoviesByTmdb(getTitles())));
+              }
+              applySagaFilmMetadata(t);
+              renderEpisodes(currentSeason);
+              persistMetadata?.();
+            } else {
+              // Película con múltiples versiones: sólo afecta a esa versión
+              const allTitles = getTitles() || [];
+              const currentTitleTmdbId = String(t.metadata?.id || t.tmdbId || '');
+              const newTmdbId = String(updatedMeta?.id || '');
+
+              if (newTmdbId && currentTitleTmdbId && newTmdbId !== currentTitleTmdbId) {
+                // Si la identificación difiere del título padre, se separa a su propia ficha
+                t.archivos = t.archivos.filter(x => x.key !== f.key);
+                const separateTitle = {
+                  id: f.key,
+                  tipo: 'pelicula',
+                  isSaga: false,
+                  grupo: t.grupo || 'Películas',
+                  nombre: updatedMeta.name || f.label,
+                  yearHint: updatedMeta.date?.slice(0, 4) || parsedFilm.year || null,
+                  origen: { tipo: 'año_container', channelId: String(f.channelId || t.channel?.id), messageId: f.messageId },
+                  channel: t.channel || f.channel,
+                  archivos: [f],
+                  ultimoMensajeFecha: f.date || 0,
+                  tmdbId: updatedMeta.id,
+                  metadata: updatedMeta,
+                };
+                allTitles.push(separateTitle);
+              }
+
+              if (getTitles()) {
+                const attachFn = attachAutoCollections || (x => x);
+                setTitles(attachFn(mergeMoviesByTmdb(allTitles)));
+              }
+              persistMetadata?.();
+
+              if (t.archivos.length === 0) {
+                document.getElementById('d-back')?.click();
+              } else {
+                applyDetailMetadata(t, profile);
+                renderEpisodes(currentSeason);
+              }
             }
-            if (getTitles()) {
-              const attachFn = attachAutoCollections || (x => x);
-              setTitles(attachFn(mergeMoviesByTmdb(getTitles())));
-            }
-            applySagaFilmMetadata(t);
-            renderEpisodes(currentSeason);
           }, { client: tg?.getClient?.(), peerOf: tg?.peerOf, profile, sync });
         };
       });

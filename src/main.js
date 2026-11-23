@@ -247,7 +247,7 @@ async function persistTitlesMetadata() {
     for (const t of (TITLES_CACHE || [])) {
       const meta = metadataForPersist(t);
       if (meta) saved.metadataMap[t.id] = meta;
-      if (t.isSaga && Array.isArray(t.archivos)) {
+      if (Array.isArray(t.archivos) && (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1))) {
         for (const f of t.archivos) {
           if (f.metadata) {
             const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
@@ -280,13 +280,13 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   if (savedMeta) {
     for (const t of titles) {
       if (savedMeta[t.id]) t.metadata = savedMeta[t.id];
-      if (t.isSaga && Array.isArray(t.archivos)) {
+      if (Array.isArray(t.archivos) && (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1))) {
         for (const f of t.archivos) {
           const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
           if (savedMeta[fKey]) {
             f.metadata = savedMeta[fKey];
             f.tmdbId = savedMeta[fKey].id;
-            if (savedMeta[fKey].name) f.sagaName = savedMeta[fKey].name;
+            if (savedMeta[fKey].name && t.isSaga) f.sagaName = savedMeta[fKey].name;
           }
         }
       }
@@ -438,95 +438,77 @@ function sortTitles(items, sortType, sortOrder = 'desc') {
   });
 }
 
-async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusSortToggle = false, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
-  applyProfileScale(profile);
-  if (selectedSection !== 'inicio') {
-    setBackHandler(() => {
-      destroyCarousel();
-      showHome(tg, sync, profile, { selectedSection: 'inicio' });
-    });
-  } else {
-    setBackHandler(() => showProfileSelector(tg, sync));
-  }
-  const onProgress = (d, n) => { const p = document.querySelector('.screen p'); if (p) p.textContent = `Leyendo canales… ${d}/${n}`; };
-  if (reload) {
-    showLoading(force ? 'Reescaneando toda la biblioteca y sincronizando…' : 'Sincronizando perfil, metadatos y vídeos…');
-    try {
-      // 1. Sincronizar identificaciones manuales desde Telegram (metadata_overrides_*.json)
-      if (sync) {
-        await loadOverrides(sync).catch(e => console.warn('[overrides] sync error', e));
-      }
-      // 2. Sincronizar perfil completo desde Telegram (favoritos, carátulas/logos/fondos, progreso)
-      if (sync && profile?.id) {
-        const remote = await sync.pullProfile(profile.id).catch(e => { console.warn('[sync] pullProfile error', e); return null; });
-        if (remote) {
-          if (remote.progress) {
-            const mergedPrg = sync.mergeProgress(loadProgress(profile.id), remote.progress);
-            writeFullProgress(profile.id, mergedPrg);
-          }
-          const remoteFavs = mergeFavorites(remote.favorites || [], remote.profile?.favorites || []);
-          const localFavs = loadFavorites(profile.id);
-          const mergedFavs = mergeFavorites(localFavs, remoteFavs);
-          saveFavorites(profile.id, mergedFavs);
-          profile.favorites = mergedFavs;
-
-          const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
-          const mergedImg = await pullAndMergeImagePrefs(profile, sync, remoteImg);
-          profile.image_prefs = mergedImg;
-
-          // Si el local aportó favoritos o imágenes que faltaban en el remoto, subir el snapshot unificado
-          if (mergedFavs.length > remoteFavs.length) {
-            sync.pushProfile({
-              profile,
-              progress: loadProgress(profile.id),
-              favorites: mergedFavs,
-              image_prefs: mergedImg,
-            }).catch(e => console.warn('[sync] push merged error', e));
-          }
-        }
-      }
-
-      TITLES_CACHE = (await refreshLibrary(tg, { force, onProgress })).titles;
-      CHECKED = true;
-    } catch (err) {
-      console.error('Error cargando biblioteca', err);
-      TITLES_CACHE = TITLES_CACHE || [];
+function applyOverridesAndUnbundle(titles = []) {
+  const unbundledTitles = [];
+  for (const t of titles) {
+    let ov = getOverride(t.id);
+    if (!ov && t.tmdbId) ov = getOverrideByTmdbId(t.tmdbId);
+    if (ov) {
+      t.metadata = ov;
+      t.tmdbId = ov.id || t.tmdbId;
     }
-  } else if (!TITLES_CACHE) {
-    const saved = await kv.get(LIB_KEY).catch(() => null);
-    if (saved?.cache && saved.channels) {
-      // Biblioteca local: se muestra al instante sin leer Telegram
-      const { titles } = await buildTitles(null, saved.channels, tg.peerOf, null, saved.cache);
-      if (saved.metadataMap) {
-        for (const t of titles) {
-          if (saved.metadataMap[t.id]) t.metadata = saved.metadataMap[t.id];
-          if (t.isSaga && Array.isArray(t.archivos)) {
-            for (const f of t.archivos) {
-              const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
-              if (saved.metadataMap[fKey]) {
-                f.metadata = saved.metadataMap[fKey];
-                f.tmdbId = saved.metadataMap[fKey].id;
-                if (saved.metadataMap[fKey].name) f.sagaName = saved.metadataMap[fKey].name;
-              }
-            }
-          }
+
+    if (t.isSaga && Array.isArray(t.archivos)) {
+      for (const f of t.archivos) {
+        const fileKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+        const fOv = getOverride(fileKey) || (f.tmdbId ? getOverrideByTmdbId(f.tmdbId) : null);
+        if (fOv) {
+          f.metadata = fOv;
+          f.tmdbId = fOv.id;
+          if (fOv.name) f.sagaName = fOv.name;
         }
       }
-      TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(titles));
+      unbundledTitles.push(t);
+    } else if (t.tipo === 'pelicula' && Array.isArray(t.archivos) && t.archivos.length > 1) {
+      const remainingFiles = [];
+      const titleTmdbId = String(t.metadata?.id || t.tmdbId || '');
+      for (const f of t.archivos) {
+        const fileKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+        const fOv = getOverride(fileKey);
+        if (fOv) {
+          f.metadata = fOv;
+          f.tmdbId = fOv.id;
+          if (titleTmdbId && String(fOv.id) !== titleTmdbId) {
+            unbundledTitles.push({
+              id: fileKey,
+              tipo: 'pelicula',
+              isSaga: false,
+              grupo: t.grupo || 'Películas',
+              nombre: fOv.name || f.label,
+              yearHint: fOv.date?.slice(0, 4) || null,
+              origen: { tipo: 'año_container', channelId: String(f.channelId || t.channel?.id), messageId: f.messageId },
+              channel: t.channel || f.channel,
+              archivos: [f],
+              ultimoMensajeFecha: f.date || t.ultimoMensajeFecha || 0,
+              tmdbId: fOv.id,
+              metadata: fOv,
+            });
+            continue;
+          }
+        }
+        remainingFiles.push(f);
+      }
+      t.archivos = remainingFiles;
+      if (t.archivos.length > 0) {
+        unbundledTitles.push(t);
+      }
     } else {
-      showLoading('Cargando biblioteca…');
-      try { TITLES_CACHE = (await refreshLibrary(tg, { onProgress })).titles; CHECKED = true; }
-      catch (err) { console.error('Error cargando biblioteca', err); TITLES_CACHE = []; }
+      unbundledTitles.push(t);
     }
   }
-  // Una vez por sesión: comprobar en segundo plano si algún canal ha cambiado y sincronizar perfil
-  if (!CHECKED) {
-    CHECKED = true;
-    const before = (await kv.get(LIB_KEY).catch(() => null))?.sig;
+  return unbundledTitles;
+}
+
+async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
+  // 1. Sincronizar perfil y overrides desde Telegram
+  showLoading('Sincronizando perfil…');
+  try {
+    if (sync) {
+      await loadOverrides(sync).catch(e => console.warn('[overrides] sync error', e));
+    }
     if (sync && profile?.id) {
-      loadOverrides(sync).catch(() => {});
-      sync.pullProfile(profile.id).then(async remote => {
-        if (!remote) return;
+      const remote = await sync.pullProfile(profile.id).catch(e => { console.warn('[sync] pullProfile error', e); return null; });
+      if (remote) {
         if (remote.progress) {
           const mergedPrg = sync.mergeProgress(loadProgress(profile.id), remote.progress);
           writeFullProgress(profile.id, mergedPrg);
@@ -547,53 +529,79 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
             progress: loadProgress(profile.id),
             favorites: mergedFavs,
             image_prefs: mergedImg,
-          }).catch(() => {});
-        }
-
-        if (document.querySelector('.home-screen')) {
-          showHome(tg, sync, profile);
-        }
-      }).catch(() => {});
-    }
-    refreshLibrary(tg).then(({ titles, sig }) => {
-      if (sig === before) return;
-      const existingMeta = new Map();
-      (TITLES_CACHE || []).forEach(t => { if (t.metadata) existingMeta.set(String(t.id), t.metadata); });
-      titles.forEach(t => { if (existingMeta.has(String(t.id))) t.metadata = existingMeta.get(String(t.id)); });
-      TITLES_CACHE = titles;
-      if (document.querySelector('.home-screen')) showHome(tg, sync, profile);
-    }).catch(e => console.warn('[library] comprobación fallida', e));
-  }
-  let titles = TITLES_CACHE || [];
-
-  // Aplicar overrides (incl. reenvíos por TMDB) y re-agrupar películas
-  for (const t of titles) {
-    let ov = getOverride(t.id);
-    if (!ov && t.tmdbId) ov = getOverrideByTmdbId(t.tmdbId);
-    if (!ov && t.archivos) {
-      for (const f of t.archivos) {
-        if (f.tmdbId) { ov = getOverrideByTmdbId(f.tmdbId); if (ov) break; }
-      }
-    }
-    if (ov) {
-      t.metadata = ov;
-      t.tmdbId = ov.id || t.tmdbId;
-    }
-    if (t.isSaga && Array.isArray(t.archivos)) {
-      for (const f of t.archivos) {
-        const fileKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
-        const fOv = getOverride(fileKey) || (f.tmdbId ? getOverrideByTmdbId(f.tmdbId) : null);
-        if (fOv) {
-          f.metadata = fOv;
-          f.tmdbId = fOv.id;
-          if (fOv.name) f.sagaName = fOv.name;
+          }).catch(e => console.warn('[sync] push merged error', e));
         }
       }
     }
+  } catch (err) {
+    console.warn('[sync] Error sincronizando perfil', err);
   }
+
+  // 2. Comprobar canales y buscar nuevos vídeos
+  showLoading('Comprobando nuevos vídeos…');
+  const onProgress = (d, n) => {
+    const p = document.querySelector('.screen.center p');
+    if (p) p.textContent = `Buscando nuevos vídeos… ${d}/${n}`;
+  };
+
+  try {
+    const refreshed = await refreshLibrary(tg, { force, onProgress });
+    TITLES_CACHE = refreshed.titles || [];
+  } catch (err) {
+    console.error('Error cargando biblioteca', err);
+    if (!TITLES_CACHE) TITLES_CACHE = [];
+  }
+  CHECKED = true;
+
+  // 3. Aplicar overrides y separar versiones con identificación distinta
+  let titles = applyOverridesAndUnbundle(TITLES_CACHE || []);
   titles = attachAutoCollections(mergeMoviesByTmdb(titles));
   TITLES_CACHE = titles;
-  // Carteles/fondos/logos elegidos por el usuario (por perfil + caché del dispositivo)
+
+  // 4. Identificar vídeos pendientes en TMDB antes de mostrar la home
+  const pendingTitles = titles.filter(t => !t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata)));
+  if (pendingTitles.length > 0) {
+    showLoading(`Identificando vídeos con TMDB (0/${pendingTitles.length})…`);
+    metadataController?.abort();
+    metadataController = new AbortController();
+    await enrichTitles(pendingTitles, {
+      signal: metadataController.signal,
+      onProgress: (d, total) => {
+        const p = document.querySelector('.screen.center p');
+        if (p) p.textContent = `Identificando vídeos con TMDB (${d}/${total})…`;
+      },
+    });
+    persistTitlesMetadata();
+    titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+    TITLES_CACHE = titles;
+  }
+
+  // 5. Aplicar preferencias de imagen del perfil y precalentar carátulas
+  titles.forEach(t => applyImagePrefs(t, profile));
+  showLoading('Cargando carátulas…');
+  await prewarmPosterCache(titles);
+
+  return TITLES_CACHE;
+}
+
+async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusSortToggle = false, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
+  applyProfileScale(profile);
+  if (selectedSection !== 'inicio') {
+    setBackHandler(() => {
+      destroyCarousel();
+      showHome(tg, sync, profile, { selectedSection: 'inicio' });
+    });
+  } else {
+    setBackHandler(() => showProfileSelector(tg, sync));
+  }
+    if (reload || !TITLES_CACHE) {
+    await loadAndSyncAll(tg, sync, profile, { force });
+  }
+
+  let titles = TITLES_CACHE || [];
+  titles = applyOverridesAndUnbundle(titles);
+  titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+  TITLES_CACHE = titles;
   titles.forEach(t => applyImagePrefs(t, profile));
 
   // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
@@ -957,48 +965,51 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     }, 2500);
   };
 
-  enrichTitles(titles, { signal: metadataController.signal, onUpdate: title => {
-    applyImagePrefs(title, profile);
-    saveMetaDebounced();
-    if (title.metadata?.collection || (title.isSaga && title.archivos?.some(f => f.metadata))) {
-      scheduleReattach();
-    }
-    document.querySelectorAll('.lib-card').forEach(card => {
-      if (String(card.dataset.title) !== String(title.id)) return;
-      const displayName = title.metadata?.name || title.metadata?.title || title.nombre;
-      const nameEl = card.querySelector('.lib-card-name');
-      if (nameEl && displayName) nameEl.textContent = displayName;
-      const posterNameEl = card.querySelector('.poster-name');
-      if (posterNameEl && displayName) posterNameEl.textContent = displayName;
+  const pendingBg = titles.filter(t => !t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata)));
+  if (pendingBg.length > 0) {
+    enrichTitles(pendingBg, { signal: metadataController.signal, onUpdate: title => {
+      applyImagePrefs(title, profile);
+      saveMetaDebounced();
+      if (title.metadata?.collection || (title.isSaga && title.archivos?.some(f => f.metadata))) {
+        scheduleReattach();
+      }
+      document.querySelectorAll('.lib-card').forEach(card => {
+        if (String(card.dataset.title) !== String(title.id)) return;
+        const displayName = title.metadata?.name || title.metadata?.title || title.nombre;
+        const nameEl = card.querySelector('.lib-card-name');
+        if (nameEl && displayName) nameEl.textContent = displayName;
+        const posterNameEl = card.querySelector('.poster-name');
+        if (posterNameEl && displayName) posterNameEl.textContent = displayName;
 
-      if (!title.metadata?.poster) return;
-      const poster = card.querySelector('.lib-card-poster');
-      if (!poster) return;
-      let image = poster.querySelector('img.poster-image');
-      if (!image) {
-        image = document.createElement('img');
-        image.className = 'poster-image';
-        image.alt = displayName;
-        image.loading = 'lazy';
-        image.setAttribute('data-poster-url', title.metadata.poster);
-        poster.prepend(image);
+        if (!title.metadata?.poster) return;
+        const poster = card.querySelector('.lib-card-poster');
+        if (!poster) return;
+        let image = poster.querySelector('img.poster-image');
+        if (!image) {
+          image = document.createElement('img');
+          image.className = 'poster-image';
+          image.alt = displayName;
+          image.loading = 'lazy';
+          image.setAttribute('data-poster-url', title.metadata.poster);
+          poster.prepend(image);
+        }
+        loadPoster(image, title.metadata.poster);
+      });
+      if (String(document.querySelector('.detail')?.dataset.title) === String(title.id)) {
+        libraryViews.applyDetailMetadata(title, profile);
+        if (title.isSaga) libraryViews.applySagaFilmMetadata(title);
       }
-      loadPoster(image, title.metadata.poster);
-    });
-    if (String(document.querySelector('.detail')?.dataset.title) === String(title.id)) {
-      libraryViews.applyDetailMetadata(title, profile);
-      if (title.isSaga) libraryViews.applySagaFilmMetadata(title);
-    }
-  } }).then(() => {
-    // Tras enriquecer, re-agrupar películas con el mismo TMDB y colecciones automáticas
-    if (!metadataController.signal.aborted && TITLES_CACHE) {
-      const before = TITLES_CACHE.length;
-      TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
-      if (TITLES_CACHE.length !== before && document.querySelector('.home-screen') && !document.querySelector('.carousel-stage:focus, .carousel-stage.dpad-focused') && (selectedSection === 'inicio' || selectedSection === 'colecciones')) {
-        showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
+    } }).then(() => {
+      // Tras enriquecer, re-agrupar películas con el mismo TMDB y colecciones automáticas
+      if (!metadataController.signal.aborted && TITLES_CACHE) {
+        const before = TITLES_CACHE.length;
+        TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
+        if (TITLES_CACHE.length !== before && document.querySelector('.home-screen') && !document.querySelector('.carousel-stage:focus, .carousel-stage.dpad-focused') && (selectedSection === 'inicio' || selectedSection === 'colecciones')) {
+          showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
+        }
       }
-    }
-  }).catch(() => {});
+    }).catch(() => {});
+  }
 }
 
 // ---------- Selector de perfiles ----------
@@ -1061,41 +1072,7 @@ async function showProfileSelector(tg, sync) {
         localStorage.setItem('tgvideo_last_profile_id', profile.id);
       }
       if (profile) {
-        showLoading('Sincronizando perfil…');
-        try {
-          await loadOverrides(sync).catch(e => console.warn('[overrides] sync error', e));
-
-          const remote = await sync.pullProfile(profile.id);
-          if (remote) {
-            if (remote.progress) {
-              const merged = sync.mergeProgress(loadProgress(profile.id), remote.progress);
-              writeFullProgress(profile.id, merged);
-            }
-            // Sincronizar Favoritos por perfil
-            const remoteFavs = mergeFavorites(remote.favorites || [], remote.profile?.favorites || []);
-            const localFavs = loadFavorites(profile.id);
-            const mergedFavs = mergeFavorites(localFavs, remoteFavs);
-            saveFavorites(profile.id, mergedFavs);
-            profile.favorites = mergedFavs;
-
-            // Sincronizar Carteles, Fondos y Logos por perfil
-            const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
-            const mergedImg = await pullAndMergeImagePrefs(profile, sync, remoteImg);
-            profile.image_prefs = mergedImg;
-
-            // Re-enviar snapshot si el local aportó favoritos o imágenes no presentes en el remoto
-            if (mergedFavs.length > remoteFavs.length) {
-              sync.pushProfile({
-                profile,
-                progress: loadProgress(profile.id),
-                favorites: mergedFavs,
-                image_prefs: mergedImg,
-              }).catch(() => {});
-            }
-          }
-        } catch (err) {
-          console.warn('[sync] Error sincronizando perfil', err);
-        }
+        await loadAndSyncAll(tg, sync, profile);
 
         if (isDevLogEnabled()) {
           startDevLogging({

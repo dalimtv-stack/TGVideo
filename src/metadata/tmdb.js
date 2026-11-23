@@ -428,6 +428,71 @@ export async function fetchTmdbFullDetails(type, id, signal) {
   }
 }
 
+
+async function searchTmdbCandidates(type, query, year, signal) {
+  if (!query || !query.trim()) return null;
+  const q = query.trim();
+
+  const trySearch = async (searchQuery, searchYear) => {
+    if (!searchQuery || !searchQuery.trim()) return null;
+    const cleanQ = searchQuery.trim();
+    const params = { query: cleanQ };
+    if (searchYear && type !== "collection") {
+      params[type === "tv" ? "first_air_date_year" : "year"] = String(searchYear).trim();
+    }
+    let res = await request(`/search/${type}`, params, signal).catch(() => null);
+    if ((!res?.results || res.results.length === 0) && searchYear && type !== "collection") {
+      res = await request(`/search/${type}`, { query: cleanQ }, signal).catch(() => null);
+    }
+    if (!res?.results || res.results.length === 0) {
+      const unaccented = cleanQ.replace(/ñ/g, "n").replace(/Ñ/g, "N").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      if (unaccented && unaccented.toLowerCase() !== cleanQ.toLowerCase()) {
+        res = await request(`/search/${type}`, { query: unaccented }, signal).catch(() => null);
+      }
+    }
+    if (!res?.results || res.results.length === 0) return null;
+    const match = res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(cleanQ)))
+      || res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && (normalize(n).includes(normalize(cleanQ)) || normalize(cleanQ).includes(normalize(n)))))
+      || res.results[0];
+    return match?.id || null;
+  };
+
+  // 1. Intento original con el término extraído
+  let matchId = await trySearch(q, year);
+  if (matchId) return matchId;
+
+  let currentQuery = q;
+  let currentYear = year;
+
+  // 2. Si no encuentra nada en TMDB, primero se prueba eliminando la palabra que comience por "@"
+  const hasAt = /(?:^|\s)@\S+/.test(currentQuery);
+  if (hasAt) {
+    const queryWithoutAt = currentQuery.replace(/(?:^|\s)@\S+/g, " ").replace(/\s+/g, " ").trim();
+    if (queryWithoutAt && queryWithoutAt !== currentQuery) {
+      currentQuery = queryWithoutAt;
+      matchId = await trySearch(currentQuery, currentYear);
+      if (matchId) return matchId;
+    }
+  }
+
+  // 3. Si no hay "@" o no se encuentra nada, se prueba a eliminar la última palabra si es un año (ej: 1966)
+  const trailingYearMatch = currentQuery.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
+  if (trailingYearMatch) {
+    const candidateYear = trailingYearMatch[1];
+    const candidateTitle = currentQuery.slice(0, trailingYearMatch.index).trim();
+    if (candidateTitle.length >= 1) {
+      const effectiveYear = currentYear || candidateYear;
+      matchId = await trySearch(candidateTitle, effectiveYear);
+      if (matchId) return matchId;
+      // Probar también el título limpio sin filtrar por año
+      matchId = await trySearch(candidateTitle, null);
+      if (matchId) return matchId;
+    }
+  }
+
+  return null;
+}
+
 export async function searchTmdbManual({ query, type = "movie", year = "", directId = null }, signal) {
   const endpoint = type === "collection" ? "collection" : type === "serie" || type === "tv" ? "tv" : "movie";
   const id = parseTmdbId(directId);
@@ -477,6 +542,40 @@ export async function searchTmdbManual({ query, type = "movie", year = "", direc
     }
   }
 
+  // Fallback autoidentificación: primero eliminar palabras que comiencen por "@"
+  if (!search.results || search.results.length === 0) {
+    if (/(?:^|\s)@\S+/.test(q)) {
+      const qNoAt = q.replace(/(?:^|\s)@\S+/g, " ").replace(/\s+/g, " ").trim();
+      if (qNoAt && qNoAt !== q) {
+        const p2 = { query: qNoAt };
+        if (searchYear && endpoint !== "collection") p2[endpoint === "tv" ? "first_air_date_year" : "year"] = searchYear;
+        search = await request(`/search/${endpoint}`, p2, signal).catch(() => search);
+        if ((!search.results || search.results.length === 0) && searchYear && endpoint !== "collection") {
+          search = await request(`/search/${endpoint}`, { query: qNoAt }, signal).catch(() => search);
+        }
+      }
+    }
+  }
+
+  // Si no hay "@" o no se encuentra nada: eliminar la última palabra si es un año (ej: 1966)
+  if (!search.results || search.results.length === 0) {
+    const candidateQ = q.replace(/(?:^|\s)@\S+/g, " ").replace(/\s+/g, " ").trim();
+    const trailingYearMatch = candidateQ.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
+    if (trailingYearMatch) {
+      const candidateYear = trailingYearMatch[1];
+      const qNoYear = candidateQ.slice(0, trailingYearMatch.index).trim();
+      if (qNoYear.length >= 1) {
+        const effectiveYear = searchYear || candidateYear;
+        const p3 = { query: qNoYear };
+        if (effectiveYear && endpoint !== "collection") p3[endpoint === "tv" ? "first_air_date_year" : "year"] = effectiveYear;
+        search = await request(`/search/${endpoint}`, p3, signal).catch(() => search);
+        if ((!search.results || search.results.length === 0) && effectiveYear && endpoint !== "collection") {
+          search = await request(`/search/${endpoint}`, { query: qNoYear }, signal).catch(() => search);
+        }
+      }
+    }
+  }
+
   return (search.results || []).slice(0, 10).map(r => ({
     id: r.id,
     type: endpoint,
@@ -506,16 +605,9 @@ async function enrichSaga(title, { signal } = {}) {
   let data;
   if (directId) data = await request(`/collection/${directId}`, {}, signal);
   else {
-    let search = await request("/search/collection", { query }, signal);
-    if (!search.results || search.results.length === 0) {
-      const unaccented = query.replace(/ñ/g, "n").replace(/Ñ/g, "N").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-      if (unaccented && unaccented.toLowerCase() !== query.toLowerCase()) {
-        search = await request("/search/collection", { query: unaccented }, signal).catch(() => search);
-      }
-    }
-    const match = search.results?.find(r => normalize(r.name) === normalize(query)) || search.results?.[0];
-    if (!match?.id) return null;
-    data = await request(`/collection/${match.id}`, {}, signal);
+    const matchId = await searchTmdbCandidates("collection", query, null, signal);
+    if (!matchId) return null;
+    data = await request(`/collection/${matchId}`, {}, signal);
   }
   const metadata = {
     id: data.id, type: "collection", name: data.name || title.nombre,
@@ -672,25 +764,7 @@ export async function enrichTitle(title, { signal } = {}) {
   if (!getTmdbKey()) return null;
   let id = directId;
   if (!id) {
-    const params = { query };
-    if (year) {
-      params[type === "tv" ? "first_air_date_year" : "year"] = year;
-    }
-    let search = await request(`/search/${type}`, params, signal);
-    if ((!search.results || search.results.length === 0) && year) {
-      search = await request(`/search/${type}`, { query }, signal).catch(() => search);
-    }
-    // Fallback para caracteres con "ñ" o tildes que puedan no coincidir exactamente en TMDB
-    if (!search.results || search.results.length === 0) {
-      const unaccented = query.replace(/ñ/g, "n").replace(/Ñ/g, "N").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-      if (unaccented && unaccented.toLowerCase() !== query.toLowerCase()) {
-        search = await request(`/search/${type}`, { query: unaccented }, signal).catch(() => search);
-      }
-    }
-    const match = search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(query)))
-      || search.results?.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && (normalize(n).includes(normalize(query)) || normalize(query).includes(normalize(n)))))
-      || search.results?.[0];
-    id = match?.id;
+    id = await searchTmdbCandidates(type, query, year, signal);
   }
   if (!id) return null;
   const append = type === "tv" ? "content_ratings,external_ids" : "release_dates,external_ids";
@@ -730,8 +804,10 @@ export async function enrichTitle(title, { signal } = {}) {
   return metadata;
 }
 
-export async function enrichTitles(titles, { signal, onUpdate } = {}) {
+export async function enrichTitles(titles, { signal, onUpdate, onProgress } = {}) {
+  let done = 0;
   let index = 0;
+  const total = titles.length;
   await Promise.all(Array.from({ length: Math.min(3, titles.length) }, async () => {
     while (index < titles.length && !signal?.aborted) {
       const title = titles[index++];
@@ -765,6 +841,10 @@ export async function enrichTitles(titles, { signal, onUpdate } = {}) {
           }
         }
       } catch (error) { if (error.name !== "AbortError") console.warn("[tmdb]", error.message); }
+      finally {
+        done++;
+        onProgress?.(done, total);
+      }
     }
   }));
 }
