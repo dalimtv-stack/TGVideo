@@ -118,8 +118,7 @@
 .row {
   margin-bottom: 1rem;           /* antes 2rem: espacio entre líneas a la mitad */
   scroll-margin-block: 1.5rem;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 240px;
+  overflow: visible;
 }
 
 .row-title {
@@ -132,7 +131,9 @@
   display: flex;
   gap: 1rem;
   overflow-x: auto;
-  padding: 0.6rem max(1.5rem, calc(var(--sal) + 1rem)) 0.6rem;
+  padding: 1.15rem max(1.5rem, calc(var(--sal) + 1rem)) 0.95rem;
+  margin-top: -0.65rem;
+  margin-bottom: -0.45rem;
   scroll-padding: 0 max(1.5rem, calc(var(--sal) + 1rem));
   scroll-snap-type: x proximity;
   scrollbar-width: none;
@@ -148,12 +149,19 @@
 }
 
 .lib-card {
+  position: relative;
   width: calc(140px * var(--ui-scale, 1.12));
   cursor: pointer;
   outline: none;
   transition: transform 0.15s;
   scroll-margin-left: 40px;
   scroll-margin-right: 40px;
+}
+
+.lib-card:focus,
+.lib-card:hover,
+.lib-card.dpad-focused {
+  z-index: 10;
 }
 
 .lib-card-poster {
@@ -174,10 +182,12 @@
 }
 
 .lib-card:focus .lib-card-poster,
-.lib-card:hover .lib-card-poster {
+.lib-card:hover .lib-card-poster,
+.lib-card.dpad-focused .lib-card-poster {
   transform: scale(1.08);
   border-color: #fff;
-  box-shadow: 0 0 22px rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 22px rgba(255, 255, 255, 0.45);
+  z-index: 12;
 }
 
 .lib-card-name {

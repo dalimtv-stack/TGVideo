@@ -68,7 +68,10 @@ export function showImagePicker(title, profile, { sync, onChanged, onAddToCollec
   const type = title.isSaga || title.metadata?.type === 'collection' ? 'collection' : title.tipo === 'serie' ? 'tv' : 'movie';
   const { overlay, close } = modal('Imágenes de la ficha', '<div class="imgpick" id="imgpick"></div>', esc(title.metadata?.name || title.nombre || ''));
   const dialog = overlay.querySelector('.settings-dialog');
-  if (dialog) dialog.classList.add('imgpick-dialog');
+  if (dialog) {
+    dialog.classList.add('imgpick-dialog');
+    dialog.classList.add('imgpick-dialog-menu');
+  }
   const root = overlay.querySelector('#imgpick');
   attachSpatialNav(root);
 
@@ -79,12 +82,16 @@ export function showImagePicker(title, profile, { sync, onChanged, onAddToCollec
   const focusFirst = () => root.querySelector('[data-focusable]')?.focus({ preventScroll: true });
 
   const renderMenu = () => {
+    if (dialog) {
+      dialog.classList.remove('imgpick-dialog-grid');
+      dialog.classList.add('imgpick-dialog-menu');
+    }
     const kinds = Object.entries(IMAGE_KINDS).map(([kind, label]) =>
       `<button class="btn imgpick-opt" data-focusable data-kind="${kind}">Cambiar ${label.toLowerCase()}</button>`).join('');
     const addCol = onAddToCollection
       ? '<button class="btn btn-secondary imgpick-opt btn-addcol" data-focusable id="imgpick-addcol">Añadir a colección…</button>'
       : '';
-    root.innerHTML = kinds + addCol;
+    root.innerHTML = `<div class="imgpick-menu-list">${kinds}${addCol}</div>`;
     root.querySelectorAll('[data-kind]').forEach((b) => { b.onclick = () => renderGrid(b.dataset.kind); });
     const addBtn = root.querySelector('#imgpick-addcol');
     if (addBtn) addBtn.onclick = () => { close(); onAddToCollection(); };
@@ -135,6 +142,10 @@ export function showImagePicker(title, profile, { sync, onChanged, onAddToCollec
     `<button class="btn-ghost imgpick-provider-btn ${provider === id ? 'is-active' : ''}" data-focusable data-provider="${id}" aria-pressed="${provider === id}">${label}</button>`).join('');
 
   const renderGrid = async (kind) => {
+    if (dialog) {
+      dialog.classList.remove('imgpick-dialog-menu');
+      dialog.classList.add('imgpick-dialog-grid');
+    }
     if (!tmdbId) {
       root.innerHTML = `
         <div class="imgpick-bar"><button class="btn-ghost" data-focusable id="imgpick-back">← Volver</button><strong>${IMAGE_KINDS[kind]}</strong></div>

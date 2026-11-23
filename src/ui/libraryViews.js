@@ -6,7 +6,7 @@ import { showCollectionPicker } from './collectionPicker.js';
 import { assignMovieToCollection, removeMovieFromCollection } from '../metadata/collections.js';
 import { renderAgeBadgeHtml } from './ageRating.js';
 import { getTitleTrailers, openFullscreenTrailer } from './carouselView.js';
-import { fetchTmdbAgeRating } from '../metadata/tmdb.js';
+import { fetchTmdbAgeRating, fetchImdbRating, fetchExternalIds } from '../metadata/tmdb.js';
 
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
@@ -697,23 +697,54 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   }
 
   // Si la edad recomendada no vino en la caché previa, consultar TMDB y refrescar el distintivo
+  const updateDetailMetadataView = () => {
+    const infoEl = document.querySelector('.detail-metadata');
+    if (infoEl && t?.metadata) {
+      const numR = Number(t.metadata.rating);
+      const rStr = Number.isFinite(numR) && numR > 0 ? `★ ${numR.toFixed(1)}` : '';
+      const aBadge = renderAgeBadgeHtml(t);
+      const rWithA = [rStr, aBadge].filter(Boolean).join(' ');
+      const yStr = (t.metadata.date)?.slice(0, 4) || t.yearHint || '';
+      infoEl.innerHTML = [yStr, rWithA].filter(Boolean).join(' · ');
+    }
+  };
+
   if (t?.metadata?.id && !t.metadata?.ageRating) {
     fetchTmdbAgeRating(t.tipo === 'serie' ? 'tv' : 'movie', t.metadata.id).then(age => {
       if (age) {
         if (!t.metadata) t.metadata = {};
         t.metadata.ageRating = age;
-        const infoEl = document.querySelector('.detail-metadata');
-        if (infoEl) {
-          const numR = Number(t.metadata.rating);
-          const rStr = Number.isFinite(numR) && numR > 0 ? `★ ${numR.toFixed(1)}` : '';
-          const aBadge = renderAgeBadgeHtml(t);
-          const rWithA = [rStr, aBadge].filter(Boolean).join(' ');
-          const yStr = (t.metadata.date)?.slice(0, 4) || t.yearHint || '';
-          infoEl.innerHTML = [yStr, rWithA].filter(Boolean).join(' · ');
-        }
+        updateDetailMetadataView();
       }
     }).catch(() => {});
   }
+
+  // Asegurar puntuación de IMDb en la ficha de detalle
+  if (t?.metadata && !t.metadata.hasImdbRating) {
+    const imdbId = t.metadata.imdbId;
+    if (imdbId) {
+      fetchImdbRating(imdbId, t.tipo).then(r => {
+        if (r && Number.isFinite(r) && r > 0) {
+          t.metadata.rating = r;
+          t.metadata.hasImdbRating = true;
+          updateDetailMetadataView();
+        }
+      }).catch(() => {});
+    } else if (t.metadata.id) {
+      fetchExternalIds(t.tipo, t.metadata.id).then(async ext => {
+        if (ext?.imdb_id) {
+          t.metadata.imdbId = ext.imdb_id;
+          const r = await fetchImdbRating(ext.imdb_id, t.tipo).catch(() => null);
+          if (r && Number.isFinite(r) && r > 0) {
+            t.metadata.rating = r;
+            t.metadata.hasImdbRating = true;
+            updateDetailMetadataView();
+          }
+        }
+      }).catch(() => {});
+    }
+  }
+
   focusFirst('#d-play, .season-btn.active, #ep-list .ep[data-focusable]');
 }
 

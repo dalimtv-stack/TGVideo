@@ -168,12 +168,73 @@ export async function fetchCollectionMovieTrailers(collectionId, signal) {
 
 export async function validateTmdbKey() { return request("/configuration"); }
 
-export async function fetchTvExternalIds(tvId, signal) {
+export async function fetchExternalIds(type, id, signal) {
+  if (!id) return null;
+  const endpoint = (type === "serie" || type === "tv") ? "tv" : "movie";
   try {
-    return await request("/tv/" + tvId + "/external_ids", {}, signal);
+    return await request(`/${endpoint}/${id}/external_ids`, {}, signal);
   } catch (_) {
     return null;
   }
+}
+
+export async function fetchTvExternalIds(tvId, signal) {
+  return fetchExternalIds("tv", tvId, signal);
+}
+
+/**
+ * Obtiene la puntuación pública oficial de IMDb por su ID (ej: "tt0111161").
+ * Utiliza caché en KV, proxy público de Agregarr y fallback a Cinemeta.
+ * @param {string} imdbId
+ * @param {string} [type="movie"]
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<number|null>}
+ */
+export async function fetchImdbRating(imdbId, type = "movie", signal) {
+  if (!imdbId) return null;
+  const rawId = String(imdbId).trim();
+  const id = rawId.startsWith("tt") ? rawId : `tt${rawId}`;
+  const cacheKey = `imdb_rating:${id}`;
+  try {
+    const cached = await kv.get(cacheKey).catch(() => null);
+    if (cached != null && Number.isFinite(Number(cached)) && Number(cached) > 0) {
+      return Number(cached);
+    }
+  } catch (_) {}
+
+  // 1. Agregarr (proxy de ratings públicos oficiales de IMDb actualizados a diario)
+  try {
+    const res = await fetch(`https://api.agregarr.org/api/ratings?id=${encodeURIComponent(id)}`, {
+      signal: signal || AbortSignal.timeout(4000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const item = Array.isArray(data) ? data[0] : data;
+      const score = item?.rating != null ? Number(item.rating) : null;
+      if (score != null && Number.isFinite(score) && score > 0) {
+        await kv.set(cacheKey, score).catch(() => {});
+        return score;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Cinemeta (catálogo público de metadatos de Stremio indexado por IMDb ID)
+  try {
+    const stremType = (type === "serie" || type === "tv" || type === "series") ? "series" : "movie";
+    const res = await fetch(`https://v3-cinemeta.strem.io/meta/${stremType}/${encodeURIComponent(id)}.json`, {
+      signal: signal || AbortSignal.timeout(4000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const score = data?.meta?.imdbRating != null ? Number(data.meta.imdbRating) : null;
+      if (score != null && Number.isFinite(score) && score > 0) {
+        await kv.set(cacheKey, score).catch(() => {});
+        return score;
+      }
+    }
+  } catch (_) {}
+
+  return null;
 }
 
 export async function fetchTmdbTrailer(type, id, signal) {
@@ -306,13 +367,23 @@ export async function fetchTmdbFullDetails(type, id, signal) {
       poster: imageUrl(col.poster_path),
       backdrop: imageUrl(col.backdrop_path, "w1280"),
     } : null;
+    let rating = data.vote_average != null ? Number(data.vote_average) : 0;
+    let hasImdbRating = false;
+    if (imdbId) {
+      const imdbR = await fetchImdbRating(imdbId, endpoint, signal).catch(() => null);
+      if (imdbR && Number.isFinite(imdbR) && imdbR > 0) {
+        rating = imdbR;
+        hasImdbRating = true;
+      }
+    }
     return {
       director,
       writer,
       cast,
       imdbId,
       ageRating,
-      rating: data.vote_average != null ? Number(data.vote_average) : 0,
+      rating,
+      hasImdbRating,
       overview: data.overview || "",
       runtime: data.runtime || 0,
       collection,
@@ -518,6 +589,33 @@ export async function enrichTitle(title, { signal } = {}) {
         }
       }).catch(() => {});
     }
+
+    // Actualizar en segundo plano la puntuación a la nota de IMDb si aún no se tiene
+    if (cached.imdbId && !cached.hasImdbRating) {
+      fetchImdbRating(cached.imdbId, type, signal).then(r => {
+        if (r && Number.isFinite(r) && r > 0) {
+          cached.rating = r;
+          cached.hasImdbRating = true;
+          title.metadata = cached;
+          kv.set(cacheKey, cached).catch(() => {});
+        }
+      }).catch(() => {});
+    } else if (!cached.imdbId && cached.id && getTmdbKey()) {
+      fetchExternalIds(type, cached.id, signal).then(async ext => {
+        const iId = ext?.imdb_id;
+        if (iId) {
+          cached.imdbId = iId;
+          const r = await fetchImdbRating(iId, type, signal).catch(() => null);
+          if (r && Number.isFinite(r) && r > 0) {
+            cached.rating = r;
+            cached.hasImdbRating = true;
+          }
+          title.metadata = cached;
+          kv.set(cacheKey, cached).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
     title.metadata = cached;
     return cached;
   }
@@ -545,9 +643,10 @@ export async function enrichTitle(title, { signal } = {}) {
     id = match?.id;
   }
   if (!id) return null;
-  const append = type === "tv" ? "content_ratings" : "release_dates";
+  const append = type === "tv" ? "content_ratings,external_ids" : "release_dates,external_ids";
   const data = await request(`/${type}/${id}`, { append_to_response: append }, signal);
   const ageRating = parseAgeRatingFromTmdb(data, type);
+  const imdbId = data.external_ids?.imdb_id || data.imdb_id || "";
   const col = data.belongs_to_collection;
   const collection = col ? {
     id: col.id,
@@ -555,7 +654,21 @@ export async function enrichTitle(title, { signal } = {}) {
     poster: imageUrl(col.poster_path),
     backdrop: imageUrl(col.backdrop_path, "w1280"),
   } : null;
-  const metadata = { id: data.id, type, name: data.name || data.title, overview: data.overview, rating: data.vote_average,
+
+  let rating = data.vote_average != null ? Number(data.vote_average) : 0;
+  let hasImdbRating = false;
+  if (imdbId) {
+    try {
+      const imdbR = await fetchImdbRating(imdbId, type, signal);
+      if (imdbR && Number.isFinite(imdbR) && imdbR > 0) {
+        rating = imdbR;
+        hasImdbRating = true;
+      }
+    } catch (_) {}
+  }
+
+  const metadata = { id: data.id, type, name: data.name || data.title, overview: data.overview, rating,
+    imdbId, hasImdbRating,
     date: data.first_air_date || data.release_date, last_air_date: data.last_air_date || "", poster: imageUrl(data.poster_path), backdrop: imageUrl(data.backdrop_path, "w1280"),
     collection, ageRating };
   await kv.set(cacheKey, metadata).catch(error => console.warn("[tmdb] Caché no disponible", error));
