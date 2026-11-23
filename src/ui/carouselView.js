@@ -5,7 +5,7 @@
 
 import { memoryCache, loadPoster } from '../metadata/posterCache.js';
 import { getAutoLogo } from '../metadata/autoLogo.js';
-import { fetchTmdbTrailer, fetchCollectionMovieTrailers } from '../metadata/tmdb.js';
+import { fetchTmdbTrailer, fetchCollectionMovieTrailers, fetchImdbRating, fetchExternalIds } from '../metadata/tmdb.js';
 import { renderAgeBadgeHtml } from './ageRating.js';
 
 let active = null;
@@ -18,7 +18,7 @@ const displayName = (t) => t.metadata?.name || t.nombre || t.title || 'Sin títu
 
 const metaHtml = (t) => {
   const year = t.metadata?.date ? String(t.metadata.date).slice(0, 4) : (t.yearHint || '');
-  const numRating = Number(t.metadata?.rating);
+  const numRating = Number(t.metadata?.imdbRating ?? t.metadata?.rating);
   const ratingStr = Number.isFinite(numRating) && numRating > 0 ? `★ ${numRating.toFixed(1)}` : '';
   const ageBadge = renderAgeBadgeHtml(t);
   const ratingWithAge = [ratingStr, ageBadge].filter(Boolean).join(' ');
@@ -495,7 +495,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     const itemH = isLogos ? 110 : Math.max(60, Math.round(stageH - 24));
     const itemW = isLogos ? 250 : Math.round(itemH * (2 / 3));
     const rem = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).fontSize)) || 16;
-    const gap = isLogos ? Math.round(1.4 * rem) : Math.round(0.85 * rem);
+    const gap = isLogos ? Math.round(1.4 * rem) : Math.round(0.45 * rem);
     return { itemW, itemH, gap };
   };
 
@@ -513,7 +513,9 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       targetX = activeEl.offsetLeft + (activeEl.offsetWidth / 2) - (stageWidth / 2);
     } else {
       const { itemW, gap } = getItemMetrics();
-      targetX = cur * (itemW + gap) + itemW / 2 - stageWidth / 2;
+      const rem = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).fontSize)) || 16;
+      const activeMargin = logos ? 0 : Math.round(4.25 * rem);
+      targetX = cur * (itemW + gap) + activeMargin + itemW / 2 - stageWidth / 2;
     }
 
     track.style.transition = smooth ? 'transform 0.24s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
@@ -544,6 +546,33 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     metaEl.innerHTML = metaHtml(t);
     synEl.textContent = synopsisOf(t) || 'Sin sinopsis disponible.';
     countEl.textContent = `${cur + 1} / ${items.length}`;
+
+    if (t?.metadata && !t.metadata.hasImdbRating) {
+      const tType = titleType(t);
+      if (t.metadata.imdbId) {
+        fetchImdbRating(t.metadata.imdbId, tType).then(r => {
+          if (r && Number.isFinite(r) && r > 0 && cur === i && alive()) {
+            t.metadata.rating = r;
+            t.metadata.imdbRating = r;
+            t.metadata.hasImdbRating = true;
+            metaEl.innerHTML = metaHtml(t);
+          }
+        }).catch(() => {});
+      } else if (t.metadata.id) {
+        fetchExternalIds(tType, t.metadata.id).then(async ext => {
+          if (ext?.imdb_id) {
+            t.metadata.imdbId = ext.imdb_id;
+            const r = await fetchImdbRating(ext.imdb_id, tType).catch(() => null);
+            if (r && Number.isFinite(r) && r > 0 && cur === i && alive()) {
+              t.metadata.rating = r;
+              t.metadata.imdbRating = r;
+              t.metadata.hasImdbRating = true;
+              metaEl.innerHTML = metaHtml(t);
+            }
+          }
+        }).catch(() => {});
+      }
+    }
     if (logos) {
       showTrailer(t);
     } else if (trailerBtn) {

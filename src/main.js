@@ -417,8 +417,8 @@ function sortTitles(items, sortType, sortOrder = 'desc') {
   }
   if (sortType === 'puntuacion') {
     return list.sort((a, b) => {
-      const rA = Number(a.metadata?.rating) || 0;
-      const rB = Number(b.metadata?.rating) || 0;
+      const rA = Number(a.metadata?.imdbRating ?? a.metadata?.rating) || 0;
+      const rB = Number(b.metadata?.imdbRating ?? b.metadata?.rating) || 0;
       if (rB !== rA) return (rA - rB) * mult;
       const dateA = a.metadata?.date || a.yearHint || '';
       const dateB = b.metadata?.date || b.yearHint || '';
@@ -994,8 +994,9 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     if (!metadataController.signal.aborted && TITLES_CACHE) {
       const before = TITLES_CACHE.length;
       TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
-      if (TITLES_CACHE.length !== before && document.querySelector('.home-screen')) {
-        showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
+      const currentSort = getSectionSort(profile.id, selectedSection);
+      if ((TITLES_CACHE.length !== before || currentSort === 'puntuacion') && document.querySelector('.home-screen')) {
+        showHome(tg, sync, profile, { focusSort: currentSort, fromPointer: true });
       }
     }
   }).catch(() => {});

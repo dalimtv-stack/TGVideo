@@ -203,7 +203,7 @@ function applyDetailMetadata(t, profile) {
   }
   const info = detail.querySelector('.detail-metadata');
   if (info) {
-    const numRating = Number(metadata.rating ?? t.metadata?.rating);
+    const numRating = Number(metadata.imdbRating ?? metadata.rating ?? t.metadata?.imdbRating ?? t.metadata?.rating);
     const ratingStr = Number.isFinite(numRating) && numRating > 0 ? `★ ${numRating.toFixed(1)}` : '';
     const ageBadge = renderAgeBadgeHtml(t);
     const ratingWithAge = [ratingStr, ageBadge].filter(Boolean).join(' ');
@@ -700,7 +700,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   const updateDetailMetadataView = () => {
     const infoEl = document.querySelector('.detail-metadata');
     if (infoEl && t?.metadata) {
-      const numR = Number(t.metadata.rating);
+      const numR = Number(t.metadata.imdbRating ?? t.metadata.rating);
       const rStr = Number.isFinite(numR) && numR > 0 ? `★ ${numR.toFixed(1)}` : '';
       const aBadge = renderAgeBadgeHtml(t);
       const rWithA = [rStr, aBadge].filter(Boolean).join(' ');
@@ -726,8 +726,10 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       fetchImdbRating(imdbId, t.tipo).then(r => {
         if (r && Number.isFinite(r) && r > 0) {
           t.metadata.rating = r;
+          t.metadata.imdbRating = r;
           t.metadata.hasImdbRating = true;
           updateDetailMetadataView();
+          persistMetadata?.();
         }
       }).catch(() => {});
     } else if (t.metadata.id) {
@@ -737,8 +739,10 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           const r = await fetchImdbRating(ext.imdb_id, t.tipo).catch(() => null);
           if (r && Number.isFinite(r) && r > 0) {
             t.metadata.rating = r;
+            t.metadata.imdbRating = r;
             t.metadata.hasImdbRating = true;
             updateDetailMetadataView();
+            persistMetadata?.();
           }
         }
       }).catch(() => {});

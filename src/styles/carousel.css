@@ -157,6 +157,11 @@
   will-change: transform;
 }
 
+/* En modo portadas, las no enfocadas están un poco más juntas */
+.carousel-mode-posters .carousel-track {
+  gap: 0.45rem;
+}
+
 /* Tarjeta en modo portadas: dimensiones fijas, las no enfocadas más juntas y a escala 0.88 */
 .carousel-item {
   flex: 0 0 auto !important;
@@ -185,7 +190,7 @@
 .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-stage.dpad-focused .carousel-item.is-active {
   transform: scale(1.76) !important;
-  margin: 0 2.5rem !important;
+  margin: 0 4.25rem !important;
   opacity: 1 !important;
   box-shadow: 0 0 0 3px #fff, 0 4px 28px rgba(255, 255, 255, 0.55), 0 10px 30px rgba(0, 0, 0, 0.8) !important;
   z-index: 5;

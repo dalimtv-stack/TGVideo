@@ -30,7 +30,7 @@ async function scanFiles(client, peer, ch) {
       rawFileName,
       rawCaption,
       label: prettyName(fileName), section: cap.section || null,
-      synopsis: cap.synopsis || null, tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null,
+      synopsis: cap.synopsis || null, tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null, imdbId: cap.imdbId ? String(cap.imdbId).trim() : null, rating: cap.rating ? Number(cap.rating) : null,
       season: ep.season, episode: ep.episode,
       size: Number(doc?.size?.toString?.() || doc?.size || 0),
       duration: durAttr?.duration || 0, mimeType: doc?.mimeType || 'video/mp4', date: msg.date,
@@ -55,6 +55,7 @@ function makeTitle({ id, ch, name, origen, seccion, files }) {
     channel: ch, archivos: files,
     ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
     tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
+    imdbId: files.find(f => f.imdbId)?.imdbId || null,
   };
 }
 
@@ -230,6 +231,14 @@ export function attachAutoCollections(titles) {
           name: collection.name,
           poster: collection.poster || null,
           backdrop: collection.backdrop || null,
+          rating: (() => {
+            const v = movies.map(m => Number(m.metadata?.imdbRating ?? m.metadata?.rating)).filter(r => r > 0);
+            return v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : 0;
+          })(),
+          imdbRating: (() => {
+            const v = movies.map(m => Number(m.metadata?.imdbRating ?? m.metadata?.rating)).filter(r => r > 0);
+            return v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : 0;
+          })(),
         },
       };
 
@@ -237,6 +246,14 @@ export function attachAutoCollections(titles) {
     } else {
       // Saga física (canal) ya existente: incluir también las películas añadidas manualmente a la
       // colección ("Añadir a colección") o detectadas por TMDB que viven fuera del canal de la saga.
+      if (existingSaga.metadata && !existingSaga.metadata.rating) {
+        const v = (existingSaga.archivos || []).concat(movies).map(m => Number(m.metadata?.imdbRating ?? m.metadata?.rating)).filter(r => r > 0);
+        if (v.length) {
+          const avg = +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(1);
+          existingSaga.metadata.rating = avg;
+          existingSaga.metadata.imdbRating = avg;
+        }
+      }
       existingSaga.archivos = existingSaga.archivos || [];
       const have = new Set(existingSaga.archivos.map(f => f.key));
       for (const m of movies) {
@@ -332,6 +349,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
         nombre: ch.name, origen: { tipo: 'saga', channelId: String(ch.id) }, channel: ch,
         archivos: sagaFiles, ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
         tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
+    imdbId: files.find(f => f.imdbId)?.imdbId || null,
       });
 
       // Y además, cada película de la saga aparece suelta en Películas y Novedades
