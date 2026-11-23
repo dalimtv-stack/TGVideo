@@ -83,7 +83,11 @@ export function handleBack() {
 /** Centra verticalmente una fila en el área desplazable de la home (la primera fila va al tope). */
 export function centerRowInView(row, behavior = 'smooth') {
   const scroller = document.querySelector('.home-main');
-  if (!scroller || !row) return;
+  if (!row) return;
+  if (!scroller) {
+    row.scrollIntoView({ block: 'center', behavior });
+    return;
+  }
   const isFirst = !row.previousElementSibling?.matches?.('.row');
   let top = 0;
   if (!isFirst) {
@@ -93,8 +97,12 @@ export function centerRowInView(row, behavior = 'smooth') {
     top = scroller.scrollTop + delta;
   }
   const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-  top = Math.max(0, Math.min(max, top));
-  if (Math.abs(top - scroller.scrollTop) > 1) scroller.scrollTo({ top, behavior });
+  if (max > 0) {
+    top = Math.max(0, Math.min(max, top));
+    if (Math.abs(top - scroller.scrollTop) > 1) scroller.scrollTo({ top, behavior });
+  } else {
+    row.scrollIntoView({ block: isFirst ? 'start' : 'center', behavior });
+  }
 }
 
 /** Centra horizontalmente un elemento dentro de su carrusel. */
@@ -168,7 +176,10 @@ function move(dir) {
 
     if (dir === 'up') {
       const curRow = cur.closest('.row');
-      const prevRow = curRow?.previousElementSibling?.matches('.row') ? curRow.previousElementSibling : null;
+      let prevRow = curRow?.previousElementSibling;
+      while (prevRow && !prevRow.matches('.row')) {
+        prevRow = prevRow.previousElementSibling;
+      }
       if (prevRow) {
         const prevTrack = prevRow.querySelector('.row-track');
         const prevItems = [...(prevTrack?.querySelectorAll('[data-focusable]') || [])].filter(e => e.offsetParent && !e.disabled);
@@ -202,7 +213,10 @@ function move(dir) {
 
     if (dir === 'down') {
       const curRow = cur.closest('.row');
-      const nextRow = curRow?.nextElementSibling?.matches('.row') ? curRow.nextElementSibling : null;
+      let nextRow = curRow?.nextElementSibling;
+      while (nextRow && !nextRow.matches('.row')) {
+        nextRow = nextRow.nextElementSibling;
+      }
       if (nextRow) {
         const nextTrack = nextRow.querySelector('.row-track');
         const nextItems = [...(nextTrack?.querySelectorAll('[data-focusable]') || [])].filter(e => e.offsetParent && !e.disabled);
@@ -430,7 +444,7 @@ function move(dir) {
         return;
       }
     }
-    if (dir === 'right' && curViewsBar.closest('.category-header--in-header')) {
+    if (dir === 'right' && curSortBar.closest('.category-header--in-header')) {
       const reloadBtn = document.querySelector('#btn-reload');
       const profileBtn = document.querySelector('#btn-change-profile');
       if (reloadBtn) { reloadBtn.focus(); return; }
@@ -1009,7 +1023,7 @@ export function initDpad() {
     if (e.defaultPrevented) return;
 
     // Si el reproductor de vídeo está abierto y no hay un modal encima, delegar control al reproductor
-    if (activePlayerController && !document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up')) {
+    if (activePlayerController && document.querySelector('.player') && !document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up')) {
       // 1. Tecla PLAY / PAUSE física del mando a distancia
       const isPlayPauseKey = e.key === 'MediaPlayPause' || e.key === 'MediaPlay' || e.key === 'MediaPause' ||
         e.key === 'Play' || e.key === 'Pause' || e.key === 'ToggleMediaPlayPause' ||
@@ -1111,7 +1125,7 @@ export function initDpad() {
 
       e.preventDefault();
       move(map[e.key]);
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' || e.key === 'Select' || e.keyCode === 13 || e.keyCode === 23) {
       if (isInput) {
         // En inputs, Enter activa el submit del formulario si existe
         const form = e.target.closest('form');

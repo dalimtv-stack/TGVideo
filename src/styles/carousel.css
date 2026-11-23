@@ -209,7 +209,7 @@
   overflow: hidden !important;
   outline: none;
   flex: 0 0 auto;
-  height: clamp(110px, 18vh, 140px) !important;
+  height: calc(clamp(110px, 18vh, 140px) * var(--carousel-logos-scale, 1)) !important;
   padding: 6px 0;
   box-sizing: border-box;
   border-radius: 12px;
@@ -221,9 +221,9 @@
   flex: 0 0 auto !important;
   height: 100% !important;
   box-sizing: border-box !important;
-  width: 250px !important;
-  max-width: 250px !important;
-  min-width: 250px !important;
+  width: calc(250px * var(--carousel-logos-scale, 1)) !important;
+  max-width: calc(250px * var(--carousel-logos-scale, 1)) !important;
+  min-width: calc(250px * var(--carousel-logos-scale, 1)) !important;
   aspect-ratio: unset !important;
   border-radius: 10px;
   overflow: visible;
@@ -234,7 +234,7 @@
   align-items: center;
   justify-content: center;
   padding: 4px 10px;
-  transform: scale(0.85);
+  transform: scale(calc(0.85 * var(--carousel-logos-scale, 1)));
   opacity: 0.55;
   transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, filter 0.22s ease;
   cursor: pointer;
@@ -253,7 +253,7 @@
 .carousel-mode-logos .carousel-stage:focus .carousel-item.is-active,
 .carousel-mode-logos .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-mode-logos .carousel-stage.dpad-focused .carousel-item.is-active {
-  transform: scale(1.08) !important;
+  transform: scale(calc(1.08 * var(--carousel-logos-scale, 1))) !important;
   opacity: 1 !important;
   background: transparent !important;
   box-shadow: none !important;
@@ -730,36 +730,36 @@ html.is-tv .carousel-trailer-modal {
    Factor de escala = var(--ui-scale, 1.32) * 1.3865.
    ========================================================================== */
 .carousel-mode-posters .carousel-stage {
-  height: calc(clamp(340px, 52vh, 460px) * (var(--ui-scale, 1.32) * 1.3865));
+  height: calc(clamp(340px, 52vh, 460px) * var(--carousel-posters-scale, 1.83));
 }
 
 .carousel-mode-posters .carousel-item {
-  height: calc(clamp(170px, 25vh, 235px) * (var(--ui-scale, 1.32) * 1.3865)) !important;
+  height: calc(clamp(170px, 25vh, 235px) * var(--carousel-posters-scale, 1.83)) !important;
 }
 
 .carousel-mode-posters .carousel-item.is-active,
 .carousel-mode-posters .carousel-stage:focus .carousel-item.is-active,
 .carousel-mode-posters .carousel-stage:focus-visible .carousel-item.is-active,
 .carousel-mode-posters .carousel-stage.dpad-focused .carousel-item.is-active {
-  margin: 0 calc(4.25rem * (var(--ui-scale, 1.32) * 1.3865)) !important;
+  margin: 0 calc(4.25rem * var(--carousel-posters-scale, 1.83)) !important;
 }
 
 .carousel-mode-posters .carousel-title {
-  font-size: calc(clamp(1.1rem, calc(var(--car-h, 520px) * 0.045), 1.8rem) * (var(--ui-scale, 1.32) * 1.3865));
+  font-size: calc(clamp(1.1rem, calc(var(--car-h, 520px) * 0.045), 1.8rem) * var(--carousel-posters-scale, 1.83));
 }
 
 .carousel-mode-posters .carousel-meta {
-  font-size: calc(clamp(0.8rem, calc(var(--car-h, 520px) * 0.026), 0.98rem) * (var(--ui-scale, 1.32) * 1.3865));
+  font-size: calc(clamp(0.8rem, calc(var(--car-h, 520px) * 0.026), 0.98rem) * var(--carousel-posters-scale, 1.83));
 }
 
 .carousel-mode-posters .carousel-synopsis {
-  font-size: calc(clamp(0.85rem, calc(var(--car-h, 520px) * 0.028), 1.05rem) * (var(--ui-scale, 1.32) * 1.3865));
+  font-size: calc(clamp(0.85rem, calc(var(--car-h, 520px) * 0.028), 1.05rem) * var(--carousel-posters-scale, 1.83));
 }
 
 .carousel-mode-posters .carousel-count {
-  font-size: calc(0.8rem * (var(--ui-scale, 1.32) * 1.3865));
+  font-size: calc(0.8rem * var(--carousel-posters-scale, 1.83));
 }
 
 .carousel-mode-posters .age-rating-badge {
-  font-size: calc(0.76rem * (var(--ui-scale, 1.32) * 1.3865));
+  font-size: calc(0.76rem * var(--carousel-posters-scale, 1.83));
 }

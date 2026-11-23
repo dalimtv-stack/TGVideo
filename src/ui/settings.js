@@ -38,6 +38,25 @@ function normalizeScaleIndex(value, fallback = 5) {
     : fallback;
 }
 
+export const CAROUSEL_POSTERS_SCALE_LEVELS = UI_SCALE_LEVELS.map(level => ({
+  ...level,
+  scale: Number((level.scale * 1.3865).toFixed(4)),
+}));
+
+export const CAROUSEL_LOGOS_SCALE_LEVELS = [
+  { id: '-5', label: '-5', tickLabel: '-5', scale: 0.65 },
+  { id: '-4', label: '-4', tickLabel: '-4', scale: 0.72 },
+  { id: '-3', label: '-3', tickLabel: '-3', scale: 0.80 },
+  { id: '-2', label: '-2', tickLabel: '-2', scale: 0.88 },
+  { id: '-1', label: '-1', tickLabel: '-1', scale: 0.94 },
+  { id: '0', label: '0 (predeterminado)', tickLabel: '0', scale: 1.00 },
+  { id: '1', label: '1', tickLabel: '1', scale: 1.08 },
+  { id: '2', label: '2', tickLabel: '2', scale: 1.16 },
+  { id: '3', label: '3', tickLabel: '3', scale: 1.25 },
+  { id: '4', label: '4', tickLabel: '4', scale: 1.35 },
+  { id: '5', label: '5', tickLabel: '5', scale: 1.50 },
+];
+
 export const PIXEL_ZOOM_LEVELS = [
   { id: 'auto', label: 'Automático (según pantalla)', tickLabel: 'Auto', value: 'auto' },
   { id: '60', label: '60% (Muy compacto)', tickLabel: '60%', value: 0.60 },
@@ -109,6 +128,11 @@ export function getDeviceSettings(profile) {
     ? normalizeScaleIndex(deviceSpecificScale, defaultScaleIndex)
     : defaultScaleIndex;
 
+  const localPostersScale = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_carousel_posters_scale') : null;
+  const postersScale = devProfile.carousel_posters_scale ?? localPostersScale ?? 5;
+  const localLogosScale = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_carousel_logos_scale') : null;
+  const logosScale = devProfile.carousel_logos_scale ?? localLogosScale ?? 5;
+
   const localPixelZoom = typeof localStorage !== 'undefined' ? localStorage.getItem('tgvideo_device_pixel_zoom') : null;
   const devPixelZoom = devProfile.pixel_zoom ?? localPixelZoom ?? 'auto';
   const resolvedPixelZoomIdx = normalizePixelZoomIndex(devPixelZoom, 0);
@@ -118,6 +142,8 @@ export function getDeviceSettings(profile) {
     player: chosenPlayer,
     skipSeconds: Number(devProfile.skip_seconds || localSkip || profile?.skip_seconds || legacyLocalSkip || 10),
     uiScale: resolvedScale,
+    carouselPostersScale: normalizeScaleIndex(postersScale, 5),
+    carouselLogosScale: normalizeScaleIndex(logosScale, 5),
     pixelZoom: devPixelZoom,
     pixelZoomIndex: resolvedPixelZoomIdx,
   };
@@ -131,6 +157,10 @@ export function applyProfileScale(profile) {
   if (typeof document !== 'undefined') {
     document.documentElement.style.setProperty('--ui-scale', String(conf.scale));
     document.documentElement.setAttribute('data-ui-scale', conf.id);
+    const posterIdx = Math.max(0, Math.min(CAROUSEL_POSTERS_SCALE_LEVELS.length - 1, dev.carouselPostersScale));
+    const logoIdx = Math.max(0, Math.min(CAROUSEL_LOGOS_SCALE_LEVELS.length - 1, dev.carouselLogosScale));
+    document.documentElement.style.setProperty('--carousel-posters-scale', String(CAROUSEL_POSTERS_SCALE_LEVELS[posterIdx].scale));
+    document.documentElement.style.setProperty('--carousel-logos-scale', String(CAROUSEL_LOGOS_SCALE_LEVELS[logoIdx].scale));
   }
   return validIdx;
 }
@@ -491,7 +521,6 @@ function profileSettings(profile, sync, onChanged) {
           </div>
           <input type="hidden" name="avatar" value="${esc(selectedAvatar)}">
         </div>
-        <button type="button" class="btn-ghost" data-focusable id="btn-news-settings" style="margin-top:0.6rem;">Configurar Novedades</button>
       </div>
 
       <p class="settings-status" role="status"></p>
@@ -502,7 +531,6 @@ function profileSettings(profile, sync, onChanged) {
   `, 'Configura el nombre y el avatar de este perfil');
 
   const avatarInput = overlay.querySelector('input[name="avatar"]');
-  overlay.querySelector('#btn-news-settings').onclick = () => showNewsSettings(profile, sync, onChanged);
   overlay.querySelector('#btn-change-avatar').onclick = async () => {
     const nameNow = overlay.querySelector('input[name="name"]').value.trim() || profile.name;
     const picked = await pickAvatar({ name: nameNow, current: selectedAvatar, title: 'Cambiar avatar', confirmLabel: 'Elegir' });
@@ -601,17 +629,9 @@ function deviceSettings(profile, sync, onChanged) {
                 </select>
               </label>
             </div>
-            <label class="ui-scale-setting device-scale-setting">
-              <span class="ui-scale-header"><span>Escala de portadas y letras:</span><strong class="ui-scale-value" id="device-scale-label"></strong></span>
-              <input name="uiScale" type="range" class="settings-slider" min="0" max="${UI_SCALE_LEVELS.length - 1}" step="1" value="${currentScale}" data-focusable>
-              <span class="ui-scale-ticks">${UI_SCALE_LEVELS.map(level => `<span>${esc(level.label.replace(' (predeterminado)', ''))}</span>`).join('')}</span>
-            </label>
-
-            <label class="ui-scale-setting device-pixel-zoom-setting" style="margin-top:0.65rem;">
-              <span class="ui-scale-header"><span>Resolución de pantalla (píxeles):</span><strong class="ui-scale-value" id="device-pixel-zoom-label"></strong></span>
-              <input name="pixelZoom" type="range" class="settings-slider" min="0" max="${PIXEL_ZOOM_LEVELS.length - 1}" step="1" value="${currentPixelZoomIdx}" data-focusable>
-              <span class="ui-scale-ticks">${PIXEL_ZOOM_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
-            </label>
+            <div class="settings-field-row" style="margin-top:0.65rem;">
+              <button type="button" class="btn-ghost" data-focusable id="btn-device-skin" style="width:100%;text-align:center;font-weight:600;padding:0.65rem 1rem;">Skin</button>
+            </div>
           </fieldset>
 
       <p class="settings-status" role="status"></p>
@@ -621,27 +641,7 @@ function deviceSettings(profile, sync, onChanged) {
     </form>
   `, 'Estas preferencias se guardan para este equipo sin alterar otros dispositivos');
 
-  const scaleInput = overlay.querySelector('input[name="uiScale"]');
-  const scaleLabel = overlay.querySelector('#device-scale-label');
-  const updateScalePreview = () => {
-    const index = normalizeScaleIndex(scaleInput?.value, currentScale);
-    if (scaleLabel) scaleLabel.textContent = UI_SCALE_LEVELS[index].label;
-    document.documentElement.style.setProperty('--ui-scale', String(UI_SCALE_LEVELS[index].scale));
-    document.documentElement.setAttribute('data-ui-scale', UI_SCALE_LEVELS[index].id);
-  };
-  scaleInput?.addEventListener('input', updateScalePreview);
-  updateScalePreview();
-
-  const zoomInput = overlay.querySelector('input[name="pixelZoom"]');
-  const zoomLabel = overlay.querySelector('#device-pixel-zoom-label');
-  const updateZoomPreview = () => {
-    const idx = Math.max(0, Math.min(PIXEL_ZOOM_LEVELS.length - 1, Number(zoomInput?.value) || 0));
-    const level = PIXEL_ZOOM_LEVELS[idx];
-    if (zoomLabel) zoomLabel.textContent = level.label;
-    applyDevicePixelZoom(level.value);
-  };
-  zoomInput?.addEventListener('input', updateZoomPreview);
-  updateZoomPreview();
+  overlay.querySelector('#btn-device-skin').onclick = () => showSkinSettings(profile, sync, onChanged);
 
   overlay.querySelectorAll('.settings-radio-label').forEach(label => {
     const radio = label.querySelector('input[type="radio"]');
@@ -670,40 +670,30 @@ function deviceSettings(profile, sync, onChanged) {
     const form = e.currentTarget;
     const player = form.elements.player?.value || 'artplayer';
     const skipSeconds = Number(form.elements.skipSeconds?.value) || 10;
-    const uiScale = normalizeScaleIndex(form.elements.uiScale?.value, currentScale);
 
     const deviceId = getDeviceId();
 
-    const pixelZoomIdx = Math.max(0, Math.min(PIXEL_ZOOM_LEVELS.length - 1, Number(form.elements.pixelZoom?.value) || 0));
-    const pixelZoomVal = PIXEL_ZOOM_LEVELS[pixelZoomIdx].value;
 
     // Guardado local inmediato para este dispositivo
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('tgvideo_device_player', player);
       localStorage.setItem('tgvideo_device_skip', String(skipSeconds));
-      localStorage.setItem('tgvideo_device_scale', String(uiScale));
-      localStorage.setItem('tgvideo_device_pixel_zoom', String(pixelZoomVal));
       // Compatibilidad retroactiva con claves por perfil
       localStorage.setItem(`tgvideo_player_${profile.id}`, player);
       localStorage.setItem(`tgvideo_skip_${profile.id}`, String(skipSeconds));
-      localStorage.setItem(`tgvideo_scale_${profile.id}`, String(uiScale));
     }
 
     // Guardado en memoria en el perfil bajo la clave de este dispositivo
     if (!profile.devices) profile.devices = {};
     profile.devices[deviceId] = {
+      ...(profile.devices[deviceId] || {}),
       player,
       skip_seconds: skipSeconds,
-      ui_scale: uiScale,
-      pixel_zoom: pixelZoomVal,
       updated_at: Date.now()
     };
     profile.player = player;
     profile.skip_seconds = skipSeconds;
 
-    applyDevicePixelZoom(pixelZoomVal);
-
-    applyProfileScale(profile);
     close();
     onChanged();
 
@@ -714,17 +704,16 @@ function deviceSettings(profile, sync, onChanged) {
         if (!remote) return;
         const remoteDevices = remote.profile?.devices || {};
         remoteDevices[deviceId] = {
+          ...(remoteDevices[deviceId] || {}),
           player,
           skip_seconds: skipSeconds,
-          ui_scale: uiScale,
           updated_at: Date.now()
         };
         const changed = {
           ...remote.profile,
           devices: remoteDevices,
           player,
-          skip_seconds: skipSeconds,
-          ui_scale: uiScale
+          skip_seconds: skipSeconds
         };
         await sync.pushProfile({
           ...remote,
@@ -734,6 +723,131 @@ function deviceSettings(profile, sync, onChanged) {
         Object.assign(profile, changed);
       } catch (err) {
         console.warn('[settings] Error al sincronizar ajustes de dispositivo:', err);
+      }
+    })();
+  };
+}
+
+// Configuración visual independiente para facilitar futuras skins.
+function showSkinSettings(profile, sync, onChanged) {
+  const device = getDeviceSettings(profile);
+  const { overlay, close } = modal('Skin', `
+    <form class="skin-settings-form">
+      <fieldset class="settings-section">
+        <legend class="settings-legend">Novedades</legend>
+        <button type="button" class="btn-ghost" data-focusable id="btn-skin-news">Configurar Novedades</button>
+      </fieldset>
+      <fieldset class="settings-section">
+        <legend class="settings-legend">Escalas</legend>
+        <label class="ui-scale-setting">
+          <span class="ui-scale-header"><span>Escala de portadas y letras:</span><strong class="ui-scale-value" id="skin-scale-label"></strong></span>
+          <input name="uiScale" type="range" class="settings-slider" min="0" max="${UI_SCALE_LEVELS.length - 1}" step="1" value="${device.uiScale}" data-focusable>
+          <span class="ui-scale-ticks">${UI_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
+        </label>
+        <label class="ui-scale-setting">
+          <span class="ui-scale-header"><span>Escala de Carrusel Portadas:</span><strong class="ui-scale-value" id="skin-posters-label"></strong></span>
+          <input name="carouselPostersScale" type="range" class="settings-slider" min="0" max="${CAROUSEL_POSTERS_SCALE_LEVELS.length - 1}" step="1" value="${device.carouselPostersScale}" data-focusable>
+          <span class="ui-scale-ticks">${CAROUSEL_POSTERS_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
+        </label>
+        <label class="ui-scale-setting">
+          <span class="ui-scale-header"><span>Escala Carrusel Logos:</span><strong class="ui-scale-value" id="skin-logos-label"></strong></span>
+          <input name="carouselLogosScale" type="range" class="settings-slider" min="0" max="${CAROUSEL_LOGOS_SCALE_LEVELS.length - 1}" step="1" value="${device.carouselLogosScale}" data-focusable>
+          <span class="ui-scale-ticks">${CAROUSEL_LOGOS_SCALE_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
+        </label>
+      </fieldset>
+      <fieldset class="settings-section">
+        <legend class="settings-legend">Resolución</legend>
+        <label class="ui-scale-setting">
+          <span class="ui-scale-header"><span>Resolución de pantalla (píxeles):</span><strong class="ui-scale-value" id="skin-zoom-label"></strong></span>
+          <input name="pixelZoom" type="range" class="settings-slider" min="0" max="${PIXEL_ZOOM_LEVELS.length - 1}" step="1" value="${device.pixelZoomIndex}" data-focusable>
+          <span class="ui-scale-ticks">${PIXEL_ZOOM_LEVELS.map(level => `<span>${esc(level.tickLabel || level.label)}</span>`).join('')}</span>
+        </label>
+      </fieldset>
+      <p class="settings-status" role="status"></p>
+      <div class="settings-actions"><button class="btn" data-focusable type="submit">Guardar en este dispositivo</button></div>
+    </form>
+  `, 'Personaliza la apariencia de este dispositivo');
+  overlay.querySelector('.settings-dialog').classList.add('settings-dialog--fullscreen');
+  overlay.querySelector('#btn-skin-news').onclick = () => showNewsSettings(profile, sync, onChanged);
+
+  const controls = [
+    ['uiScale', 'skin-scale-label', UI_SCALE_LEVELS, '--ui-scale'],
+    ['carouselPostersScale', 'skin-posters-label', CAROUSEL_POSTERS_SCALE_LEVELS, '--carousel-posters-scale'],
+    ['carouselLogosScale', 'skin-logos-label', CAROUSEL_LOGOS_SCALE_LEVELS, '--carousel-logos-scale'],
+  ];
+  for (const [name, labelId, levels, cssVar] of controls) {
+    const input = overlay.querySelector(`[name="${name}"]`);
+    const label = overlay.querySelector(`#${labelId}`);
+    const update = () => {
+      const index = normalizeScaleIndex(input.value, 5);
+      label.textContent = levels[index].label;
+      document.documentElement.style.setProperty(cssVar, String(levels[index].scale));
+      if (name === 'uiScale') document.documentElement.setAttribute('data-ui-scale', levels[index].id);
+    };
+    input.addEventListener('input', update);
+    update();
+  }
+  const zoomInput = overlay.querySelector('[name="pixelZoom"]');
+  const zoomLabel = overlay.querySelector('#skin-zoom-label');
+  const updateZoom = () => {
+    const idx = Math.max(0, Math.min(PIXEL_ZOOM_LEVELS.length - 1, Number(zoomInput.value) || 0));
+    zoomLabel.textContent = PIXEL_ZOOM_LEVELS[idx].label;
+    applyDevicePixelZoom(PIXEL_ZOOM_LEVELS[idx].value);
+  };
+  zoomInput.addEventListener('input', updateZoom);
+  updateZoom();
+
+  overlay.querySelector('form').onsubmit = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const uiScale = normalizeScaleIndex(form.elements.uiScale.value, device.uiScale);
+    const carouselPostersScale = normalizeScaleIndex(form.elements.carouselPostersScale.value, device.carouselPostersScale);
+    const carouselLogosScale = normalizeScaleIndex(form.elements.carouselLogosScale.value, device.carouselLogosScale);
+    const zoomIdx = Math.max(0, Math.min(PIXEL_ZOOM_LEVELS.length - 1, Number(form.elements.pixelZoom.value) || 0));
+    const pixelZoom = PIXEL_ZOOM_LEVELS[zoomIdx].value;
+    const deviceId = getDeviceId();
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('tgvideo_device_scale', String(uiScale));
+      localStorage.setItem('tgvideo_device_carousel_posters_scale', String(carouselPostersScale));
+      localStorage.setItem('tgvideo_device_carousel_logos_scale', String(carouselLogosScale));
+      localStorage.setItem('tgvideo_device_pixel_zoom', String(pixelZoom));
+      localStorage.setItem(`tgvideo_scale_${profile.id}`, String(uiScale));
+    }
+    if (!profile.devices) profile.devices = {};
+    profile.devices[deviceId] = {
+      ...(profile.devices[deviceId] || {}),
+      ui_scale: uiScale,
+      carousel_posters_scale: carouselPostersScale,
+      carousel_logos_scale: carouselLogosScale,
+      pixel_zoom: pixelZoom,
+      updated_at: Date.now()
+    };
+    applyDevicePixelZoom(pixelZoom);
+    applyProfileScale(profile);
+    close();
+    onChanged();
+    (async () => {
+      try {
+        const remote = await sync.pullProfile(profile.id);
+        if (!remote) return;
+        const devices = remote.profile?.devices || {};
+        devices[deviceId] = {
+          ...(devices[deviceId] || {}),
+          ui_scale: uiScale,
+          carousel_posters_scale: carouselPostersScale,
+          carousel_logos_scale: carouselLogosScale,
+          pixel_zoom: pixelZoom,
+          updated_at: Date.now()
+        };
+        const changed = { ...remote.profile, devices, ui_scale: uiScale };
+        await sync.pushProfile({
+          ...remote,
+          profile: changed,
+          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
+        });
+        Object.assign(profile, changed);
+      } catch (err) {
+        console.warn('[settings] Error al sincronizar ajustes de Skin:', err);
       }
     })();
   };

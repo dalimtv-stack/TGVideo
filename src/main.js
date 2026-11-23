@@ -780,21 +780,31 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       }
     };
 
+    // Prevenir que toques dentro de la barra en iOS/iPhone disparen cierres accidentales
+    sortBar.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+    });
+
     sortBar.addEventListener('focusout', (e) => {
-      if (!sortBar.contains(e.relatedTarget)) {
+      // Solo colapsar si el foco realmente se movió a otro elemento interactivo fuera de sortBar.
+      // En dispositivos táctiles (iOS/iPhone) e.relatedTarget es null al tocar un botón,
+      // lo que causaba que el menú se cerrara antes de procesar el evento click.
+      if (e.relatedTarget && !sortBar.contains(e.relatedTarget)) {
         collapseSort();
       }
     });
 
-    document.addEventListener('click', (e) => {
+    const handleOutsideSort = (e) => {
       if (!sortBar.contains(e.target)) {
         collapseSort();
       }
-    }, { passive: true });
+    };
+    document.addEventListener('pointerdown', handleOutsideSort, { passive: true });
   }
 
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
     btn.onclick = (e) => {
+      e.stopPropagation();
       btn.blur();
       const sortType = btn.dataset.sort;
       const currentSort = getSectionSort(profile.id, selectedSection);
