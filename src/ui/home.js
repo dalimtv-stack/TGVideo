@@ -2,6 +2,8 @@
 import { titleState } from '../player/progress.js';
 import { sortNews, NEWS_HOME_LIMIT, NEWS_GRID_LIMIT } from '../library/newsPrefs.js';
 
+export const HOME_ROW_LIMIT = 20;
+
 export function getSagaMovieGroups(titles) {
   const groups = [];
   const seenSagas = new Set();
@@ -156,7 +158,7 @@ export function buildHomeRows(titles, progress, newsPrefs = {}) {
 
   continueItems.sort((a, b) => b.updatedAt - a.updatedAt);
   const cont = continueItems.map(x => x.t);
-  if (cont.length) rows.push({ id: 'continue', title: 'Seguir viendo', items: cont });
+  if (cont.length) rows.push({ id: 'continue', title: 'Seguir viendo', items: cont.slice(0, HOME_ROW_LIMIT), gridItems: cont });
 
   const byDate = (a, b) => b.ultimoMensajeFecha - a.ultimoMensajeFecha;
   const movies = titles.filter(t => t.tipo === 'pelicula').sort(byDate);
@@ -165,12 +167,12 @@ export function buildHomeRows(titles, progress, newsPrefs = {}) {
   // Novedades: máx. 30 en la fila y 60 en la cuadrícula ("+"), con el orden configurado
   const newsMovies = sortNews(looseMovies, newsPrefs.movies || 'upload');
   const newsSeries = sortNews(series, newsPrefs.series || 'upload');
-  if (newsMovies.length) rows.push({ id: 'new-movies', title: 'Novedades · Películas', items: newsMovies.slice(0, NEWS_HOME_LIMIT), gridItems: newsMovies.slice(0, NEWS_GRID_LIMIT) });
-  if (newsSeries.length) rows.push({ id: 'new-series', title: 'Novedades · Series', items: newsSeries.slice(0, NEWS_HOME_LIMIT), gridItems: newsSeries.slice(0, NEWS_GRID_LIMIT) });
+  if (newsMovies.length) rows.push({ id: 'new-movies', title: 'Novedades · Películas', items: newsMovies.slice(0, HOME_ROW_LIMIT), gridItems: newsMovies.slice(0, NEWS_GRID_LIMIT) });
+  if (newsSeries.length) rows.push({ id: 'new-series', title: 'Novedades · Series', items: newsSeries.slice(0, HOME_ROW_LIMIT), gridItems: newsSeries.slice(0, NEWS_GRID_LIMIT) });
   const sports = titles.filter(t => t.tipo === 'deporte').sort(byDate);
   const music = titles.filter(t => t.tipo === 'musica').sort(byDate);
-  if (sports.length) rows.push({ id: 'new-sports', title: 'Deportes', items: sports });
-  if (music.length) rows.push({ id: 'new-music', title: 'Música', items: music });
+  if (sports.length) rows.push({ id: 'new-sports', title: 'Deportes', items: sports.slice(0, HOME_ROW_LIMIT), gridItems: sports });
+  if (music.length) rows.push({ id: 'new-music', title: 'Música', items: music.slice(0, HOME_ROW_LIMIT), gridItems: music });
 
   const groupRows = (list, label) => {
     const m = new Map();
@@ -180,13 +182,15 @@ export function buildHomeRows(titles, progress, newsPrefs = {}) {
       if (!m.has(g)) m.set(g, []);
       m.get(g).push(t);
     });
-    [...m.keys()].sort((a, b) => a.localeCompare(b)).forEach(g =>
+    [...m.keys()].sort((a, b) => a.localeCompare(b)).forEach(g => {
+      const allGroupItems = m.get(g).sort((a, b) => (a.metadata?.name || a.nombre).localeCompare(b.metadata?.name || b.nombre, 'es', { numeric: true }));
       rows.push({
         id: `${label}-${g}`,
         title: `${label} · ${g}`,
-        items: m.get(g).sort((a, b) => (a.metadata?.name || a.nombre).localeCompare(b.metadata?.name || b.nombre, 'es', { numeric: true }))
-      })
-    );
+        items: allGroupItems.slice(0, HOME_ROW_LIMIT),
+        gridItems: allGroupItems
+      });
+    });
   };
   groupRows(series, 'Series');
 

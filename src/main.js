@@ -438,7 +438,7 @@ function sortTitles(items, sortType, sortOrder = 'desc') {
   });
 }
 
-async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
+async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusSortToggle = false, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
   applyProfileScale(profile);
   if (selectedSection !== 'inicio') {
     setBackHandler(() => {
@@ -652,7 +652,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   const categoryToolsHtml = (inHeader = false) => {
     const currentSort = getSectionSort(profile.id, selectedSection);
     const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
-    const isSortExpanded = Boolean(focusSort);
+    const isSortExpanded = false;
     return `
       <div class="${inHeader ? 'category-header--in-header' : 'category-header-inner'}" role="region" aria-label="Herramientas de ordenación y vista">
         <div class="category-sort-bar ${isSortExpanded ? 'is-expanded' : ''}" role="group" aria-label="Ordenar por">
@@ -767,16 +767,10 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         collapseSort();
       } else {
         expandSort();
-        if (e.detail === 0) {
-          const activeBtn = sortBar.querySelector('.category-sort-btn.active') || sortBar.querySelector('.category-sort-btn');
-          activeBtn?.focus();
-        }
+        const activeBtn = sortBar.querySelector('.category-sort-btn.active') || sortBar.querySelector('.category-sort-btn');
+        activeBtn?.focus();
       }
     };
-
-    sortBar.addEventListener('focusin', () => {
-      expandSort();
-    });
 
     sortBar.addEventListener('focusout', (e) => {
       if (!sortBar.contains(e.relatedTarget)) {
@@ -799,17 +793,16 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
 
       if (sortType === currentSort) {
-        // Al pulsar sobre el que ya estaba seleccionado (en rojo), se cambia el orden de descendente a ascendente (o viceversa)
+        // Al pulsar sobre el que ya estaba seleccionado, se cambia el sentido (ascendente/descendente)
         const nextOrder = currentOrder === 'desc' ? 'asc' : 'desc';
         setSectionSortOrder(profile.id, selectedSection, nextOrder);
-        showHome(tg, sync, profile, { selectedSection, focusSort: sortType, fromPointer: e.detail > 0 });
       } else {
         // Al seleccionar un nuevo criterio, se aplica su orden por defecto
         const defaultOrder = sortType === 'nombre' ? 'asc' : 'desc';
         setSectionSort(profile.id, selectedSection, sortType);
         setSectionSortOrder(profile.id, selectedSection, defaultOrder);
-        showHome(tg, sync, profile, { selectedSection, focusSort: sortType, fromPointer: e.detail > 0 });
       }
+      showHome(tg, sync, profile, { selectedSection, focusSortToggle: true, fromPointer: e.detail > 0 });
     };
   });
   const viewBtn = document.querySelector('.category-view-btn');
@@ -894,6 +887,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     let el = null;
     if (focusViewBtn) {
       el = document.querySelector('.category-view-btn');
+    } else if (focusSortToggle) {
+      el = document.querySelector('.category-sort-toggle');
     } else if (focusSort && !fromPointer) {
       document.querySelector('.category-sort-bar')?.classList.add('is-expanded');
       el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);

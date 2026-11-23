@@ -9,7 +9,7 @@ import { fetchTmdbTrailer, fetchCollectionMovieTrailers } from '../metadata/tmdb
 import { renderAgeBadgeHtml } from './ageRating.js';
 
 let active = null;
-const LOAD_WINDOW = 3;
+const LOAD_WINDOW = 10;
 const TRAILER_DELAY_MS = 900;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -370,6 +370,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
   }
 
   function loadItem(i) {
+    if (i < 0 || i >= items.length) return;
     const el = els[i];
     if (!el || el.dataset.loaded) return;
     el.dataset.loaded = '1';
@@ -388,6 +389,20 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
 
   function loadWindow() {
     for (let d = -LOAD_WINDOW; d <= LOAD_WINDOW; d++) loadItem(cur + d);
+  }
+
+  // Observer automático para cargar en 0 ms cualquier carátula que esté en pantalla o a menos de 350px
+  let observer = null;
+  if (typeof IntersectionObserver !== 'undefined') {
+    observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const idx = Number(entry.target.dataset.i);
+          if (!isNaN(idx)) loadItem(idx);
+        }
+      });
+    }, { root: stage, rootMargin: '350px' });
+    els.forEach((el) => observer.observe(el));
   }
 
   // ---------------------------------------------------------------- tráiler (modo logos)
@@ -625,6 +640,8 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
   window.addEventListener('resize', onResize);
 
   function destroy() {
+    observer?.disconnect();
+    observer = null;
     clearTrailer();
     window.removeEventListener('message', onWindowMessage);
     document.querySelector('.carousel-trailer-modal')?.remove();

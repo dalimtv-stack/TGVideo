@@ -1,17 +1,33 @@
-// Gestor de caché de portadas en IndexedDB con redimensionado a 800px y política LRU
+// Gestor de caché de portadas en IndexedDB con compresión WebP, redimensionado a 480px y política LRU
 import { createKV } from '../core/kv.js';
 import { getCacheMaxMb } from '../settings/global.js';
 
 const posterKV = createKV('tgvideo_posters', 'posters');
+export const MAX_MEMORY_POSTERS = 60;
 export const memoryCache = new Map();
 const inFlight = new Set();
 let quotaTimer = null;
 
 /**
- * Optimiza y redimensiona la imagen a un lado mayor de 800px (estilo TGComic).
- * Produce WebP de alta eficiencia (~25-35 KB) o JPEG como fallback.
+ * Inserta o actualiza una carátula en la caché RAM limitándola a un máximo estricto
+ * de elementos (LRU) para evitar que el recolector de basura de Android congele la navegación.
  */
-async function optimizeImageTo800px(blob, maxEdge = 800, quality = 0.8) {
+function setMemoryPoster(url, src) {
+  if (!url || !src) return;
+  if (memoryCache.has(url)) {
+    memoryCache.delete(url);
+  } else if (memoryCache.size >= MAX_MEMORY_POSTERS) {
+    const oldest = memoryCache.keys().next().value;
+    if (oldest) memoryCache.delete(oldest);
+  }
+  memoryCache.set(url, src);
+}
+
+/**
+ * Optimiza y redimensiona la imagen a un lado mayor de 480px (ideal para tarjetas de TV de 140-180px).
+ * Produce WebP comprimido (~0.72, 15-20 KB) o JPEG como fallback.
+ */
+export async function optimizeImageTo800px(blob, maxEdge = 480, quality = 0.72) {
   if (!blob || !blob.size) return null;
 
   let bmp = null;
@@ -50,7 +66,7 @@ async function optimizeImageTo800px(blob, maxEdge = 800, quality = 0.8) {
   ctx.drawImage(bmp, 0, 0, w, h);
   try { bmp.close?.(); } catch (_) {}
 
-  // Intentar WebP primero; si no soporta, fallback a JPEG
+  // Intentar WebP primero con calidad 0.72; fallback a JPEG si no estuviese disponible
   let dataUrl = null;
   try {
     const webpUrl = cv.toDataURL('image/webp', quality);
@@ -61,7 +77,7 @@ async function optimizeImageTo800px(blob, maxEdge = 800, quality = 0.8) {
 
   if (!dataUrl) {
     try {
-      dataUrl = cv.toDataURL('image/jpeg', Math.min(0.82, quality));
+      dataUrl = cv.toDataURL('image/jpeg', Math.min(0.78, quality));
     } catch (_) {}
   }
 
@@ -79,19 +95,21 @@ function scheduleQuotaCheck() {
 }
 
 /**
- * Precarga en memoria las carátulas cacheadas en IndexedDB para los títulos dados.
- * Esto permite que al volver a Home o renderizar tarjetas, la imagen se pinte en 0 ms.
+ * Precarga en memoria las carátulas cacheadas en IndexedDB para los títulos prioritarios.
+ * Se limita a MAX_MEMORY_POSTERS para no sobrecargar el montículo de memoria en TV.
  */
 export async function prewarmPosterCache(titles = []) {
   const urls = [];
   for (const t of titles) {
+    if (urls.length >= MAX_MEMORY_POSTERS) break;
     if (t.metadata?.poster && !memoryCache.has(t.metadata.poster)) {
       urls.push(t.metadata.poster);
     }
-    if (t.archivos) {
+    if (t.archivos && urls.length < MAX_MEMORY_POSTERS) {
       for (const f of t.archivos) {
         if (f.metadata?.poster && !memoryCache.has(f.metadata.poster)) {
           urls.push(f.metadata.poster);
+          if (urls.length >= MAX_MEMORY_POSTERS) break;
         }
       }
     }
@@ -104,7 +122,7 @@ export async function prewarmPosterCache(titles = []) {
       const item = await posterKV.get(url);
       if (item) {
         const src = item.dataUrl || (item.blob ? URL.createObjectURL(item.blob) : null);
-        if (src) memoryCache.set(url, src);
+        if (src) setMemoryPoster(url, src);
       }
     } catch (_) {}
   }));
@@ -115,7 +133,11 @@ export async function prewarmPosterCache(titles = []) {
  */
 export async function getCachedPosterUrl(url) {
   if (!url || typeof url !== 'string' || !url.startsWith('http')) return url;
-  if (memoryCache.has(url)) return memoryCache.get(url);
+  if (memoryCache.has(url)) {
+    const src = memoryCache.get(url);
+    setMemoryPoster(url, src);
+    return src;
+  }
 
   try {
     const item = await posterKV.get(url);
@@ -123,7 +145,7 @@ export async function getCachedPosterUrl(url) {
       const src = item.dataUrl || (item.blob ? URL.createObjectURL(item.blob) : null);
       if (src) {
         posterKV.set(url, { ...item, lastUsed: Date.now() }).catch(() => {});
-        memoryCache.set(url, src);
+        setMemoryPoster(url, src);
         return src;
       }
     }
@@ -156,9 +178,10 @@ export function loadPoster(img, url) {
 
   setupErrorHandler();
 
-  // 1. Si ya está en la memoria activa (DataURL o BlobURL), aplicar inmediatamente
+  // 1. Si ya está en la memoria activa (DataURL o BlobURL), refrescar LRU y aplicar inmediatamente
   if (memoryCache.has(targetUrl)) {
     const cached = memoryCache.get(targetUrl);
+    setMemoryPoster(targetUrl, cached);
     if (img.src !== cached) img.src = cached;
     return;
   }
@@ -177,7 +200,7 @@ export function loadPoster(img, url) {
 
     let localUrl = item.dataUrl || (item.blob ? URL.createObjectURL(item.blob) : null);
     if (localUrl) {
-      memoryCache.set(targetUrl, localUrl);
+      setMemoryPoster(targetUrl, localUrl);
       if (img.isConnected && img.src !== localUrl) {
         setupErrorHandler();
         img.src = localUrl;
@@ -203,12 +226,12 @@ async function cachePosterInBackground(url) {
     if (!res.ok) return null;
     const blob = await res.blob();
 
-    // Redimensionar a 800px máx y optimizar en WebP/JPEG (estilo TGComic)
-    const dataUrl = await optimizeImageTo800px(blob, 800, 0.8);
+    // Redimensionar a 480px máx y optimizar en WebP (calidad ~0.72)
+    const dataUrl = await optimizeImageTo800px(blob, 480, 0.72);
     if (!dataUrl) return null;
 
     const approxSize = Math.round(dataUrl.length * 0.75);
-    memoryCache.set(url, dataUrl);
+    setMemoryPoster(url, dataUrl);
 
     const record = { url, dataUrl, size: approxSize, lastUsed: Date.now(), createdAt: Date.now() };
     await posterKV.set(url, record);

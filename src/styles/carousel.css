@@ -706,3 +706,15 @@ html.is-tv .carousel-trailer-modal.closing {
   opacity: 1 !important;
   background: #000;
 }
+
+
+/* =========================================================
+   Rendimiento en Android TV / Fire TV para vista Carrusel
+   ========================================================= */
+html.is-tv .carousel-view,
+html.is-tv .carousel-item,
+html.is-tv .carousel-details-pane,
+html.is-tv .carousel-trailer-modal {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

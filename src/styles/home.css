@@ -118,6 +118,8 @@
 .row {
   margin-bottom: 1rem;           /* antes 2rem: espacio entre líneas a la mitad */
   scroll-margin-block: 1.5rem;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
 }
 
 .row-title {
@@ -690,8 +692,7 @@
   align-items: center;
   gap: 0.35rem;
 }
-.category-sort-bar.is-expanded .category-sort-options,
-.category-sort-bar:focus-within .category-sort-options {
+.category-sort-bar.is-expanded .category-sort-options {
   display: inline-flex;
   animation: fadeInSort 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -826,4 +827,29 @@
   object-fit: cover;
   border-radius: inherit;
   display: block;
+}
+
+
+/* =========================================================
+   Optimizaciones de rendimiento exclusivas para Android TV
+   Desactivar backdrop-filter (coste altísimo en GPU modestas)
+   y asegurar fluidez a 60 fps en el scroll
+   ========================================================= */
+html.is-tv .home-header,
+html.is-tv .home-header--carousel,
+html.is-tv .category-view,
+html.is-tv .category-sort-options,
+html.is-tv .modal-backdrop,
+html.is-tv .dialog-overlay {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.is-tv .home-header,
+html.is-tv .home-header--carousel {
+  background: rgba(15, 15, 15, 0.95) !important;
+}
+
+html.is-tv .category-sort-options {
+  background: rgba(20, 20, 20, 0.98) !important;
 }

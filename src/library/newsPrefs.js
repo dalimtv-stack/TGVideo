@@ -4,7 +4,7 @@
 //  - 'release': estreno (películas) / emisión del último capítulo (series)
 import { loadProgress } from '../player/progress.js';
 
-export const NEWS_HOME_LIMIT = 30;
+export const NEWS_HOME_LIMIT = 20;
 export const NEWS_GRID_LIMIT = 60;
 export const NEWS_MODES = {
   upload: 'Fecha de subida a Telegram',
