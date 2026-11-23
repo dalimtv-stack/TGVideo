@@ -28,6 +28,32 @@ function normalizeScaleIndex(value, fallback = 4) {
     : fallback;
 }
 
+export const PIXEL_ZOOM_LEVELS = [
+  { id: 'auto', label: 'Automático (según pantalla)', tickLabel: 'Auto', value: 'auto' },
+  { id: '60', label: '60% (Muy compacto)', tickLabel: '60%', value: 0.60 },
+  { id: '67', label: '67% (Compacto)', tickLabel: '67%', value: 0.67 },
+  { id: '75', label: '75% (Equilibrado TV)', tickLabel: '75%', value: 0.75 },
+  { id: '85', label: '85% (Medio)', tickLabel: '85%', value: 0.85 },
+  { id: '100', label: '100% (Nativo sin zoom)', tickLabel: '100%', value: 1.0 },
+  { id: '115', label: '115% (Grande)', tickLabel: '115%', value: 1.15 },
+];
+
+function normalizePixelZoomIndex(value, fallback = 0) {
+  if (value === 'auto' || value === null || value === undefined) return 0;
+  const num = typeof value === 'number' ? value : parseFloat(value);
+  if (isNaN(num)) return fallback;
+  let bestIdx = 0;
+  let minDiff = Infinity;
+  for (let i = 1; i < PIXEL_ZOOM_LEVELS.length; i++) {
+    const diff = Math.abs(PIXEL_ZOOM_LEVELS[i].value - num);
+    if (diff < minDiff) {
+      minDiff = diff;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 export function getDeviceId() {
   if (typeof localStorage === 'undefined') return 'device_default';
   let devId = localStorage.getItem('tgvideo_device_id');
