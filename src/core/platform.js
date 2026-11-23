@@ -2,10 +2,12 @@
 // Detección de plataforma: versión web (navegador / PWA) frente a la APK de Android (Capacitor).
 // Cualquier diferencia entre web y APK debe preguntar aquí, no repetir la comprobación en cada módulo.
 
+import { Capacitor } from '@capacitor/core';
+
 export function isAndroidApp() {
   if (typeof window === 'undefined') return false;
-  const cap = window.Capacitor;
-  return !!(cap?.isNativePlatform?.() || cap?.platform === 'android');
+  const cap = window.Capacitor || Capacitor;
+  return !!(cap?.isNativePlatform?.() || cap?.getPlatform?.() === 'android' || cap?.platform === 'android');
 }
 
 export function isWebApp() {
@@ -20,7 +22,7 @@ export function isAndroidTV() {
   if (typeof window === 'undefined') return false;
   const ua = navigator.userAgent || '';
   const isTvUA = /Android.*TV|SMART-TV|AFT|GoogleTV|Chromecast|BRAVIA|MIBOX|SHIELD|Nexus Player|Leanback/i.test(ua);
-  const isAndroid = !!(window.Capacitor?.isNativePlatform?.() || window.Capacitor?.platform === 'android' || /Android/i.test(ua));
+  const isAndroid = isAndroidApp() || /Android/i.test(ua);
 
   // En la APK de Android: si está en orientación apaisada y es operado sin pantalla táctil (mando a distancia)
   const isTvLandscapeApp = isAndroid && (window.innerWidth > window.innerHeight) && (navigator.maxTouchPoints === 0 || isTvUA);

@@ -1,6 +1,6 @@
-import { isAndroidTV } from '../core/platform.js';
+import { isAndroidTV, isAndroidApp } from '../core/platform.js';
 import { startAppUpdate } from '../core/updater.js';
-import { checkForUpdate } from '../core/updateCheck.js';
+import { checkForUpdate, CURRENT_VERSION } from '../core/updateCheck.js';
 import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
 // src/ui/settings.js
 import { getGlobalConfig, getTmdbKey, getFanartKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
@@ -236,17 +236,40 @@ export function modal(title, body, subtitle = '', onClose = null) {
 }
 
 export async function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalChanged, libraryTitles = [] }) {
-  const updateInfo = await checkForUpdate().catch(() => null);
+  const isApk = isAndroidApp();
+  let updateInfo = null;
 
-  const updateBtnHtml = updateInfo?.hasUpdate ? `
-    <button class="btn-ghost btn-update-release" data-focusable data-action="update">
-      <span style="font-size:1.2rem;line-height:1;">⚡</span>
-      <span style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;">
-        <strong style="color:#fff;font-size:0.92rem;">Descargar y actualizar (${esc(updateInfo.latestVersion)})</strong>
-        <small style="color:#fca5a5;font-size:0.75rem;">Nueva versión oficial en GitHub</small>
-      </span>
-    </button>
-  ` : '';
+  if (isApk) {
+    updateInfo = await checkForUpdate().catch(() => null);
+  }
+
+  // En la versión web no se muestra nada de actualización.
+  // Solo en la APK: si hay actualización detectada se muestra el botón de descargar,
+  // y si no hay ninguna detectada, el botón de "Buscar actualización, versión actual".
+  let updateBtnHtml = '';
+  if (isApk) {
+    if (updateInfo?.hasUpdate) {
+      updateBtnHtml = `
+        <button class="btn-ghost btn-update-release" data-focusable data-action="update" style="display:flex;align-items:center;gap:0.75rem;">
+          <span style="font-size:1.2rem;line-height:1;">⚡</span>
+          <span style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;">
+            <strong style="color:#fff;font-size:0.92rem;">Descargar y actualizar (${esc(updateInfo.latestVersion)})</strong>
+            <small style="color:#fca5a5;font-size:0.75rem;">Nueva versión oficial en GitHub</small>
+          </span>
+        </button>
+      `;
+    } else {
+      updateBtnHtml = `
+        <button class="btn-ghost btn-check-update" data-focusable data-action="check-update" style="display:flex;align-items:center;gap:0.75rem;">
+          <span class="update-icon" style="font-size:1.2rem;line-height:1;">🔄</span>
+          <span class="update-text" style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;">
+            <strong style="color:#fff;font-size:0.90rem;">Buscar actualización, versión actual ${esc(CURRENT_VERSION)}</strong>
+            <small style="color:rgba(255,255,255,0.7);font-size:0.75rem;">Comprobar nuevas versiones en GitHub</small>
+          </span>
+        </button>
+      `;
+    }
+  }
 
   const { overlay, close } = modal(profile.name, `
     <nav class="profile-menu">
@@ -269,6 +292,75 @@ export async function showProfileMenu({ profile, sync, onSwitch, onChanged, onGl
     updateBtn.onclick = () => {
       close();
       startAppUpdate(updateInfo);
+    };
+  }
+
+  const checkUpdateBtn = overlay.querySelector('[data-action="check-update"]');
+  if (checkUpdateBtn) {
+    checkUpdateBtn.onclick = async () => {
+      const textContainer = checkUpdateBtn.querySelector('.update-text');
+      const iconEl = checkUpdateBtn.querySelector('.update-icon');
+      if (textContainer) {
+        textContainer.innerHTML = `
+          <strong style="color:#fff;font-size:0.90rem;">Buscando actualización…</strong>
+          <small style="color:rgba(255,255,255,0.7);font-size:0.75rem;">Consultando GitHub…</small>
+        `;
+      }
+      if (iconEl) iconEl.textContent = '⏳';
+      checkUpdateBtn.style.pointerEvents = 'none';
+
+      try {
+        const freshInfo = await checkForUpdate(true);
+        if (freshInfo?.hasUpdate) {
+          const dot = document.getElementById('profile-update-dot');
+          if (dot) dot.style.display = 'block';
+
+          checkUpdateBtn.className = 'btn-ghost btn-update-release';
+          checkUpdateBtn.setAttribute('data-action', 'update');
+          checkUpdateBtn.style.pointerEvents = 'auto';
+          checkUpdateBtn.innerHTML = `
+            <span style="font-size:1.2rem;line-height:1;">⚡</span>
+            <span style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;">
+              <strong style="color:#fff;font-size:0.92rem;">Descargar y actualizar (${esc(freshInfo.latestVersion)})</strong>
+              <small style="color:#fca5a5;font-size:0.75rem;">Nueva versión oficial en GitHub</small>
+            </span>
+          `;
+          checkUpdateBtn.onclick = () => {
+            close();
+            startAppUpdate(freshInfo);
+          };
+          checkUpdateBtn.focus();
+        } else {
+          checkUpdateBtn.style.pointerEvents = 'auto';
+          if (iconEl) iconEl.textContent = '✓';
+          if (textContainer) {
+            textContainer.innerHTML = `
+              <strong style="color:#4ade80;font-size:0.90rem;">Versión actual ${esc(CURRENT_VERSION)} al día</strong>
+              <small style="color:rgba(255,255,255,0.7);font-size:0.75rem;">No hay nuevas actualizaciones</small>
+            `;
+          }
+          setTimeout(() => {
+            if (document.body.contains(checkUpdateBtn)) {
+              if (iconEl) iconEl.textContent = '🔄';
+              if (textContainer) {
+                textContainer.innerHTML = `
+                  <strong style="color:#fff;font-size:0.90rem;">Buscar actualización, versión actual ${esc(CURRENT_VERSION)}</strong>
+                  <small style="color:rgba(255,255,255,0.7);font-size:0.75rem;">Comprobar nuevas versiones en GitHub</small>
+                `;
+              }
+            }
+          }, 3500);
+        }
+      } catch (err) {
+        checkUpdateBtn.style.pointerEvents = 'auto';
+        if (iconEl) iconEl.textContent = '⚠️';
+        if (textContainer) {
+          textContainer.innerHTML = `
+            <strong style="color:#f87171;font-size:0.90rem;">Error al comprobar</strong>
+            <small style="color:rgba(255,255,255,0.7);font-size:0.75rem;">Pulsa para reintentar</small>
+          `;
+        }
+      }
     };
   }
 }
