@@ -51,7 +51,7 @@ setupTvPlatform();
 const kv = createKV();
 const LIB_KEY = 'library_v2';
 // Pestaña "Externos" oculta temporalmente (planteamiento en revisión).
-const SHOW_EXTERNALS_SECTION = false;
+const SHOW_EXTERNALS_SECTION = true;
 // Caché del procesado de títulos para cambios de pestaña rápidos (sin recalcular overrides/colecciones).
 let HOME_PROCESSED = { ref: null, profileId: null };
 // Títulos ya enviados a identificación TMDB en esta sesión (evita relanzar búsquedas en cada pestaña).
@@ -301,21 +301,24 @@ const libraryViews = createLibraryViews({
 async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const client = tg.getClient();
   const channels = await loadLibrary(client);
-  const savedObj = force ? null : await kv.get(LIB_KEY).catch(() => null);
+  // En una actualización completa se invalida el caché de los canales TGStorage,
+  // pero se conserva la biblioteca previa para restaurar los canales externos.
+  const previousObj = await kv.get(LIB_KEY).catch(() => null);
+  const savedObj = force ? null : previousObj;
   const saved = savedObj?.cache || {};
-  const savedMeta = savedObj?.metadataMap || {};
+  const savedMeta = previousObj?.metadataMap || {};
   const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
 
   // Reintegrar canales externos persistidos en external_sources_v1
   const extSources = (await kv.get('external_sources_v1').catch(() => [])) || [];
-  const combinedCache = { ...saved, ...cache };
+  const combinedCache = { ...(force ? (previousObj?.cache || {}) : saved), ...cache };
 
   for (const ext of extSources) {
     const extId = String(ext.id);
     const cachedFiles = combinedCache[extId];
     if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
       combinedCache[extId] = cachedFiles;
-      const channelRecord = savedObj?.channels?.find(c => String(c.id) === extId) || {
+      const channelRecord = previousObj?.channels?.find(c => String(c.id) === extId) || {
         id: extId,
         name: ext.groupName || ext.title,
         group: ext.groupName || ext.title,
@@ -367,7 +370,7 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const allChannels = [...channels];
   for (const ext of extSources) {
     const extId = String(ext.id);
-    const existingRec = savedObj?.channels?.find(c => String(c.id) === extId);
+    const existingRec = previousObj?.channels?.find(c => String(c.id) === extId);
     if (existingRec && !allChannels.some(c => String(c.id) === extId)) {
       allChannels.push(existingRec);
     }
@@ -643,7 +646,7 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   TITLES_CACHE = titles;
 
   // 4. Identificar vídeos pendientes en TMDB antes de mostrar la home
-  const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+  const pendingTitles = titles.filter(t => (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
   if (pendingTitles.length > 0) {
     showLoading(`Identificando vídeos con TMDB (0/${pendingTitles.length})…`);
@@ -1115,7 +1118,7 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     }, 2500);
   };
 
-  const pendingBg = titles.filter(t => !isExternalTitle(t) && !TMDB_ATTEMPTED.has(t.id) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+  const pendingBg = titles.filter(t => !TMDB_ATTEMPTED.has(t.id) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   if (BG_ENRICH && BG_ENRICH.profileId === profile.id) {
     if (pendingBg.length) perfLog(`TMDB en segundo plano ya en curso; ${pendingBg.length} pendientes nuevos esperan`);
   } else if (pendingBg.length > 0) {

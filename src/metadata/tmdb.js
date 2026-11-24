@@ -12,7 +12,9 @@ export function extractTitleAndYear(name = "") {
   try { str = decodeURIComponent(str); } catch (_) {}
 
   // 1. Quitar extensiones de vídeo
-  str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, "").trim();
+  while (/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i.test(str)) {
+    str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, "").trim();
+  }
 
   // 0. Eliminar prefijos numéricos iniciales tipo "15-", "1-", "01 -", respetando años como "2013 - ..." o "1984"
   str = str.replace(/^\s*(?!(?:19\d{2}|20[0-3]\d)\s*[-_–—]\s*[a-zA-Z])\d{1,3}\s*[-_–—]\s*/, "");
@@ -56,10 +58,19 @@ export function extractTitleAndYear(name = "") {
     }
   }
 
-  // 6b. Si aún no hay año, buscar si quedó un año (1900-2039) aislado dentro del texto
+  // 6b. Si el año está al INICIO del texto (ej: "1987-ACCION-POCOBOR" o "1987 Pelicula")
+  if (!year) {
+    const leadingYearMatch = str.match(/^\s*((?:19\d{2}|20[0-3]\d))\s*[-_–—.\s]\s*(.*)$/);
+    if (leadingYearMatch && leadingYearMatch[2].trim()) {
+      year = leadingYearMatch[1];
+      str = leadingYearMatch[2].trim();
+    }
+  }
+
+  // 6c. Si aún no hay año, buscar si quedó un año (1900-2039) aislado dentro del texto
   if (!year) {
     const yearMatch = str.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
-    if (yearMatch && yearMatch.index > 0) {
+    if (yearMatch) {
       const candidateTitle = str.slice(0, yearMatch.index).trim();
       if (candidateTitle.length > 1) {
         year = yearMatch[1];
@@ -86,8 +97,10 @@ export function extractTitleAndYear(name = "") {
 export function extractTitlesFromCaption(caption = "") {
   const text = String(caption || "").replace(/\r/g, "");
   if (!text.trim()) return [];
+  // Si la palabra Sinopsis/Synopsis está dentro del texto (incluso en la misma línea), cortamos a partir de ella
+  const cleanText = text.split(/\b(?:sinopsis|synopsis|argumento|resumen)\b/i)[0];
   const skipLine = /^(sinopsis|synopsis|nombre de archivo|archivo|tmdb|imdb|puntuaci[oó]n|rating|secci[oó]n|g[eé]nero|duraci[oó]n|calidad|idioma|audio|subt[ií]tulos)\b/i;
-  const lines = text.split("\n").map(l => l.replace(/[*_`~]+/g, "").replace(/^[\s\p{Extended_Pictographic}🎬📽️🎞️▶️•·\-–—]+/u, "").trim()).filter(Boolean);
+  const lines = cleanText.split("\n").map(l => l.replace(/[*_`~]+/g, "").replace(/^[\s\p{Extended_Pictographic}🎬📽️🎞️▶️•·\-–—]+/u, "").trim()).filter(Boolean);
   const out = [];
   const push = (title, year) => {
     const t = String(title || "").replace(/[\s.:;,|\-–—]+$/, "").replace(/^[\s.:;,|\-–—]+/, "").replace(/\s+/g, " ").trim();
@@ -560,15 +573,17 @@ async function searchTmdbCandidates(type, query, year, signal) {
 const CAPTION_MISS = new Set();
 
 async function searchByCaptions(type, title, alreadyTried, signal) {
-  const captions = [...new Set((title.archivos || []).map(f => f.rawCaption).filter(c => c && c.trim()))].slice(0, 3);
+  const captions = [...new Set((title.archivos || []).map(f => f.rawCaption || f.caption).filter(c => c && c.trim()))].slice(0, 5);
   for (const caption of captions) {
-    for (const cand of extractTitlesFromCaption(caption)) {
+    const cands = extractTitlesFromCaption(caption);
+    for (const cand of cands) {
       const key = `${type}:${cand.title.toLowerCase()}:${cand.year || ""}`;
       if (CAPTION_MISS.has(key)) continue;
       if (cand.title.toLowerCase() === String(alreadyTried || "").toLowerCase() && !cand.year) continue;
+      console.log(`[tmdb] Probando identificación por caption para "${title.nombre}": "${cand.title}"${cand.year ? ` (${cand.year})` : ""}`);
       const id = await searchTmdbCandidates(type, cand.title, cand.year, signal).catch(() => null);
       if (id) {
-        console.log(`[tmdb] Identificado por caption: "${title.nombre}" → "${cand.title}"${cand.year ? ` (${cand.year})` : ""} = ${id}`);
+        console.log(`[tmdb] ¡Identificado con éxito por caption!: "${title.nombre}" → "${cand.title}"${cand.year ? ` (${cand.year})` : ""} = ${id}`);
         return id;
       }
       CAPTION_MISS.add(key);
