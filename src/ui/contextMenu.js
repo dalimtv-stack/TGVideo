@@ -25,6 +25,44 @@ function formatBytes(bytes) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
+
+/**
+ * Resuelve de forma robusta la entidad InputPeer de un canal o grupo de Telegram.
+ */
+async function resolvePeer(client, tg, target) {
+  if (!target) throw new Error("Canal no especificado para resolver peer");
+  if (target.className?.startsWith("InputPeer") || target._ === "inputPeerChannel" || target._ === "inputPeerChat") {
+    return target;
+  }
+  if (target.entity) return target.entity;
+  if (tg?.peerOf && typeof target === "object" && (target.accessHash || target.hash)) {
+    try {
+      const p = tg.peerOf(target);
+      if (p) return p;
+    } catch (_) {}
+  }
+  const rawId = String(typeof target === "object" ? (target.tgChannelId || target.channelId || target.id || "") : target).split("_top_")[0].trim();
+  if (!rawId) throw new Error("ID de canal no válido");
+
+  if (client?.getInputEntity) {
+    try {
+      return await client.getInputEntity(rawId);
+    } catch (_) {
+      try {
+        const clean = rawId.replace(/^-100/, "").replace(/^-/, "");
+        return await client.getInputEntity(`-100${clean}`);
+      } catch (err) {
+        if (tg?.peerOf) {
+          const clean = rawId.replace(/^-100/, "").replace(/^-/, "");
+          return tg.peerOf({ id: clean, accessHash: typeof target === "object" ? (target.accessHash || target.hash) : "0" });
+        }
+        throw new Error(`No se pudo resolver el canal en Telegram: ${err.message || String(err)}`);
+      }
+    }
+  }
+  throw new Error("Cliente Telegram no disponible para resolver el canal");
+}
+
 function ensureProgressBar() {
   return document.getElementById('admin-global-upload-bar');
 }

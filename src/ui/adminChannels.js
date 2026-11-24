@@ -5,6 +5,8 @@ import { clearExternalChannelCache } from './externalTitlesCache.js';
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
 import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../metadata/tmdb.js';
 import { seriesNameFromFile } from '../library/titles.js';
+import { formatBytes } from '../core/utils.js';
+import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 
 const LIB_KEY = 'library_v2';
 const EXT_KEY = 'external_sources_v1';
@@ -21,7 +23,22 @@ function esc(str) {
  * Función modular y reutilizable para construir los títulos de la biblioteca
  * a partir de un registro de canal externo y su lista de archivos de vídeo detectados.
  */
-export function buildTitlesForExternalChannel(channelRecord, detectedFiles) {
+function resolveExternalMetadata(id, tmdbId, files, virtualId, metadataMap = {}) {
+  const fileWithMeta = files.find(f => f.metadata) || files[0];
+  const saved = metadataMap[String(id)] ||
+    (tmdbId ? (metadataMap[`tmdb_${tmdbId}`] || metadataMap[String(tmdbId)]) : null) ||
+    files.map(f => metadataMap[f.key] || metadataMap[`${virtualId}:${f.messageId}`]).find(Boolean) ||
+    fileWithMeta?.metadata ||
+    getOverride(String(id)) ||
+    (tmdbId ? getOverrideByTmdbId(tmdbId) : null);
+  return saved || null;
+}
+
+/**
+ * Función modular y reutilizable para construir los títulos de la biblioteca
+ * a partir de un registro de canal externo y su lista de archivos de vídeo detectados.
+ */
+export function buildTitlesForExternalChannel(channelRecord, detectedFiles, metadataMap = {}) {
   const generatedTitles = [];
   const virtualId = String(channelRecord.id);
   const category = channelRecord.category || 'Películas';
@@ -54,20 +71,25 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles) {
 
     for (const grp of movieMap.values()) {
       grp.files.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
-      generatedTitles.push({
+      const savedMeta = resolveExternalMetadata(grp.id, grp.tmdbId, grp.files, virtualId, metadataMap);
+      const titleObj = {
         id: String(grp.id),
         tipo: 'pelicula',
         isSaga: false,
         grupo: groupName,
-        nombre: grp.nombre,
-        yearHint: grp.yearHint,
+        nombre: savedMeta?.name || savedMeta?.title || grp.nombre,
+        yearHint: savedMeta?.year || grp.yearHint,
         origen: { tipo: 'externo', channelId: String(virtualId), messageId: grp.files[0].messageId },
         channel: channelRecord,
         archivos: grp.files,
         ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
-        tmdbId: grp.tmdbId,
-        imdbId: grp.imdbId,
-      });
+        tmdbId: savedMeta?.id || grp.tmdbId || null,
+        imdbId: savedMeta?.imdbId || grp.imdbId || null,
+        metadata: savedMeta || null,
+      };
+      if (savedMeta?.poster) titleObj.poster = savedMeta.poster;
+      if (savedMeta?.background || savedMeta?.backdrop) titleObj.backdrop = savedMeta.background || savedMeta.backdrop;
+      generatedTitles.push(titleObj);
     }
   } else if (category === 'Documentales') {
     const docMap = new Map();
@@ -93,20 +115,25 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles) {
       }
     }
     for (const grp of docMap.values()) {
-      generatedTitles.push({
+      const savedMeta = resolveExternalMetadata(grp.id, grp.tmdbId, grp.files, virtualId, metadataMap);
+      const titleObj = {
         id: String(grp.id),
         tipo: 'documental',
         isSaga: false,
         grupo: groupName,
-        nombre: grp.nombre,
-        yearHint: grp.yearHint,
+        nombre: savedMeta?.name || savedMeta?.title || grp.nombre,
+        yearHint: savedMeta?.year || grp.yearHint,
         origen: { tipo: 'externo', channelId: String(virtualId), messageId: grp.files[0].messageId },
         channel: channelRecord,
         archivos: grp.files,
         ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
-        tmdbId: grp.tmdbId,
-        imdbId: grp.imdbId,
-      });
+        tmdbId: savedMeta?.id || grp.tmdbId || null,
+        imdbId: savedMeta?.imdbId || grp.imdbId || null,
+        metadata: savedMeta || null,
+      };
+      if (savedMeta?.poster) titleObj.poster = savedMeta.poster;
+      if (savedMeta?.background || savedMeta?.backdrop) titleObj.backdrop = savedMeta.background || savedMeta.backdrop;
+      generatedTitles.push(titleObj);
     }
   } else if (category === 'Series') {
     const seriesMap = new Map();
@@ -130,36 +157,48 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles) {
 
     for (const grp of seriesMap.values()) {
       grp.files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
-      generatedTitles.push({
+      const savedMeta = resolveExternalMetadata(grp.id, grp.tmdbId, grp.files, virtualId, metadataMap);
+      const titleObj = {
         id: String(grp.id),
         tipo: 'serie',
         isSaga: false,
         grupo: groupName,
-        nombre: grp.nombre,
+        nombre: savedMeta?.name || savedMeta?.title || grp.nombre,
         origen: { tipo: 'externo', channelId: String(virtualId) },
         channel: channelRecord,
         archivos: grp.files,
         ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
-        tmdbId: grp.tmdbId,
-        imdbId: grp.imdbId,
-      });
+        tmdbId: savedMeta?.id || grp.tmdbId || null,
+        imdbId: savedMeta?.imdbId || grp.imdbId || null,
+        metadata: savedMeta || null,
+      };
+      if (savedMeta?.poster) titleObj.poster = savedMeta.poster;
+      if (savedMeta?.background || savedMeta?.backdrop) titleObj.backdrop = savedMeta.background || savedMeta.backdrop;
+      generatedTitles.push(titleObj);
     }
   } else {
     const tipo = category === 'Deportes' ? 'deporte' : 'musica';
     const sortedFiles = [...detectedFiles].sort((a, b) => (b.date || 0) - (a.date || 0));
-    generatedTitles.push({
+    const targetTmdb = sortedFiles.find(f => f.tmdbId)?.tmdbId || null;
+    const targetImdb = sortedFiles.find(f => f.imdbId)?.imdbId || null;
+    const savedMeta = resolveExternalMetadata(virtualId, targetTmdb, sortedFiles, virtualId, metadataMap);
+    const titleObj = {
       id: String(virtualId),
       tipo,
       isSaga: false,
       grupo: groupName,
-      nombre: groupName,
+      nombre: savedMeta?.name || savedMeta?.title || groupName,
       origen: { tipo: 'externo', channelId: String(virtualId) },
       channel: channelRecord,
       archivos: sortedFiles,
       ultimoMensajeFecha: sortedFiles.reduce((m, f) => Math.max(m, f.date || 0), 0),
-      tmdbId: sortedFiles.find(f => f.tmdbId)?.tmdbId || null,
-      imdbId: sortedFiles.find(f => f.imdbId)?.imdbId || null,
-    });
+      tmdbId: savedMeta?.id || targetTmdb,
+      imdbId: savedMeta?.imdbId || targetImdb,
+      metadata: savedMeta || null,
+    };
+    if (savedMeta?.poster) titleObj.poster = savedMeta.poster;
+    if (savedMeta?.background || savedMeta?.backdrop) titleObj.backdrop = savedMeta.background || savedMeta.backdrop;
+    generatedTitles.push(titleObj);
   }
 
   return generatedTitles;
@@ -1166,6 +1205,11 @@ export async function scanSingleExternalChannel({ tg, sync, channelRecord, isFul
   const virtualId = isTopic ? `${channelId}_top_${channelRecord.topicId}` : String(channelRecord.id || channelId);
 
   let peer = channelRecord.entity;
+  if (!peer && tg?.peerOf && (channelRecord.accessHash || channelRecord.hash)) {
+    try {
+      peer = tg.peerOf(channelRecord);
+    } catch (_) {}
+  }
   if (!peer) {
     try {
       peer = await client.getInputEntity(channelId);
@@ -1174,7 +1218,12 @@ export async function scanSingleExternalChannel({ tg, sync, channelRecord, isFul
         const cleanId = channelId.replace(/^-100/, '').replace(/^-/, '');
         peer = await client.getInputEntity(`-100${cleanId}`);
       } catch (err) {
-        throw new Error('No se pudo resolver el canal en Telegram: ' + (err.message || String(err)));
+        if (tg?.peerOf) {
+          const cleanId = channelId.replace(/^-100/, '').replace(/^-/, '');
+          peer = tg.peerOf({ id: cleanId, accessHash: channelRecord.accessHash || channelRecord.hash || '0' });
+        } else {
+          throw new Error('No se pudo resolver el canal en Telegram: ' + (err.message || String(err)));
+        }
       }
     }
   }

@@ -1,3 +1,6 @@
+import { createKV } from "../core/kv.js";
+import { modal } from "./settings.js";
+import { prewarmPosterCache } from "../metadata/posterCache.js";
 import { identifyTitlesInBulk } from './adminChannels.js';
 import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
 import { groupTitles, unbundleTitles } from '../library/titles.js';
@@ -22,6 +25,8 @@ export function createLibraryViews(deps) {
     isFavorite, toggleFavorite, toggleAllWatched, focusFirst, showHome, app,
     persistMetadata,
   } = deps;
+  const kv = createKV();
+  const LIB_KEY = 'library_v2';
   let lastOpenedTitleId = null;
 
   function showGroupGrid(tg, sync, profile, row, { focusTitleId = null } = {}) {
@@ -33,6 +38,67 @@ export function createLibraryViews(deps) {
     const titles = getTitles() || [];
     const progress = loadProgress(profile.id);
     const baseItems = (row.gridItems || row.items).map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+
+    if (row.isExternal) {
+      baseItems.forEach(t => {
+        if (profile) applyImagePrefs(t, profile);
+      });
+      prewarmPosterCache(baseItems).catch(() => {});
+
+      // Auto-enriquecer en segundo plano los títulos que aún no tengan metadatos
+      const pendingExt = baseItems.filter(t => !t.metadata && (t.tmdbId || ["pelicula", "serie", "documental"].includes(t.tipo)));
+      if (pendingExt.length > 0) {
+        enrichTitles(pendingExt, {
+          onUpdate: (updatedTitle) => {
+            const cardEl = document.querySelector(`.grid-screen .lib-card[data-title="${esc(updatedTitle.id)}"]`);
+            if (cardEl) {
+              cardEl._titleData = updatedTitle;
+              const displayName = updatedTitle.metadata?.name || updatedTitle.metadata?.title || updatedTitle.nombre;
+              const nameEl = cardEl.querySelector(".lib-card-name");
+              if (nameEl) nameEl.textContent = displayName;
+              const posterEl = cardEl.querySelector(".lib-card-poster");
+              const posterUrl = updatedTitle.metadata?.poster;
+              if (posterEl && posterUrl) {
+                posterEl.classList.add("has-poster");
+                let img = posterEl.querySelector("img.poster-image");
+                if (!img) {
+                  img = document.createElement("img");
+                  img.className = "poster-image";
+                  img.alt = displayName;
+                  img.loading = "lazy";
+                  posterEl.prepend(img);
+                }
+                loadPoster(img, posterUrl);
+              }
+            }
+          },
+        }).then(async () => {
+          try {
+            const libObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
+            libObj.metadataMap = libObj.metadataMap || {};
+            for (const t of pendingExt) {
+              if (t.metadata) {
+                libObj.metadataMap[t.id] = {
+                  id: t.metadata.id,
+                  name: t.metadata.name || t.metadata.title,
+                  poster: t.metadata.poster,
+                  background: t.metadata.background || t.metadata.backdrop,
+                  backdrop: t.metadata.backdrop || t.metadata.background,
+                  logo: t.metadata.logo,
+                  overview: t.metadata.overview,
+                  tipo: t.metadata.tipo,
+                  year: t.metadata.year,
+                  ageRating: t.metadata.ageRating,
+                  genres: t.metadata.genres,
+                  voteAverage: t.metadata.voteAverage,
+                };
+              }
+            }
+            await kv.set(LIB_KEY, libObj).catch(() => {});
+          } catch (_) {}
+        }).catch(() => {});
+      }
+    }
 
     const getGridSort = () => {
       try { return localStorage.getItem(`tg_grid_sort_${profile.id}`) || 'subida'; }
@@ -293,36 +359,24 @@ export function createLibraryViews(deps) {
       if (reloadBtn && row.isExternal && typeof row.onRefreshRequested === "function") {
         reloadBtn.onclick = (e) => {
           e.stopPropagation();
-          const reloadOverlay = document.createElement("div");
-          reloadOverlay.className = "modal-overlay";
-          reloadOverlay.style.cssText = "position:fixed;inset:0;z-index:100050;background:rgba(0,0,0,0.78);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:1rem;";
-          reloadOverlay.innerHTML = `
-            <div style="background:#181c24;border:1px solid rgba(255,255,255,0.15);border-radius:12px;max-width:480px;width:100%;color:#fff;padding:1.5rem;box-shadow:0 20px 40px rgba(0,0,0,0.8);">
-              <h3 style="margin:0 0 0.8rem;font-size:1.15rem;font-weight:700;">Actualizar canal externo</h3>
-              <p style="color:#aaa;font-size:0.9rem;margin:0 0 1.2rem;">Selecciona el modo de actualización para este canal:</p>
-              <div style="display:flex;flex-direction:column;gap:0.75rem;">
-                <button type="button" id="ext-opt-quick" class="btn" data-focusable style="text-align:left;padding:0.85rem 1rem;">
-                  <div style="font-weight:700;font-size:1rem;color:#fff;">⚡ Actualización rápida</div>
-                  <div style="font-size:0.82rem;color:#bbb;margin-top:0.2rem;">Comprueba solo mensajes nuevos posteriores al último escaneo.</div>
+          const { overlay, close } = modal("Actualizar canal externo", `
+            <div style="display:flex;flex-direction:column;gap:1rem;">
+              <p style="color:#aaa;font-size:0.95rem;margin:0 0 0.2rem;">Selecciona el modo de actualización para este canal:</p>
+              <div class="update-options-list" style="display:flex;flex-direction:column;gap:0.8rem;">
+                <button class="btn btn-update-option" id="ext-opt-quick" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
+                  <div style="font-weight:700;font-size:1.05rem;color:#fff;">⚡ Actualización rápida</div>
+                  <div style="font-size:0.85rem;color:#bbb;margin-top:0.25rem;">Comprueba solo mensajes nuevos posteriores al último escaneo.</div>
                 </button>
-                <button type="button" id="ext-opt-full" class="btn btn-secondary" data-focusable style="text-align:left;padding:0.85rem 1rem;">
-                  <div style="font-weight:700;font-size:1rem;color:#fff;">🔄 Forzar actualización completa</div>
-                  <div style="font-size:0.82rem;color:#bbb;margin-top:0.2rem;">Reescanea todo el canal desde el principio.</div>
-                </button>
-                <button type="button" id="ext-opt-identify" class="btn btn-secondary" data-focusable style="text-align:left;padding:0.85rem 1rem;">
-                  <div style="font-weight:700;font-size:1rem;color:#c084fc;">✨ Identificar con TMDB en bloque</div>
-                  <div style="font-size:0.82rem;color:#bbb;margin-top:0.2rem;">Busca carátulas y datos para los vídeos sin identificar.</div>
+                <button class="btn btn-secondary btn-update-option" id="ext-opt-full" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
+                  <div style="font-weight:700;font-size:1.05rem;color:#fff;">🔄 Forzar actualización completa</div>
+                  <div style="font-size:0.85rem;color:#bbb;margin-top:0.25rem;">Reescanea todo el canal desde el principio.</div>
                 </button>
               </div>
-              <div style="text-align:right;margin-top:1.2rem;">
-                <button type="button" id="ext-opt-cancel" style="background:transparent;border:1px solid rgba(255,255,255,0.2);color:#ccc;border-radius:6px;padding:0.5rem 1rem;cursor:pointer;">Cancelar</button>
-              </div>
-            </div>`;
-          document.body.appendChild(reloadOverlay);
-          const closeReloadModal = () => reloadOverlay.remove();
-          reloadOverlay.querySelector("#ext-opt-cancel").onclick = closeReloadModal;
-          reloadOverlay.querySelector("#ext-opt-quick").onclick = async () => {
-            closeReloadModal();
+            </div>
+          `, "Comprueba nuevos vídeos o reescanea el canal");
+
+          overlay.querySelector("#ext-opt-quick").onclick = async () => {
+            close();
             reloadBtn.style.animation = "spinUpload 1s linear infinite";
             try {
               const freshTitles = await row.onRefreshRequested(false);
@@ -331,12 +385,16 @@ export function createLibraryViews(deps) {
                 baseItems.push(...freshTitles);
                 renderCards(getProcessedItems());
               }
+            } catch (err) {
+              console.error("[libraryViews] Error en actualización rápida:", err);
+              alert("Error al actualizar canal: " + (err.message || String(err)));
             } finally {
               reloadBtn.style.animation = "";
             }
           };
-          reloadOverlay.querySelector("#ext-opt-full").onclick = async () => {
-            closeReloadModal();
+
+          overlay.querySelector("#ext-opt-full").onclick = async () => {
+            close();
             reloadBtn.style.animation = "spinUpload 1s linear infinite";
             try {
               const freshTitles = await row.onRefreshRequested(true);
@@ -345,14 +403,17 @@ export function createLibraryViews(deps) {
                 baseItems.push(...freshTitles);
                 renderCards(getProcessedItems());
               }
+            } catch (err) {
+              console.error("[libraryViews] Error en actualización completa:", err);
+              alert("Error al actualizar canal: " + (err.message || String(err)));
             } finally {
               reloadBtn.style.animation = "";
             }
           };
-          reloadOverlay.querySelector("#ext-opt-identify")?.addEventListener('click', () => {
-            closeReloadModal();
-            runBulkIdentify();
-          });
+
+          setTimeout(() => {
+            overlay.querySelector("#ext-opt-quick")?.focus();
+          }, 50);
         };
       }
 

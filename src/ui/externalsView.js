@@ -1,6 +1,7 @@
 // src/ui/externalsView.js
 // Pestaña de Canales Externos: navegación por banners categorizados (Películas, Series, Deportes, Documentales, Música, Otros).
 import { createKV } from '../core/kv.js';
+import { prewarmPosterCache } from '../metadata/posterCache.js';
 import { focusFirst } from './dpad.js';
 import { buildTitlesForExternalChannel, scanSingleExternalChannel, identifyTitlesInBulk } from './adminChannels.js';
 import { EXT_CHANNEL_TITLES_CACHE, clearExternalChannelCache } from './externalTitlesCache.js';
@@ -247,17 +248,21 @@ export function renderExternalsView({
       }
       if (!titles || titles.length === 0) {
         let cachedFiles = await kv.get(`ext_files_${extId}`).catch(() => null);
+        const lib = await kv.get(LIB_KEY).catch(() => null);
         if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
-          const lib = await kv.get(LIB_KEY).catch(() => null);
           cachedFiles = lib?.cache?.[extId] || [];
         }
         if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
-          titles = buildTitlesForExternalChannel(ch, cachedFiles);
+          const metadataMap = lib?.metadataMap || {};
+          titles = buildTitlesForExternalChannel(ch, cachedFiles, metadataMap);
           EXT_CHANNEL_TITLES_CACHE.set(extId, titles);
           chItem.titles = titles;
         } else {
           titles = [];
         }
+      }
+      if (Array.isArray(titles) && titles.length > 0) {
+        prewarmPosterCache(titles).catch(() => {});
       }
       return titles;
     };
@@ -289,8 +294,12 @@ export function renderExternalsView({
             await scanSingleExternalChannel({ tg, sync, channelRecord: ch, isFull });
             clearExternalChannelCache(extId);
             const updatedFiles = (await kv.get(`ext_files_${extId}`).catch(() => [])) || [];
-            const newTitles = buildTitlesForExternalChannel(ch, updatedFiles);
+            const lib = await kv.get(LIB_KEY).catch(() => null);
+            const metadataMap = lib?.metadataMap || {};
+            const newTitles = buildTitlesForExternalChannel(ch, updatedFiles, metadataMap);
             EXT_CHANNEL_TITLES_CACHE.set(extId, newTitles);
+            chItem.titles = newTitles;
+            prewarmPosterCache(newTitles).catch(() => {});
             return newTitles;
           },
         });
