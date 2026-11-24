@@ -1,4 +1,4 @@
-* src/ui/externalsView.js
+/** src/ui/externalsView.js
  * Vista dedicada para la sección "Externo", organizada en banners por canal
  * separados por temática (Películas, Series, Deportes, Música) sin mezclar con la biblioteca principal.
  */
