@@ -39,9 +39,7 @@ import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { showAdminView } from './ui/adminView.js';
-import { buildTitlesForExternalChannel } from './ui/adminChannels.js';
 import { renderExternalsView } from './ui/externalsView.js';
-import { isVideoMessage, parseCaption, getFileName, parseEpisode, prettyName } from './library/parse.js';
 import { resolveTitleAgeRating } from './ui/ageRating.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
@@ -313,94 +311,9 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const savedMeta = previousObj?.metadataMap || {};
   const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
 
-  // Reintegrar canales externos persistidos en external_sources_v1
+  // Conservar canales externos persistidos en external_sources_v1 sin escanearlos en el arranque
   const extSources = (await kv.get('external_sources_v1').catch(() => [])) || [];
   const combinedCache = { ...(force ? (previousObj?.cache || {}) : saved), ...cache };
-
-  for (const ext of extSources) {
-    const extId = String(ext.id);
-    let cachedFiles = combinedCache[extId];
-    if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
-      cachedFiles = await kv.get(`ext_files_${extId}`).catch(() => null);
-    }
-
-    if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
-      try {
-        const rawChId = ext.channelId || extId.split('_top_')[0];
-        const isTopic = Boolean(ext.isTopic || ext.topicId || extId.includes('_top_'));
-        const topicId = ext.topicId || (extId.includes('_top_') ? Number(extId.split('_top_')[1]) : null);
-        let peer = null;
-        try { peer = await client.getInputEntity(rawChId); } catch (_) {
-          try { peer = await client.getInputEntity(`-100${rawChId.replace(/^-100/, '').replace(/^-/, '')}`); } catch (_) {}
-        }
-        if (peer) {
-          const iterOpts = isTopic && topicId ? { replyTo: topicId } : {};
-          const recovered = [];
-          for await (const msg of client.iterMessages(peer, iterOpts)) {
-            if (isVideoMessage(msg)) {
-              const rawCaption = msg.message || '';
-              const cap = parseCaption(rawCaption);
-              const captionFileName = cap.fileName ? cap.fileName.trim() : null;
-              const rawFileName = getFileName(msg) || '';
-              const fileName = captionFileName || rawFileName || `video_${msg.id}.mp4`;
-              const ep = parseEpisode(fileName);
-              const doc = msg.document || msg.media?.document;
-              const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
-              recovered.push({
-                key: `${extId}:${msg.id}`,
-                channelId: extId,
-                messageId: msg.id,
-                channel: { id: extId, name: ext.groupName || ext.title, group: ext.groupName || ext.title, category: ext.category || 'Películas', title: ext.title, isExternal: true, isTopic, topicId },
-                fileName,
-                captionFileName,
-                rawFileName,
-                rawCaption,
-                caption: rawCaption,
-                label: prettyName(fileName),
-                section: cap.section || null,
-                synopsis: cap.synopsis || null,
-                tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null,
-                imdbId: cap.imdbId ? String(cap.imdbId).trim() : null,
-                rating: cap.rating ? Number(cap.rating) : null,
-                season: ep?.season,
-                episode: ep?.episode,
-                size: Number(doc?.size?.toString?.() || doc?.size || 0),
-                duration: durAttr?.duration || 0,
-                mimeType: doc?.mimeType || 'video/mp4',
-                date: msg.date,
-              });
-            }
-          }
-          if (recovered.length > 0) {
-            cachedFiles = recovered;
-            await kv.set(`ext_files_${extId}`, recovered).catch(() => {});
-          }
-        }
-      } catch (recErr) {
-        console.warn('[main] Auto-recuperación de canal externo falló', ext.title, recErr);
-      }
-    }
-
-    if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
-      combinedCache[extId] = cachedFiles;
-      const channelRecord = previousObj?.channels?.find(c => String(c.id) === extId) || {
-        id: extId,
-        name: ext.groupName || ext.title,
-        group: ext.groupName || ext.title,
-        category: ext.category || 'Películas',
-        title: ext.title,
-        isExternal: true,
-        isTopic: Boolean(ext.isTopic),
-        topicId: ext.topicId || null,
-        channelId: ext.channelId || extId.split('_top_')[0],
-        tgChannelId: ext.channelId || extId.split('_top_')[0],
-        hash: ext.hash || ext.accessHash || '0',
-        accessHash: ext.hash || ext.accessHash || '0',
-      };
-      const extTitles = buildTitlesForExternalChannel(channelRecord, cachedFiles);
-      titles.push(...extTitles);
-    }
-  }
 
   if (savedMeta) {
     for (const t of titles) {
@@ -1420,7 +1333,3 @@ async function start() {
     showError(err?.message || String(err));
   }
 }
-
-hookConsole();
-initDpad();
-start();

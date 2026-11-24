@@ -1,9 +1,24 @@
-/**
- * src/ui/externalsView.js
+* src/ui/externalsView.js
  * Vista dedicada para la sección "Externo", organizada en banners por canal
  * separados por temática (Películas, Series, Deportes, Música) sin mezclar con la biblioteca principal.
  */
 import { focusFirst } from './dpad.js';
+import { buildTitlesForExternalChannel } from './adminChannels.js';
+import { createKV } from '../core/kv.js';
+
+const kv = createKV();
+const EXT_CHANNEL_TITLES_CACHE = new Map();
+
+/**
+ * Invalida la memoria caché en caliente de títulos de canales externos.
+ */
+export function clearExternalChannelCache(extId) {
+  if (extId) {
+    EXT_CHANNEL_TITLES_CACHE.delete(String(extId));
+  } else {
+    EXT_CHANNEL_TITLES_CACHE.clear();
+  }
+}
 
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -23,13 +38,19 @@ export function renderExternalsView({ tg, sync, profile, externalTitles = [], ex
 
   const validSources = Array.isArray(extSources) ? extSources : [];
   
-  // Asociar a cada canal externo sus títulos calculados
+  // Asociar a cada canal externo sus títulos calculados o su contador
   const channelDataList = validSources.map(src => {
     const srcIdStr = String(src.id);
-    const relatedTitles = externalTitles.filter(t => {
-      const chId = String(t.channel?.id || t.origen?.channelId || '');
-      return chId === srcIdStr || String(t.id).startsWith(srcIdStr);
-    });
+    let relatedTitles = EXT_CHANNEL_TITLES_CACHE.get(srcIdStr);
+    if (!relatedTitles || relatedTitles.length === 0) {
+      relatedTitles = externalTitles.filter(t => {
+        const chId = String(t.channel?.id || t.origen?.channelId || '');
+        return chId === srcIdStr || String(t.id).startsWith(srcIdStr);
+      });
+      if (relatedTitles.length > 0) {
+        EXT_CHANNEL_TITLES_CACHE.set(srcIdStr, relatedTitles);
+      }
+    }
 
     // Contar el número total de archivos detectados
     const totalFiles = relatedTitles.reduce((acc, t) => acc + (t.archivos?.length || 1), 0);
@@ -167,9 +188,46 @@ export function renderExternalsView({ tg, sync, profile, externalTitles = [], ex
     const chItem = channelDataList.find(item => String(item.source.id) === String(extId));
     if (!chItem) return;
 
-    const openChannelGrid = () => {
+    const openChannelGrid = async () => {
       const ch = chItem.source;
-      const channelTitles = chItem.titles;
+      const targetExtId = String(ch.id);
+      let channelTitles = chItem.titles;
+
+      if (!channelTitles || channelTitles.length === 0) {
+        channelTitles = EXT_CHANNEL_TITLES_CACHE.get(targetExtId);
+      }
+
+      if (!channelTitles || channelTitles.length === 0) {
+        banner.style.opacity = '0.6';
+        banner.style.pointerEvents = 'none';
+        try {
+          let cachedFiles = await kv.get(`ext_files_${targetExtId}`).catch(() => null);
+          if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
+            const lib = await kv.get('library_v2').catch(() => null);
+            cachedFiles = lib?.cache?.[targetExtId] || [];
+          }
+
+          if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
+            channelTitles = buildTitlesForExternalChannel(ch, cachedFiles);
+            EXT_CHANNEL_TITLES_CACHE.set(targetExtId, channelTitles);
+            chItem.titles = channelTitles;
+          } else {
+            channelTitles = [];
+          }
+        } catch (err) {
+          console.warn('[externalsView] Error cargando títulos del canal externo', ch.title, err);
+          channelTitles = [];
+        } finally {
+          banner.style.opacity = '1';
+          banner.style.pointerEvents = '';
+        }
+      }
+
+      if (!channelTitles || channelTitles.length === 0) {
+        alert('Este canal externo aún no tiene vídeos detectados en caché local. Puedes sincronizarlo o escanearlo desde Ajustes > Administrador.');
+        return;
+      }
+
       const titleName = ch.groupName || ch.title || 'Canal externo';
 
       libraryViews.showGroupGrid(tg, sync, profile, {

@@ -1,6 +1,7 @@
 // src/ui/adminChannels.js
 // Módulo para escanear, integrar y desvincular canales, grupos y temas externos en la biblioteca.
 import { Api } from 'telegram';
+import { clearExternalChannelCache } from './externalsView.js';
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
 import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../metadata/tmdb.js';
 import { seriesNameFromFile } from '../library/titles.js';
@@ -427,6 +428,7 @@ async function removeExternalSource({ virtualId, displayName, kv, titles, onRemo
     }
     await kv.set(LIB_KEY, savedObj).catch(() => {});
     await kv.set(`ext_files_${virtualId}`, null).catch(() => {});
+    clearExternalChannelCache(virtualId);
 
     const kept = titles.filter(t => {
       const matchChannel = String(t.channel?.id) === String(virtualId);
@@ -662,6 +664,7 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     savedObj.channels.push(channelRecord);
     await kv.set(LIB_KEY, savedObj).catch(e => console.warn('[admin] Error guardando en library_v2', e));
     await kv.set(`ext_files_${virtualId}`, detectedFiles).catch(() => {});
+    clearExternalChannelCache(virtualId);
 
     const extList = (await kv.get(EXT_KEY).catch(() => [])) || [];
     const updatedExt = extList.filter(x => String(x.id) !== String(virtualId));
@@ -842,7 +845,10 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
     // 2. Desde caché guardada
     for (const ext of extSaved) {
       const chId = String(ext.id);
-      const chFiles = cache[chId] || [];
+      let chFiles = cache[chId] || [];
+      if (!Array.isArray(chFiles) || chFiles.length === 0) {
+        chFiles = (await kv.get(`ext_files_${chId}`).catch(() => [])) || [];
+      }
       const chName = ext.name || ext.title || ext.group || chId;
       for (const f of chFiles) {
         const key = f.key || `${chId}:${f.messageId}`;
