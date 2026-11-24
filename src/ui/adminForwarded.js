@@ -1,308 +1,149 @@
 // src/ui/adminForwarded.js
-// Módulo para listar vídeos reenviados en canales ::tgstorage, seleccionarlos, descargarlos o resubirlos.
+// Listado y gestión real de vídeos reenviados en canales ::tgstorage.
 import { loadLibrary } from '../library/channels.js';
+import { Api } from 'telegram';
 
-function esc(str) {
-  return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+function esc(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-
 function formatBytes(bytes) {
-  const num = Number(bytes) || 0;
-  if (num <= 0) return '0 B';
-  if (num < 1024 * 1024) return `${(num / 1024).toFixed(1)} KB`;
-  if (num < 1024 * 1024 * 1024) return `${(num / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(num / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  const n = Number(bytes) || 0;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+function getFilename(msg) {
+  const doc = msg.document || msg.media?.document;
+  return doc?.attributes?.find(a => a.className === 'DocumentAttributeFilename')?.fileName || `video_${msg.id}.mp4`;
+}
+function ensureProgressBar() {
+  let bar = document.getElementById('admin-global-upload-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'admin-global-upload-bar';
+    bar.className = 'admin-global-upload-bar';
+    document.body.appendChild(bar);
+  }
+  return bar;
+}
+function setProgress(bar, { title, status, percent = 0, done = false, error = false }) {
+  bar.innerHTML = `<div class="admin-upload-bar-inner">
+    <div class="admin-upload-bar-left"><span class="admin-upload-bar-icon ${done || error ? '' : 'spin'}">${error ? '⚠️' : done ? '✓' : '🔄'}</span>
+      <div class="admin-upload-bar-text"><div class="admin-upload-bar-title"><strong>${esc(title)}</strong></div><div class="admin-upload-bar-sub" style="color:${error ? '#f87171' : done ? '#34d399' : ''}">${esc(status)}</div></div></div>
+    <div class="admin-upload-bar-right"><div class="admin-upload-bar-track"><div class="admin-upload-bar-fill" style="width:${percent}%;"></div></div><span class="admin-upload-bar-pct">${percent}%</span>
+      ${done || error ? '<button class="admin-upload-bar-close" title="Cerrar">×</button>' : ''}</div></div>`;
+  bar.querySelector('.admin-upload-bar-close')?.addEventListener('click', () => bar.remove());
 }
 
 export async function renderForwardedTab({ mainPanel, client, tg }) {
-  mainPanel.innerHTML = `
-    <div class="admin-panel-header">
-      <div class="admin-panel-title">
-        <h2>Listar vídeos reenviados</h2>
-        <p>Localiza mensajes de vídeo reenviados exclusivamente en los canales de almacenamiento de la biblioteca (formato ::tgstorage) para descargarlos o resubirlos limpiamente.</p>
-      </div>
-      <button class="btn-primary" data-focusable id="btn-load-forwarded">Cargar vídeos reenviados</button>
-    </div>
-    <div id="admin-forwarded-content">
-      <p style="color:#aaa;">Pulsa "Cargar vídeos reenviados" para escanear los canales tgstorage de la biblioteca.</p>
-    </div>
-  `;
-
+  mainPanel.innerHTML = `<div class="admin-panel-header"><div class="admin-panel-title"><h2>Listar vídeos reenviados</h2><p>Selecciona vídeos reenviados de los canales ::tgstorage para descargarlos o resubirlos al canal correspondiente.</p></div><button class="btn-primary" data-focusable id="btn-load-forwarded">Cargar vídeos reenviados</button></div><div id="admin-forwarded-content"><p style="color:#aaa;">Pulsa «Cargar vídeos reenviados» para escanear los canales tgstorage.</p></div>`;
   const loadBtn = document.getElementById('btn-load-forwarded');
   const container = document.getElementById('admin-forwarded-content');
-
   loadBtn?.addEventListener('click', async () => {
-    if (!client) {
-      container.innerHTML = `<p style="color:#f87171;">Cliente de Telegram no disponible.</p>`;
-      return;
-    }
-
-    loadBtn.disabled = true;
-    loadBtn.textContent = 'Escaneando reenvíos…';
-    container.innerHTML = `<p style="color:#38bdf8;">Obteniendo canales tgstorage de la biblioteca…</p>`;
-
+    if (!client) { container.innerHTML = '<p style="color:#f87171;">Cliente de Telegram no disponible.</p>'; return; }
+    loadBtn.disabled = true; loadBtn.textContent = 'Escaneando…';
+    container.innerHTML = '<p style="color:#38bdf8;">Buscando mensajes reenviados en canales tgstorage…</p>';
     try {
-      const libraryChannels = await loadLibrary(client);
-
-      if (!libraryChannels || libraryChannels.length === 0) {
-        container.innerHTML = `<p style="color:#aaa;">No se encontraron canales tgstorage (formato ::Películas/Series/Deportes/Música::tgstorage) asociados a tu cuenta.</p>`;
-        loadBtn.disabled = false;
-        loadBtn.textContent = 'Cargar vídeos reenviados';
-        return;
-      }
-
-      container.innerHTML = `<p style="color:#38bdf8;">Escaneando mensajes en ${libraryChannels.length} canales tgstorage…</p>`;
-
-      const forwardedByChannel = new Map();
-
-      for (const ch of libraryChannels) {
-        const peer = tg?.peerOf ? tg.peerOf(ch) : (ch.entity || ch.id);
+      const channels = await loadLibrary(client);
+      const byChannel = new Map();
+      for (const channel of channels) {
+        const peer = tg?.peerOf ? tg.peerOf(channel) : channel.entity;
+        if (!peer) continue;
         try {
-          for await (const msg of client.iterMessages(peer, { limit: 150 })) {
+          for await (const msg of client.iterMessages(peer, { limit: 0 })) {
             const doc = msg.document || msg.media?.document;
-            const isVid = doc && (String(doc.mimeType || '').startsWith('video/') || msg.media?.video);
-            if (isVid && (msg.fwdFrom || msg.fwdHeader)) {
-              const chName = ch.title || ch.name || `Canal ${ch.id}`;
-              if (!forwardedByChannel.has(chName)) {
-                forwardedByChannel.set(chName, []);
-              }
-              const size = Number(doc?.size?.toString?.() || doc?.size || 0);
-              forwardedByChannel.get(chName).push({
-                messageId: msg.id,
-                channelId: String(ch.id),
-                channelTitle: chName,
-                entity: peer,
-                msg,
-                size,
-                date: msg.date,
-                fileName: doc?.attributes?.find(a => a.className === 'DocumentAttributeFilename')?.fileName || `video_${msg.id}.mp4`,
-              });
-            }
+            if (!doc || !(String(doc.mimeType || '').startsWith('video/') || msg.media?.video) || !(msg.fwdFrom || msg.fwdHeader)) continue;
+            const name = channel.title || channel.name || `Canal ${channel.id}`;
+            if (!byChannel.has(name)) byChannel.set(name, []);
+            byChannel.get(name).push({ key: `${channel.id}:${msg.id}`, msg, peer, channel, filename: getFilename(msg), size: Number(doc.size?.toString?.() || doc.size || 0) });
           }
-        } catch (e) {
-          console.warn('Error leyendo reenvíos en canal', ch.name, e);
-        }
+        } catch (error) { console.warn('[adminForwarded] No se pudo leer canal', channel.title, error); }
       }
-
-      if (forwardedByChannel.size === 0) {
-        container.innerHTML = `<p style="color:#aaa;">No se encontraron vídeos reenviados en los ${libraryChannels.length} canales tgstorage consultados.</p>`;
-        loadBtn.disabled = false;
-        loadBtn.textContent = 'Cargar vídeos reenviados';
-        return;
+      if (!byChannel.size) {
+        container.innerHTML = `<p style="color:#aaa;">No se encontraron vídeos reenviados en los ${channels.length} canales tgstorage.</p>`;
+        loadBtn.disabled = false; loadBtn.textContent = 'Cargar vídeos reenviados'; return;
       }
-
-      const selectedKeys = new Set();
-      let totalCount = 0;
-      for (const list of forwardedByChannel.values()) totalCount += list.length;
-
-      container.innerHTML = `
-        <div style="margin-bottom:0.75rem;font-size:0.9rem;color:#aaa;">
-          Se han detectado <strong>${totalCount} vídeos reenviados</strong> en <strong>${forwardedByChannel.size} canales tgstorage</strong>.
-        </div>
-
-        <div class="admin-accordion-list">
-          ${Array.from(forwardedByChannel.entries()).map(([chName, vids], chIdx) => `
-            <div class="admin-accordion-item">
-              <div class="admin-accordion-header" data-ch-idx="${chIdx}">
-                <div style="display:flex;align-items:center;gap:0.75rem;">
-                  <input type="checkbox" class="ch-master-checkbox" data-ch-name="${esc(chName)}" />
-                  <strong style="color:#fff;">${esc(chName)}</strong>
-                  <span style="background:rgba(255,255,255,0.1);padding:0.15rem 0.5rem;border-radius:9999px;font-size:0.78rem;">
-                    ${vids.length} vídeos
-                  </span>
-                </div>
-                <span class="accordion-arrow">▼</span>
-              </div>
-              <div class="admin-accordion-content" id="accordion-content-${chIdx}" style="display:none;">
-                ${vids.map(v => {
-                  const key = `${v.channelId}:${v.messageId}`;
-                  return `
-                    <div class="admin-video-row">
-                      <div class="admin-video-info">
-                        <input type="checkbox" class="video-row-checkbox" data-ch-name="${esc(chName)}" data-key="${esc(key)}" />
-                        <span>${esc(v.fileName)}</span>
-                      </div>
-                      <span style="color:#888;font-size:0.8rem;flex:0 0 auto;">${formatBytes(v.size)}</span>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-
-        <div class="admin-sticky-bar" id="forwarded-sticky-bar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(18,18,18,0.96);box-shadow:0 -4px 20px rgba(0,0,0,0.8);padding:0.9rem 1.6rem;">
-          <span id="forwarded-selected-info" style="font-size:0.95rem;color:#fff;">
-            <strong>0</strong> seleccionados
-          </span>
-          <div style="display:flex;gap:0.75rem;">
-            <button class="btn-secondary" data-focusable id="btn-download-forwarded">
-              Descargar
-            </button>
-            <button class="btn-primary" data-focusable id="btn-reupload-forwarded">
-              Resubir
-            </button>
-          </div>
-        </div>
-      `;
-
-      const stickyBar = document.getElementById('forwarded-sticky-bar');
-      const selectedInfo = document.getElementById('forwarded-selected-info');
-
-      const updateSelectionUI = () => {
-        if (stickyBar && selectedInfo) {
-          stickyBar.style.display = selectedKeys.size > 0 ? 'flex' : 'none';
-          selectedInfo.innerHTML = `<strong>${selectedKeys.size}</strong> seleccionados`;
-        }
-      };
-
-      container.querySelectorAll('.admin-accordion-header').forEach(hdr => {
-        hdr.addEventListener('click', (e) => {
-          if (e.target.tagName === 'INPUT') return;
-          const idx = hdr.dataset.chIdx;
-          const content = document.getElementById(`accordion-content-${idx}`);
-          const arrow = hdr.querySelector('.accordion-arrow');
-          if (content) {
-            const isOpen = content.style.display !== 'none';
-            content.style.display = isOpen ? 'none' : 'flex';
-            if (arrow) arrow.textContent = isOpen ? '▼' : '▲';
-          }
-        });
-      });
-
-      container.querySelectorAll('.video-row-checkbox').forEach(cb => {
-        cb.addEventListener('change', () => {
-          const key = cb.dataset.key;
-          if (cb.checked) selectedKeys.add(key);
-          else selectedKeys.delete(key);
-
-          const chName = cb.dataset.chName;
-          const chVids = forwardedByChannel.get(chName) || [];
-          const masterCb = container.querySelector(`.ch-master-checkbox[data-ch-name="${CSS.escape(chName)}"]`);
-          if (masterCb) {
-            masterCb.checked = chVids.every(v => selectedKeys.has(`${v.channelId}:${v.messageId}`));
-          }
-
-          updateSelectionUI();
-        });
-      });
-
-      container.querySelectorAll('.ch-master-checkbox').forEach(masterCb => {
-        masterCb.addEventListener('change', () => {
-          const chName = masterCb.dataset.chName;
-          const chVids = forwardedByChannel.get(chName) || [];
-          const check = masterCb.checked;
-
-          chVids.forEach(v => {
-            const key = `${v.channelId}:${v.messageId}`;
-            if (check) selectedKeys.add(key);
-            else selectedKeys.delete(key);
-          });
-
-          container.querySelectorAll(`.video-row-checkbox[data-ch-name="${CSS.escape(chName)}"]`).forEach(cb => {
-            cb.checked = check;
-          });
-
-          updateSelectionUI();
-        });
-      });
-
-      document.getElementById('btn-download-forwarded')?.addEventListener('click', () => {
-        if (selectedKeys.size === 0) return;
-        alert(`Descarga de ${selectedKeys.size} vídeos solicitada. Telegram iniciará la transferencia de los archivos seleccionados.`);
-      });
-
-      document.getElementById('btn-reupload-forwarded')?.addEventListener('click', () => {
-        if (selectedKeys.size === 0) return;
-        promptReupload(selectedKeys, forwardedByChannel);
-      });
-
-      loadBtn.disabled = false;
-      loadBtn.textContent = 'Actualizar reenvíos';
-    } catch (err) {
-      console.error('Error cargando reenvíos', err);
-      container.innerHTML = `<p style="color:#f87171;">Error al escanear: ${esc(err.message || String(err))}</p>`;
-      loadBtn.disabled = false;
-      loadBtn.textContent = 'Reintentar';
+      const selected = new Set();
+      const total = [...byChannel.values()].reduce((sum, files) => sum + files.length, 0);
+      container.innerHTML = `<p style="color:#aaa;margin-bottom:1rem;">${total} vídeos reenviados en ${byChannel.size} canales tgstorage.</p><div class="admin-accordion-list">${[...byChannel.entries()].map(([name, files], idx) => `<div class="admin-accordion-item"><div class="admin-accordion-header" data-idx="${idx}"><div style="display:flex;align-items:center;gap:.75rem"><input type="checkbox" class="forwarded-channel-check" data-channel="${esc(name)}"><strong>${esc(name)}</strong><span>${files.length} vídeos</span></div><span>▼</span></div><div class="admin-accordion-content" id="forwarded-list-${idx}" style="display:none">${files.map(file => `<div class="admin-video-row"><div class="admin-video-info"><input type="checkbox" class="forwarded-file-check" data-channel="${esc(name)}" data-key="${esc(file.key)}"><span>${esc(file.filename)}</span></div><span>${formatBytes(file.size)}</span></div>`).join('')}</div></div>`).join('')}</div><div class="admin-sticky-bar" id="forwarded-actions" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(18,18,18,.97);padding:.9rem 1.6rem;justify-content:space-between;align-items:center"><span id="forwarded-count">0 seleccionados</span><div style="display:flex;gap:.75rem"><button class="btn-secondary" id="btn-download-forwarded">Descargar</button><button class="btn-primary" id="btn-reupload-forwarded">Resubir</button></div></div>`;
+      const actions = document.getElementById('forwarded-actions');
+      const update = () => { actions.style.display = selected.size ? 'flex' : 'none'; document.getElementById('forwarded-count').textContent = `${selected.size} seleccionados`; };
+      container.querySelectorAll('.admin-accordion-header').forEach(header => header.addEventListener('click', e => {
+        if (e.target.closest('input')) return;
+        const body = document.getElementById(`forwarded-list-${header.dataset.idx}`); body.style.display = body.style.display === 'none' ? 'flex' : 'none';
+      }));
+      container.querySelectorAll('.forwarded-file-check').forEach(box => box.addEventListener('change', () => {
+        box.checked ? selected.add(box.dataset.key) : selected.delete(box.dataset.key); update();
+        const channelBox = container.querySelector(`.forwarded-channel-check[data-channel="${CSS.escape(box.dataset.channel)}"]`);
+        const list = byChannel.get(box.dataset.channel) || [];
+        if (channelBox) channelBox.checked = list.every(item => selected.has(item.key));
+      }));
+      container.querySelectorAll('.forwarded-channel-check').forEach(box => box.addEventListener('change', () => {
+        const name = box.dataset.channel;
+        (byChannel.get(name) || []).forEach(item => box.checked ? selected.add(item.key) : selected.delete(item.key));
+        container.querySelectorAll(`.forwarded-file-check[data-channel="${CSS.escape(name)}"]`).forEach(item => { item.checked = box.checked; }); update();
+      }));
+      document.getElementById('btn-download-forwarded')?.addEventListener('click', () => downloadSelected(selected, byChannel, client));
+      document.getElementById('btn-reupload-forwarded')?.addEventListener('click', () => showRenameAndReupload(selected, byChannel, client));
+      loadBtn.disabled = false; loadBtn.textContent = 'Actualizar reenvíos';
+    } catch (error) {
+      console.error('[adminForwarded]', error); container.innerHTML = `<p style="color:#f87171;">Error al escanear: ${esc(error.message || error)}</p>`;
+      loadBtn.disabled = false; loadBtn.textContent = 'Reintentar';
     }
   });
 }
 
-function promptReupload(selectedKeys, forwardedByChannel) {
-  const existing = document.querySelector('.admin-modal-overlay');
-  existing?.remove();
-
-  const selectedFiles = [];
-  for (const list of forwardedByChannel.values()) {
-    for (const item of list) {
-      if (selectedKeys.has(`${item.channelId}:${item.messageId}`)) {
-        selectedFiles.push(item);
-      }
+function selectedEntries(selected, byChannel) {
+  return [...byChannel.values()].flat().filter(item => selected.has(item.key));
+}
+async function downloadSelected(selected, byChannel, client) {
+  const entries = selectedEntries(selected, byChannel);
+  if (!entries.length) return;
+  const bar = ensureProgressBar();
+  try {
+    for (let i = 0; i < entries.length; i++) {
+      const item = entries[i];
+      setProgress(bar, { title: `Descargando ${item.filename}`, status: `${i + 1} de ${entries.length}`, percent: 0 });
+      const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(bar, { title: `Descargando ${item.filename}`, status: `${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(100, Math.round(done / (total || item.size || 1) * 100)) }) });
+      const blob = new Blob([bytes], { type: item.msg.document?.mimeType || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = item.filename; anchor.click(); URL.revokeObjectURL(url);
+    }
+    setProgress(bar, { title: 'Descarga completada', status: `Se descargaron ${entries.length} archivos.`, percent: 100, done: true });
+  } catch (error) { console.error(error); setProgress(bar, { title: 'Error al descargar', status: error.message || String(error), error: true }); }
+}
+function showRenameAndReupload(selected, byChannel, client) {
+  const entries = selectedEntries(selected, byChannel);
+  if (!entries.length) return;
+  const overlay = document.createElement('div'); overlay.className = 'admin-modal-overlay';
+  overlay.innerHTML = `<div class="admin-modal-card"><h3>Renombrar y resubir</h3><p>Revisa el nombre final de cada archivo antes de enviarlo al mismo canal tgstorage.</p><div class="admin-reupload-name-list" style="max-height:45vh;overflow:auto">${entries.map((item, i) => `<label class="admin-field-group"><span>${esc(item.filename)} · ${formatBytes(item.size)}</span><input class="admin-input" data-index="${i}" value="${esc(item.filename)}"></label>`).join('')}</div><label style="display:flex;gap:.5rem;align-items:center"><input type="checkbox" id="admin-premium-check"> Soy usuario Premium (permite archivos de hasta 4 GB)</label><p id="admin-reupload-limit" style="color:#fbbf24"></p><div style="display:flex;justify-content:flex-end;gap:.75rem"><button class="btn-secondary" id="reupload-cancel">Cancelar</button><button class="btn-primary" id="reupload-confirm">Comenzar resubida</button></div></div>`;
+  document.body.appendChild(overlay);
+  const premium = overlay.querySelector('#admin-premium-check');
+  const updateLimit = () => { const max = premium.checked ? 4 * 1024 ** 3 : 2 * 1024 ** 3; const excluded = entries.filter(x => x.size > max).length; overlay.querySelector('#admin-reupload-limit').textContent = excluded ? `${excluded} archivo(s) exceden el límite actual y se omitirán.` : 'Todos los archivos cumplen el límite.'; };
+  premium.addEventListener('change', updateLimit); updateLimit();
+  overlay.querySelector('#reupload-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#reupload-confirm').addEventListener('click', async () => {
+    const maxBytes = premium.checked ? 4 * 1024 ** 3 : 2 * 1024 ** 3;
+    const queue = entries.map((item, i) => ({ ...item, newName: overlay.querySelector(`input[data-index="${i}"]`).value.trim() || item.filename })).filter(item => item.size <= maxBytes);
+    overlay.remove(); await reuploadQueue(queue, client);
+  });
+}
+async function reuploadQueue(entries, client) {
+  if (!entries.length) return;
+  const bar = ensureProgressBar();
+  for (let i = 0; i < entries.length; i++) {
+    const item = entries[i];
+    try {
+      setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Descargando original · ${i + 1} de ${entries.length}`, percent: 0 });
+      const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Descargando ${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(45, Math.round(done / (total || item.size || 1) * 45)) }) });
+      const blob = new Blob([bytes], { type: item.msg.document?.mimeType || 'application/octet-stream' });
+      const upload = await client.uploadFile({ file: new File([blob], item.newName, { type: blob.type }), workers: 2, onProgress: progress => setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Subiendo ${formatBytes(progress * item.size)} / ${formatBytes(item.size)}`, percent: 45 + Math.round(progress * 50) }) });
+      const caption = item.msg.message || '';
+      await client.sendFile(item.peer, { file: upload, caption, forceDocument: true, attributes: [new Api.DocumentAttributeFilename({ fileName: item.newName })] });
+    } catch (error) {
+      console.error('[adminForwarded] Error resubiendo', item.newName, error);
+      setProgress(bar, { title: `Error con ${item.newName}`, status: error.message || String(error), error: true });
+      return;
     }
   }
-
-  const overlay = document.createElement('div');
-  overlay.className = 'admin-modal-overlay';
-  overlay.innerHTML = `
-    <div class="admin-modal-card">
-      <h3 style="margin:0;font-size:1.15rem;color:#fff;">Resubir vídeos a Telegram</h3>
-      <p style="margin:0;color:#ccc;font-size:0.9rem;">
-        Se van a resubir <strong>${selectedFiles.length} vídeos</strong> a sus canales de origen para desvincularlos de reenvíos externos.
-      </p>
-
-      <div style="background:rgba(255,255,255,0.05);padding:0.9rem;border-radius:8px;font-size:0.88rem;color:#ddd;">
-        <p style="margin:0 0 0.5rem 0;"><strong>¿Tu cuenta de Telegram es Premium?</strong></p>
-        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-bottom:0.3rem;">
-          <input type="radio" name="premium-status" value="no" checked />
-          <span>No, cuenta estándar (Límite 2 GB por archivo)</span>
-        </label>
-        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
-          <input type="radio" name="premium-status" value="yes" />
-          <span>Sí, Telegram Premium (Hasta 4 GB)</span>
-        </label>
-      </div>
-
-      <div id="reupload-warning" style="font-size:0.84rem;color:#fbbf24;"></div>
-
-      <div style="display:flex;justify-content:flex-end;gap:0.75rem;margin-top:0.5rem;">
-        <button class="btn-secondary" data-focusable id="reupload-cancel-btn">Cancelar</button>
-        <button class="btn-primary" data-focusable id="reupload-confirm-btn">Comenzar resubida</button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-
-  const warnEl = overlay.querySelector('#reupload-warning');
-  const updateWarning = () => {
-    const isPremium = overlay.querySelector('input[name="premium-status"]:checked').value === 'yes';
-    const maxBytes = isPremium ? 4 * 1024 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
-    const filtered = selectedFiles.filter(f => f.size <= maxBytes);
-    const skipped = selectedFiles.length - filtered.length;
-    if (skipped > 0) {
-      warnEl.textContent = `Aviso: ${skipped} archivo(s) superan el límite de ${isPremium ? '4 GB' : '2 GB'} y serán omitidos. Se procesarán ${filtered.length}.`;
-    } else {
-      warnEl.textContent = `Todos los ${filtered.length} archivos cumplen con el límite de tamaño.`;
-    }
-  };
-  updateWarning();
-
-  overlay.querySelectorAll('input[name="premium-status"]').forEach(r => {
-    r.addEventListener('change', updateWarning);
-  });
-
-  overlay.querySelector('#reupload-cancel-btn')?.addEventListener('click', () => overlay.remove());
-
-  overlay.querySelector('#reupload-confirm-btn')?.addEventListener('click', async () => {
-    const isPremium = overlay.querySelector('input[name="premium-status"]:checked').value === 'yes';
-    const maxBytes = isPremium ? 4 * 1024 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
-    const toProcess = selectedFiles.filter(f => f.size <= maxBytes);
-    overlay.remove();
-
-    alert(`Iniciando resubida de ${toProcess.length} vídeos a sus canales correspondientes en Telegram.`);
-  });
+  setProgress(bar, { title: 'Resubida completada', status: `Se resubieron ${entries.length} archivos.`, percent: 100, done: true });
 }

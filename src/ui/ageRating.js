@@ -110,34 +110,38 @@ export function resolveTitleAgeRating(t) {
       }
     }
 
+    let maxRatingRaw = explicitRaw || null;
     const files = Array.isArray(t.archivos) ? t.archivos : [];
     for (const f of files) {
       const raw = f.ageRating || f.metadata?.ageRating;
       let info = null;
+      let detectedRaw = null;
       if (raw) {
         info = getAgeRatingInfo(raw);
+        detectedRaw = raw;
       } else {
         const candidate = `${f.sagaName || ''} ${f.fileName || ''} ${f.label || ''}`;
         const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X|NR)\]/i)
           || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR)\)/i)
           || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR)\b/i);
-        if (m) info = getAgeRatingInfo(m[1]);
+        if (m) { info = getAgeRatingInfo(m[1]); detectedRaw = m[1]; }
       }
       if (info) {
         const sev = AGE_SEVERITY[info.label] ?? 0;
         if (sev > maxSeverity) {
           maxSeverity = sev;
           maxRatingInfo = info;
+          maxRatingRaw = detectedRaw || info.label;
         }
       }
     }
 
-    if (maxRatingInfo) return maxRatingInfo;
+    if (maxRatingInfo) return { ...maxRatingInfo, raw: String(maxRatingRaw || maxRatingInfo.label).trim() };
   }
 
   // Título individual estándar
   const raw = t.metadata?.ageRating || t.ageRating || t.archivos?.[0]?.ageRating;
-  if (raw) return getAgeRatingInfo(raw);
+  if (raw) { const info = getAgeRatingInfo(raw); return info ? { ...info, raw: String(raw).trim() } : null; }
 
   // Fallback: detectar en nombre del archivo o del título (ej: [18], (+16), 18+, etc.)
   const candidate = `${t.nombre || ''} ${t.archivos?.[0]?.fileName || t.archivos?.[0]?.name || ''}`;
@@ -145,7 +149,8 @@ export function resolveTitleAgeRating(t) {
     || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR)\)/i)
     || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR)\b/i);
   if (m) {
-    return getAgeRatingInfo(m[1]);
+    const info = getAgeRatingInfo(m[1]);
+    return info ? { ...info, raw: m[1] } : null;
   }
   return null;
 }

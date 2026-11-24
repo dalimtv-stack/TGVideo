@@ -251,6 +251,7 @@ export async function renderUploadTab({ mainPanel, client, tg }) {
         rating,
         ageRating,
         synopsis,
+        videoAsDocument: true,
       });
     });
   });
@@ -269,6 +270,7 @@ function startBackgroundUpload({
   rating,
   ageRating,
   synopsis,
+  videoAsDocument = true,
 }) {
   if (!client) {
     alert('Cliente de Telegram no disponible para realizar la subida.');
@@ -315,7 +317,7 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
 
   (async () => {
     try {
-      const peer = tg?.peerOf ? tg.peerOf({ id: targetChannelId }) : (targetChannel?.entity || targetChannelId);
+      const peer = tg?.peerOf ? tg.peerOf(targetChannel) : (targetChannel?.entity || targetChannelId);
 
       const inputFile = await client.uploadFile({
         file,
@@ -333,20 +335,34 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
       fillEl.style.width = '100%';
       pctEl.textContent = '100%';
 
-      const sentMsg = await client.sendFile(peer, {
+      const sendParams = {
         file: inputFile,
         caption,
-        forceDocument: true,
-        attributes: [
-          new Api.DocumentAttributeVideo({
-            duration: 0,
-            w: 1920,
-            h: 1080,
-            supportsStreaming: true,
-          }),
-          new Api.DocumentAttributeFilename({ fileName: finalFilename }),
-        ],
-      });
+        forceDocument: videoAsDocument,
+        attributes: [new Api.DocumentAttributeFilename({ fileName: finalFilename })],
+      };
+
+      // Telegram puede rechazar el envío como vídeo con CHANNEL_INVALID aunque la subida del archivo haya llegado al 100%.
+      // Si ocurre, repetir como documento sin atributos de vídeo para que Telegram lo trate como archivo.
+      let sentMsg;
+      try {
+        sentMsg = await client.sendFile(peer, {
+          ...sendParams,
+          forceDocument: false,
+          attributes: [
+            new Api.DocumentAttributeVideo({ duration: 0, w: 1920, h: 1080, supportsStreaming: true }),
+            new Api.DocumentAttributeFilename({ fileName: finalFilename }),
+          ],
+        });
+      } catch (videoSendError) {
+        console.warn('[adminUpload] Envío como vídeo falló; reintentando como archivo', videoSendError);
+        statusEl.textContent = 'Telegram rechazó el vídeo; reintentando como archivo…';
+        sentMsg = await client.sendFile(peer, {
+          ...sendParams,
+          forceDocument: true,
+          attributes: [new Api.DocumentAttributeFilename({ fileName: finalFilename })],
+        });
+      }
 
       const newFileEntry = {
         key: `${targetChannelId}:${sentMsg.id}`,

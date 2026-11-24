@@ -275,157 +275,92 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
   // ==========================================
   async function renderListingsTab() {
     mainPanel.innerHTML = `
-      <div class="admin-panel-header">
-        <div class="admin-panel-title">
-          <h2>Listados</h2>
-          <p>Consultas, informes y métricas del contenido detectado en la biblioteca.</p>
-        </div>
-      </div>
-
+      <div class="admin-panel-header"><div class="admin-panel-title"><h2>Listados</h2><p>Consulta las calificaciones detectadas y revisa los canales y vídeos activos en la biblioteca.</p></div></div>
       <div class="admin-listings-layout">
         <div class="admin-listings-actions">
-          <button class="btn-primary" data-focusable id="btn-list-age-ratings" style="width:100%;text-align:left;padding:0.85rem 1rem;">
-            Listar calificaciones de edades
-          </button>
+          <button class="btn-primary" data-focusable id="btn-list-age-ratings" style="width:100%;text-align:left;padding:.85rem 1rem;">Listar calificaciones de edades</button>
+          <button class="btn-primary" data-focusable id="btn-list-library-channels" style="width:100%;text-align:left;padding:.85rem 1rem;margin-top:.65rem;">Listar canales y videos</button>
         </div>
-
-        <div class="admin-listings-results" id="admin-listings-results">
-          <p style="color:#aaa;">Selecciona una opción a la izquierda para generar su informe correspondiente.</p>
-        </div>
-      </div>
-    `;
-
+        <div class="admin-listings-results" id="admin-listings-results"><p style="color:#aaa;">Selecciona una opción para generar su informe.</p></div>
+      </div>`;
     const resultsArea = document.getElementById('admin-listings-results');
     const ageBtn = document.getElementById('btn-list-age-ratings');
+    const channelsBtn = document.getElementById('btn-list-library-channels');
 
     ageBtn?.addEventListener('click', async () => {
-      ageBtn.disabled = true;
-      ageBtn.textContent = 'Calculando…';
-      resultsArea.innerHTML = `<p style="color:#38bdf8;">Analizando clasificaciones por edad en la biblioteca…</p>`;
-
+      ageBtn.disabled = true; ageBtn.textContent = 'Calculando…';
+      resultsArea.innerHTML = '<p style="color:#38bdf8;">Analizando clasificaciones por edad de cada archivo…</p>';
       try {
-        let allTitles = titles;
-        if (!allTitles || allTitles.length === 0) {
+        let allTitles = Array.isArray(titles) ? titles : [];
+        if (!allTitles.length) {
           const saved = await kv.get(LIB_KEY).catch(() => null);
-          if (saved && saved.cache) {
-            allTitles = [];
-            for (const files of Object.values(saved.cache)) {
-              if (Array.isArray(files)) {
-                for (const f of files) {
-                  allTitles.push({
-                    nombre: f.label || f.fileName,
-                    archivos: [f],
-                    ageRating: f.ageRating,
-                    metadata: { ageRating: f.ageRating },
-                  });
-                }
-              }
-            }
+          allTitles = Object.values(saved?.cache || {}).flatMap(files => Array.isArray(files) ? files.map(f => ({ nombre: f.label || f.fileName, archivos: [f], ageRating: f.ageRating, metadata: { ageRating: f.ageRating } })) : []);
+        }
+        const filesByKey = new Map();
+        for (const title of allTitles) {
+          for (const file of title.archivos || []) {
+            const key = `${title.origen?.channelId || title.channel?.id || ''}:${file.messageId || file.id || file.fileName || ''}`;
+            if (!filesByKey.has(key)) filesByKey.set(key, { title, file });
           }
         }
-
-        const buckets = [
-          { id: 'APTA', label: 'APTA (Todos los públicos)', color: '#0284c7', count: 0, titleCount: 0, titles: [] },
-          { id: '7', label: 'Hasta 7 años (+7)', color: '#22c55e', count: 0, titleCount: 0, titles: [] },
-          { id: '12', label: 'Hasta 12 años (+12)', color: '#eab308', count: 0, titleCount: 0, titles: [] },
-          { id: '16', label: 'Hasta 16 años (+16)', color: '#f97316', count: 0, titleCount: 0, titles: [] },
-          { id: '18', label: 'Hasta 18 años (+18)', color: '#ef4444', count: 0, titleCount: 0, titles: [] },
-          { id: 'X', label: 'Adultos / Contenido X', color: '#dc2626', count: 0, titleCount: 0, titles: [] },
-          { id: 'NR', label: 'Sin clasificar / No especificada (NR)', color: '#94a3b8', count: 0, titleCount: 0, titles: [] },
+        const known = [
+          { raw: 'APTA', label: 'APTA (Todos los públicos)', color: '#0284c7' },
+          { raw: '7', label: 'Hasta 7 años (+7)', color: '#22c55e' },
+          { raw: '12', label: 'Hasta 12 años (+12)', color: '#eab308' },
+          { raw: '16', label: 'Hasta 16 años (+16)', color: '#f97316' },
+          { raw: '18', label: 'Hasta 18 años (+18)', color: '#ef4444' },
+          { raw: 'X', label: 'Adultos / Contenido X', color: '#dc2626' },
+          { raw: 'NR', label: 'Sin clasificar / No especificada', color: '#94a3b8' },
         ];
+        const buckets = new Map(known.map(x => [x.raw.toUpperCase(), { ...x, count: 0, files: [] }]));
+        for (const { title, file } of filesByKey.values()) {
+          const info = resolveTitleAgeRating({ nombre: file.label || file.fileName || title.nombre, archivos: [file], ageRating: file.ageRating, metadata: { ageRating: file.ageRating } });
+          const raw = String(file.ageRating || file.metadata?.ageRating || info?.raw || info?.label || 'NR').trim();
+          const key = raw.toUpperCase();
+          if (!buckets.has(key)) buckets.set(key, { raw, label: `Calificación detectada: ${raw}`, color: '#a78bfa', count: 0, files: [] });
+          const bucket = buckets.get(key); bucket.count += 1;
+          if (bucket.files.length < 30) bucket.files.push(file.label || file.fileName || title.nombre || 'Archivo sin nombre');
+        }
+        const totalFiles = [...buckets.values()].reduce((n, b) => n + b.count, 0);
+        const dynamic = [...buckets.values()].filter(b => !known.some(k => k.raw.toUpperCase() === b.raw.toUpperCase()));
+        const ordered = [...known.map(k => buckets.get(k.raw)).filter(Boolean), ...dynamic.sort((a,b) => a.raw.localeCompare(b.raw, 'es', { numeric: true }))];
+        resultsArea.innerHTML = `
+          <div class="admin-stat-summary-bar"><div class="admin-stat-summary-box"><span class="admin-stat-summary-num">${totalFiles}</span><span class="admin-stat-summary-label">Archivos analizados</span></div><div class="admin-stat-summary-box"><span class="admin-stat-summary-num">${dynamic.length}</span><span class="admin-stat-summary-label">Calificaciones adicionales detectadas</span></div></div>
+          <div style="display:flex;flex-direction:column;gap:.85rem;margin-top:.5rem;">
+          ${ordered.map((b,i) => { const pct = totalFiles ? (b.count / totalFiles * 100).toFixed(1) : '0.0'; return `<div class="admin-age-stat-card"><div class="admin-age-stat-header"><div class="admin-age-stat-main"><span class="admin-age-stat-pill" style="color:${b.color};border-color:${b.color};background:${b.color}15;">${esc(b.raw)}</span><div><strong style="color:#fff;font-size:.95rem">${esc(b.label)}</strong><div style="font-size:.8rem;color:#888">${pct}% de los archivos</div></div></div><div style="display:flex;align-items:center;gap:1rem"><span class="admin-age-stat-count">${b.count} archivos</span>${b.count ? `<button class="btn-secondary admin-btn-sm btn-toggle-age-files" data-index="${i}">Ver archivos ▼</button>` : ''}</div></div><div class="admin-stat-progress-bar"><div class="admin-stat-progress-fill" style="width:${pct}%;background:${b.color}"></div></div>${b.count ? `<div class="admin-titles-dropdown" id="age-files-${i}" style="display:none">${b.files.map(n => `<div>• ${esc(n)}</div>`).join('')}${b.count > b.files.length ? `<div style="color:#888;font-style:italic">… y ${b.count - b.files.length} más</div>` : ''}</div>` : ''}</div>`; }).join('')}
+          </div>`;
+        resultsArea.querySelectorAll('.btn-toggle-age-files').forEach(btn => btn.addEventListener('click', () => { const list = document.getElementById(`age-files-${btn.dataset.index}`); const open = list.style.display === 'none'; list.style.display = open ? 'flex' : 'none'; btn.textContent = open ? 'Ocultar ▲' : 'Ver archivos ▼'; }));
+      } catch (err) { console.error(err); resultsArea.innerHTML = `<p style="color:#f87171">Error al calcular el listado: ${esc(err.message || err)}</p>`; }
+      finally { ageBtn.disabled = false; ageBtn.textContent = 'Listar calificaciones de edades'; }
+    });
 
-        let totalFiles = 0;
-        let totalTitles = (allTitles || []).length;
-
-        for (const t of (allTitles || [])) {
-          const info = resolveTitleAgeRating(t);
-          const ratingKey = info?.label ? String(info.label).toUpperCase() : 'NR';
-          const fileCount = Array.isArray(t.archivos) && t.archivos.length > 0 ? t.archivos.length : 1;
-          totalFiles += fileCount;
-
-          let targetBucket = buckets.find(b => b.id === ratingKey);
-          if (!targetBucket) {
-            targetBucket = buckets.find(b => b.id === 'NR');
-          }
-
-          targetBucket.count += fileCount;
-          targetBucket.titleCount += 1;
-          if (targetBucket.titles.length < 30) {
-            targetBucket.titles.push(t.nombre || t.id);
+    channelsBtn?.addEventListener('click', async () => {
+      channelsBtn.disabled = true; channelsBtn.textContent = 'Cargando…';
+      resultsArea.innerHTML = '<p style="color:#38bdf8;">Organizando canales y vídeos identificados…</p>';
+      try {
+        let allTitles = Array.isArray(titles) ? titles : [];
+        if (!allTitles.length) {
+          const saved = await kv.get(LIB_KEY).catch(() => null);
+          allTitles = Object.values(saved?.cache || {}).flatMap(files => Array.isArray(files) ? files.map(f => ({ nombre: f.label || f.fileName, origen: { channelId: f.channelId }, channel: f.channel, archivos: [f] })) : []);
+        }
+        const channels = new Map();
+        for (const title of allTitles) {
+          const channel = title.channel || {};
+          const channelId = String(title.origen?.channelId || channel.id || '');
+          if (!channelId) continue;
+          if (!channels.has(channelId)) channels.set(channelId, { id: channelId, name: channel.title || channel.name || channel.group || `Canal ${channelId}`, files: new Map() });
+          const entry = channels.get(channelId);
+          for (const file of title.archivos || []) {
+            const messageId = String(file.messageId || file.id || file.fileName || '');
+            if (!entry.files.has(messageId)) entry.files.set(messageId, { shownName: file.label || file.displayName || title.nombre || file.fileName || 'Sin nombre', filename: file.fileName || '', title: title.nombre || '', category: channel.category || '' });
           }
         }
-
-        resultsArea.innerHTML = `
-          <div class="admin-stat-summary-bar">
-            <div class="admin-stat-summary-box">
-              <span class="admin-stat-summary-num">${totalFiles}</span>
-              <span class="admin-stat-summary-label">Archivos totales</span>
-            </div>
-            <div class="admin-stat-summary-box">
-              <span class="admin-stat-summary-num">${totalTitles}</span>
-              <span class="admin-stat-summary-label">Títulos totales</span>
-            </div>
-          </div>
-
-          <div style="display:flex;flex-direction:column;gap:0.85rem;margin-top:0.5rem;">
-            ${buckets.map((b, bIdx) => {
-              const pct = totalFiles > 0 ? ((b.count / totalFiles) * 100).toFixed(1) : 0;
-              return `
-                <div class="admin-age-stat-card">
-                  <div class="admin-age-stat-header">
-                    <div class="admin-age-stat-main">
-                      <span class="admin-age-stat-pill" style="color:${b.color};border-color:${b.color};background:${b.color}15;">
-                        ${esc(b.id)}
-                      </span>
-                      <div>
-                        <strong style="color:#fff;font-size:0.95rem;">${esc(b.label)}</strong>
-                        <div style="font-size:0.8rem;color:#888;">${b.titleCount} títulos asociados (${pct}%)</div>
-                      </div>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:1rem;">
-                      <span class="admin-age-stat-count">${b.count} archivos</span>
-                      ${b.titleCount > 0 ? `
-                        <button class="btn-secondary admin-btn-sm btn-toggle-stat-titles" data-bidx="${bIdx}">
-                          Ver títulos ▼
-                        </button>
-                      ` : ''}
-                    </div>
-                  </div>
-
-                  <div class="admin-stat-progress-bar">
-                    <div class="admin-stat-progress-fill" style="width:${pct}%;background:${b.color};"></div>
-                  </div>
-
-                  ${b.titleCount > 0 ? `
-                    <div class="admin-titles-dropdown" id="stat-titles-dropdown-${bIdx}" style="display:none;">
-                      ${b.titles.map(name => `<div>• ${esc(name)}</div>`).join('')}
-                      ${b.titleCount > b.titles.length ? `<div style="color:#888;font-style:italic;">… y ${b.titleCount - b.titles.length} más</div>` : ''}
-                    </div>
-                  ` : ''}
-                </div>
-              `;
-            }).join('')}
-          </div>
-        `;
-
-        resultsArea.querySelectorAll('.btn-toggle-stat-titles').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const bIdx = btn.dataset.bidx;
-            const dropdown = document.getElementById(`stat-titles-dropdown-${bIdx}`);
-            if (dropdown) {
-              const isHidden = dropdown.style.display === 'none';
-              dropdown.style.display = isHidden ? 'flex' : 'none';
-              btn.textContent = isHidden ? 'Ocultar ▲' : 'Ver títulos ▼';
-            }
-          });
-        });
-      } catch (err) {
-        console.error('Error calculando listado de edades', err);
-        resultsArea.innerHTML = `<p style="color:#f87171;">Error al calcular el listado: ${esc(err.message || String(err))}</p>`;
-      } finally {
-        ageBtn.disabled = false;
-        ageBtn.textContent = 'Listar calificaciones de edades';
-      }
+        const sorted = [...channels.values()].filter(c => c.files.size).sort((a,b) => a.name.localeCompare(b.name, 'es'));
+        if (!sorted.length) { resultsArea.innerHTML = '<p style="color:#aaa;">No hay canales con vídeos identificados en la biblioteca actual.</p>'; return; }
+        resultsArea.innerHTML = `<p style="color:#aaa;margin-bottom:1rem">${sorted.length} canales activos con vídeos detectados.</p><div class="admin-accordion-list">${sorted.map((channel,i) => `<div class="admin-accordion-item"><div class="admin-accordion-header library-channel-header" data-index="${i}"><div style="display:flex;align-items:center;gap:.75rem"><strong>${esc(channel.name)}</strong><span>${channel.files.size} vídeos</span>${channel.files.values().next().value?.category ? `<small>${esc(channel.files.values().next().value.category)}</small>` : ''}</div><span>▼</span></div><div class="admin-accordion-content" id="library-channel-${i}" style="display:none;flex-direction:column">${[...channel.files.values()].sort((a,b) => a.shownName.localeCompare(b.shownName, 'es')).map(file => `<div class="admin-video-row" style="align-items:flex-start"><div style="display:flex;flex-direction:column;gap:.2rem"><strong>${esc(file.shownName)}</strong>${file.filename && file.filename !== file.shownName ? `<small style="color:#888">Archivo: ${esc(file.filename)}</small>` : ''}</div>${file.title ? `<span style="color:#aaa">${esc(file.title)}</span>` : ''}</div>`).join('')}</div></div>`).join('')}</div>`;
+        resultsArea.querySelectorAll('.library-channel-header').forEach(header => header.addEventListener('click', () => { const list = document.getElementById(`library-channel-${header.dataset.index}`); list.style.display = list.style.display === 'none' ? 'flex' : 'none'; }));
+      } catch (err) { console.error(err); resultsArea.innerHTML = `<p style="color:#f87171">Error al generar el listado: ${esc(err.message || err)}</p>`; }
+      finally { channelsBtn.disabled = false; channelsBtn.textContent = 'Listar canales y videos'; }
     });
   }
 

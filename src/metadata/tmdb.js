@@ -464,10 +464,10 @@ async function searchTmdbCandidates(type, query, year, signal) {
   let currentQuery = q;
   let currentYear = year;
 
-  // 2. Si no encuentra nada en TMDB, primero se prueba eliminando la palabra que comience por "@"
-  const hasAt = /(?:^|\s)@\S+/.test(currentQuery);
+  // 2. Si no encuentra nada en TMDB, probar eliminando palabras que comiencen por ".@" o "@"
+  const hasAt = /(?:^|\s)\.?@\S+/.test(currentQuery);
   if (hasAt) {
-    const queryWithoutAt = currentQuery.replace(/(?:^|\s)@\S+/g, " ").replace(/\s+/g, " ").trim();
+    const queryWithoutAt = currentQuery.replace(/(?:^|\s)\.?@\S+/g, " ").replace(/\s+/g, " ").trim();
     if (queryWithoutAt && queryWithoutAt !== currentQuery) {
       currentQuery = queryWithoutAt;
       matchId = await trySearch(currentQuery, currentYear);
@@ -475,7 +475,20 @@ async function searchTmdbCandidates(type, query, year, signal) {
     }
   }
 
-  // 3. Si no hay "@" o no se encuentra nada, se prueba a eliminar la última palabra si es un año (ej: 1966)
+  // 3. Si no detecta nada, probamos a quitarle al final del nombre HD, FHD y similares
+  const trailingQualityRe = /[\s._-]+(?:fhd|hd|uhd|[248]k|sd|hq|microhd|hdrip|webrip|bdrip|brrip|dvdrip|remux)\s*$/i;
+  if (trailingQualityRe.test(currentQuery)) {
+    const queryWithoutQuality = currentQuery.replace(trailingQualityRe, "").trim();
+    if (queryWithoutQuality && queryWithoutQuality !== currentQuery) {
+      matchId = await trySearch(queryWithoutQuality, currentYear);
+      if (matchId) return matchId;
+      matchId = await trySearch(queryWithoutQuality, null);
+      if (matchId) return matchId;
+      currentQuery = queryWithoutQuality;
+    }
+  }
+
+  // 4. Si aún no se encuentra nada, se prueba a eliminar la última palabra si es un año (ej: 1966)
   const trailingYearMatch = currentQuery.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
   if (trailingYearMatch) {
     const candidateYear = trailingYearMatch[1];
@@ -487,7 +500,14 @@ async function searchTmdbCandidates(type, query, year, signal) {
       // Probar también el título limpio sin filtrar por año
       matchId = await trySearch(candidateTitle, null);
       if (matchId) return matchId;
+      currentQuery = candidateTitle;
     }
+  }
+
+  // 5. Intento final con el título actual sin restricción de año
+  if (currentYear) {
+    matchId = await trySearch(currentQuery, null);
+    if (matchId) return matchId;
   }
 
   return null;
