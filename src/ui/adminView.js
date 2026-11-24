@@ -61,6 +61,7 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
             <span class="admin-tab-icon">🔞</span>
             <span class="admin-tab-label">Filtros de edad a perfiles</span>
           </button>
+          <!-- Oculta temporalmente: planteamiento de canales externos en revisión -->
           <button class="admin-tab-btn" data-focusable data-tab="channels" role="tab" aria-selected="false">
             <span class="admin-tab-icon">📡</span>
             <span class="admin-tab-label">Añadir canales/grupos/temas Externos</span>

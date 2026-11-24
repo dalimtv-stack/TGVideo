@@ -25,6 +25,98 @@ function formatBytes(bytes) {
   return `${(num / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+// ---------- Utilidades de subida (patrón robusto heredado de TGComic) ----------
+
+/** ¿Es un MP4 que Telegram puede tratar como vídeo nativo? */
+export function isMp4File(file, fileName = '') {
+  const name = String(fileName || file?.name || '').toLowerCase();
+  const type = String(file?.type || '').toLowerCase();
+  return type === 'video/mp4' || /\.(mp4|m4v)$/.test(name);
+}
+
+/** Telegram limita el caption de medios a 1024 caracteres. */
+function fitTelegramCaption(text, max = 1024) {
+  const str = String(text || '');
+  if (str.length <= max) return str;
+  return str.slice(0, max - 1).trimEnd() + '…';
+}
+
+const isGramNoise = (e) => /Missing MTProto Entity|TL definition for ID 0|ENTITY_MEMBER_INVALID|constructor id/i.test(String(e?.message || e || ''));
+
+/** GramJS a veces lanza un error de parseo DESPUÉS de enviar: el mensaje ya está en Telegram, no reintentar. */
+async function sendFileSafe(client, peer, opts) {
+  try {
+    return await client.sendFile(peer, opts);
+  } catch (e) {
+    if (isGramNoise(e)) {
+      console.warn('[upload] aviso interno GramJS tras enviar (mensaje enviado):', e?.message || e);
+      return { __sentWithNoise: true };
+    }
+    throw e;
+  }
+}
+
+/** Lee duración, resolución y una miniatura JPEG del vídeo usando el propio navegador. */
+function probeVideo(file, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const result = { duration: 0, width: 0, height: 0, thumb: null };
+    let url = null;
+    let done = false;
+    const video = document.createElement('video');
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { video.removeAttribute('src'); video.load(); } catch (_) {}
+      if (url) URL.revokeObjectURL(url);
+      resolve(result);
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    try {
+      url = URL.createObjectURL(file);
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+      video.onerror = finish;
+      video.onloadedmetadata = () => {
+        result.duration = Number.isFinite(video.duration) ? Math.round(video.duration) : 0;
+        result.width = video.videoWidth || 0;
+        result.height = video.videoHeight || 0;
+        const target = Math.min(Math.max(1, (video.duration || 10) * 0.1), 30);
+        try { video.currentTime = target; } catch (_) { finish(); }
+      };
+      video.onseeked = () => {
+        try {
+          const w = video.videoWidth, h = video.videoHeight;
+          if (w && h) {
+            const scale = Math.min(1, 320 / Math.max(w, h));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(w * scale);
+            canvas.height = Math.round(h * scale);
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob((blob) => {
+              if (blob) result.thumb = new File([blob], 'thumb.jpg', { type: 'image/jpeg' });
+              finish();
+            }, 'image/jpeg', 0.8);
+            return;
+          }
+        } catch (_) {}
+        finish();
+      };
+      video.src = url;
+    } catch (_) {
+      finish();
+    }
+  });
+}
+
+function extractMessageId(sentMsg) {
+  if (!sentMsg || sentMsg.__sentWithNoise) return null;
+  return sentMsg.id ||
+    sentMsg.updates?.find?.(u => u.message?.id)?.message?.id ||
+    sentMsg.message?.id || null;
+}
+
 export async function renderUploadTab({ mainPanel, client, tg }) {
   mainPanel.innerHTML = `
     <div class="admin-panel-header">
@@ -252,7 +344,8 @@ export async function renderUploadTab({ mainPanel, client, tg }) {
         rating,
         ageRating,
         synopsis,
-        videoAsDocument: true,
+        // Los MP4 se envían como vídeo de Telegram (reproducible/streaming); el resto como documento.
+        videoAsDocument: !isMp4File(file, finalFilename),
       });
     });
   });
@@ -352,56 +445,95 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
       fillEl.style.width = '100%';
       pctEl.textContent = '100%';
 
-      // Se envía directamente como documento con el nombre de archivo indicado.
-      // Esto evita que Telegram rechace la subida con 400 CHANNEL_INVALID por codecs de vídeo no estándar.
-      const sentMsg = await client.sendFile(peer, {
-        file: inputFile,
-        caption,
-        forceDocument: true,
-        attributes: [new Api.DocumentAttributeFilename({ fileName: finalFilename })],
-      });
+      const safeCaption = fitTelegramCaption(caption, 1024);
+      if (safeCaption.length < String(caption || '').length) {
+        console.warn(`[upload] Caption recortado a ${safeCaption.length}/1024 caracteres (límite Telegram)`);
+      }
+      const filenameAttr = new Api.DocumentAttributeFilename({ fileName: finalFilename });
 
-      const messageId = sentMsg?.id ||
-        sentMsg?.updates?.find?.(u => u.message?.id)?.message?.id ||
-        sentMsg?.message?.id;
+      let sentMsg = null;
+      let sentAsVideo = false;
+      let videoInfo = { duration: 0, width: 0, height: 0, thumb: null };
 
-      if (!messageId) {
+      if (!videoAsDocument) {
+        // MP4: se envía como vídeo nativo con streaming, duración, resolución y miniatura.
+        try {
+          statusEl.textContent = 'Preparando vídeo (duración y miniatura)…';
+          videoInfo = await probeVideo(file);
+          console.log('[upload] vídeo detectado', { duration: videoInfo.duration, width: videoInfo.width, height: videoInfo.height, thumb: !!videoInfo.thumb });
+          statusEl.textContent = 'Publicando como vídeo en Telegram…';
+          const opts = {
+            file: inputFile,
+            caption: safeCaption,
+            forceDocument: false,
+            supportsStreaming: true,
+            attributes: [
+              new Api.DocumentAttributeVideo({
+                duration: videoInfo.duration || 0,
+                w: videoInfo.width || 0,
+                h: videoInfo.height || 0,
+                supportsStreaming: true,
+              }),
+              filenameAttr,
+            ],
+          };
+          if (videoInfo.thumb) opts.thumb = videoInfo.thumb;
+          sentMsg = await sendFileSafe(client, peer, opts);
+          sentAsVideo = true;
+        } catch (e) {
+          console.warn('[upload] Envío como vídeo rechazado, se reintenta como documento:', e?.message || e);
+          statusEl.textContent = 'Telegram rechazó el vídeo; reintentando como documento…';
+        }
+      }
+
+      if (!sentAsVideo) {
+        // Documento: evita 400 CHANNEL_INVALID con códecs no estándar (MKV, AVI…)
+        sentMsg = await sendFileSafe(client, peer, {
+          file: inputFile,
+          caption: safeCaption,
+          forceDocument: true,
+          attributes: [filenameAttr],
+        });
+      }
+
+      const messageId = extractMessageId(sentMsg);
+      if (!messageId && !sentMsg?.__sentWithNoise) {
         throw new Error('Telegram no devolvió el identificador del mensaje; no se puede confirmar que el archivo se publicara en el canal');
       }
 
-      const newFileEntry = {
-        key: `${targetChannelId}:${messageId}`,
-        channelId: String(targetChannelId),
-        messageId: messageId,
-        channel: targetChannel || { id: targetChannelId, name: targetTitle, group: targetTitle, category: 'Películas' },
-        fileName: finalFilename,
-        captionFileName: finalFilename,
-        rawFileName: finalFilename,
-        rawCaption: caption,
-        label: prettyName(finalFilename),
-        section: null,
-        synopsis: synopsis || null,
-        tmdbId: tmdbId || null,
-        imdbId: null,
-        rating: rating ? Number(rating) : null,
-        ageRating: ageRating || null,
-        season: 0,
-        episode: 0,
-        size: file.size,
-        duration: 0,
-        mimeType: file.type || 'video/mp4',
-        date: Math.floor(Date.now() / 1000),
-      };
-
-      const savedObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
-      savedObj.cache = savedObj.cache || {};
-      savedObj.cache[targetChannelId] = savedObj.cache[targetChannelId] || [];
-      savedObj.cache[targetChannelId].unshift(newFileEntry);
-      await kv.set(LIB_KEY, savedObj).catch(() => {});
+      if (messageId) {
+        const newFileEntry = {
+          key: `${targetChannelId}:${messageId}`,
+          channelId: String(targetChannelId),
+          messageId: messageId,
+          channel: targetChannel || { id: targetChannelId, name: targetTitle, group: targetTitle, category: 'Películas' },
+          fileName: finalFilename,
+          captionFileName: finalFilename,
+          rawFileName: finalFilename,
+          rawCaption: safeCaption,
+          label: prettyName(finalFilename),
+          section: null,
+          synopsis: synopsis || null,
+          tmdbId: tmdbId || null,
+          imdbId: null,
+          rating: rating ? Number(rating) : null,
+          ageRating: ageRating || null,
+          season: 0,
+          episode: 0,
+          size: file.size,
+          duration: videoInfo.duration || 0,
+          mimeType: file.type || 'video/mp4',
+          date: Math.floor(Date.now() / 1000),
+        };
+        await addEntryToLibraryCache(targetChannelId, targetChannel, messageId, newFileEntry);
+      } else {
+        // Enviado pero sin id: invalidar la caché del canal para que se reescanee en la próxima actualización.
+        await addEntryToLibraryCache(targetChannelId, targetChannel, null, null);
+      }
 
       iconEl.innerHTML = '<span style="font-size:1.3rem;color:#34d399;">✓</span>';
       iconEl.style.color = '#34d399';
-      statusEl.textContent = `✓ Subida completada con éxito en ${targetTitle} (Mensaje #${messageId || 'OK'})`;
+      statusEl.textContent = `✓ Subida completada (${sentAsVideo ? 'como vídeo' : 'como documento'}) en ${targetTitle} (Mensaje #${messageId || 'OK'})`;
       statusEl.style.color = '#34d399';
       closeBtn.style.display = 'block';
 
@@ -417,4 +549,34 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
       closeBtn.style.display = 'block';
     }
   })();
+}
+
+/**
+ * Inserta el nuevo archivo en la caché local library_v2.
+ * Estructura real de la caché (ver library/titles.js → buildTitles):
+ *   cache[channelId] = { top, title, files: [...] }
+ * (El error "unshift is not a function" venía de tratar esa entrada como un array.)
+ */
+async function addEntryToLibraryCache(channelId, channel, messageId, entry) {
+  try {
+    const savedObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
+    savedObj.cache = savedObj.cache || {};
+    const key = String(channelId);
+    let slot = savedObj.cache[key];
+    if (Array.isArray(slot)) slot = { top: null, title: channel?.title || null, files: slot };
+    if (!slot || typeof slot !== 'object' || !Array.isArray(slot.files)) {
+      slot = { top: null, title: channel?.title || null, files: [] };
+    }
+    if (entry && messageId) {
+      slot.files = [entry, ...slot.files.filter(f => String(f.messageId) !== String(messageId))];
+      // El nuevo mensaje es ahora el último del canal: así la actualización rápida no reescanea.
+      slot.top = messageId;
+    } else {
+      slot.top = null; // fuerza reescaneo
+    }
+    savedObj.cache[key] = slot;
+    await kv.set(LIB_KEY, savedObj);
+  } catch (e) {
+    console.warn('[upload] No se pudo actualizar la caché local de la biblioteca', e);
+  }
 }

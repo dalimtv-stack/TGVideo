@@ -50,6 +50,15 @@ setupTvPlatform();
 
 const kv = createKV();
 const LIB_KEY = 'library_v2';
+// Pestaña "Externos" oculta temporalmente (planteamiento en revisión).
+const SHOW_EXTERNALS_SECTION = false;
+// Caché del procesado de títulos para cambios de pestaña rápidos (sin recalcular overrides/colecciones).
+let HOME_PROCESSED = { ref: null, profileId: null };
+// Títulos ya enviados a identificación TMDB en esta sesión (evita relanzar búsquedas en cada pestaña).
+const TMDB_ATTEMPTED = new Set();
+let BG_ENRICH = null;
+const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const perfLog = (msg) => console.log(`[perf] ${msg}`);
 
 const app = document.getElementById('app');
 
@@ -635,6 +644,7 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
 
   // 4. Identificar vídeos pendientes en TMDB antes de mostrar la home
   const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+  pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
   if (pendingTitles.length > 0) {
     showLoading(`Identificando vídeos con TMDB (0/${pendingTitles.length})…`);
     metadataController?.abort();
@@ -659,7 +669,7 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   return TITLES_CACHE;
 }
 
-async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusSortToggle = false, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
+async function showHome(tg, sync, profile, { fast = false, reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusSortToggle = false, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
   applyProfileScale(profile);
   if (selectedSection !== 'inicio') {
     setBackHandler(() => {
@@ -669,20 +679,33 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   } else {
     setBackHandler(() => showProfileSelector(tg, sync));
   }
-    if (reload || !TITLES_CACHE) {
+  const tStart = perfNow();
+  if (reload || !TITLES_CACHE) {
+    TMDB_ATTEMPTED.clear();
+    HOME_PROCESSED = { ref: null, profileId: null };
     await loadAndSyncAll(tg, sync, profile, { force });
+    perfLog(`loadAndSyncAll ${Math.round(perfNow() - tStart)} ms`);
   }
 
   let titles = TITLES_CACHE || [];
-  titles = applyOverridesAndUnbundle(titles);
-  titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
-  titles = attachAutoCollections(mergeMoviesByTmdb(titles));
-  titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
-  TITLES_CACHE = titles;
-  titles.forEach(t => applyImagePrefs(t, profile));
-
-  // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
-  await prewarmPosterCache(titles);
+  const canReuse = fast && !reload && HOME_PROCESSED.ref === TITLES_CACHE && HOME_PROCESSED.profileId === profile.id;
+  if (canReuse) {
+    perfLog(`showHome(${selectedSection}): procesado reutilizado (${titles.length} títulos)`);
+  } else {
+    const tProc = perfNow();
+    titles = applyOverridesAndUnbundle(titles);
+    titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
+    titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+    titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
+    TITLES_CACHE = titles;
+    titles.forEach(t => applyImagePrefs(t, profile));
+    const tPrewarm = perfNow();
+    // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
+    await prewarmPosterCache(titles);
+    perfLog(`showHome(${selectedSection}): procesado ${Math.round(tPrewarm - tProc)} ms, prewarm carátulas ${Math.round(perfNow() - tPrewarm)} ms (${titles.length} títulos)`);
+    HOME_PROCESSED = { ref: titles, profileId: profile.id };
+  }
+  const tBuild = perfNow();
 
   const progress = loadProgress(profile.id);
   const rows = buildHomeRows(titles, progress, getNewsPrefs(profile));
@@ -725,7 +748,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     ...(sportTitles.length ? [{ id: 'deportes', label: 'Deportes', items: sportTitles }] : []),
     ...(musicTitles.length ? [{ id: 'musica', label: 'Música', items: musicTitles }] : []),
     ...(collectionTitles.length ? [{ id: 'colecciones', label: 'Colecciones', items: collectionTitles }] : []),
-    ...(externalTitles.length ? [{ id: 'externos', label: 'Externos', items: externalTitles }] : []),
+    ...(SHOW_EXTERNALS_SECTION && externalTitles.length ? [{ id: 'externos', label: 'Externos', items: externalTitles }] : []),
   ];
   const isSearch = selectedSection === 'buscar' && titles.length > 0;
   if (!isSearch && !sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
@@ -820,7 +843,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       button.blur();
       button.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       destroyCarousel();
-      showHome(tg, sync, profile, { selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
+      perfLog(`click pestaña -> ${button.dataset.section}`);
+      showHome(tg, sync, profile, { fast: true, selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
     };
   });
   if (isSearch) {
@@ -900,7 +924,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         setSectionSort(profile.id, selectedSection, sortType);
         setSectionSortOrder(profile.id, selectedSection, defaultOrder);
       }
-      showHome(tg, sync, profile, { selectedSection, focusSortToggle: true, fromPointer: e.detail > 0 });
+      showHome(tg, sync, profile, { fast: true, selectedSection, focusSortToggle: true, fromPointer: e.detail > 0 });
     };
   });
   const viewBtn = document.querySelector('.category-view-btn');
@@ -910,7 +934,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       const current = getSectionViewMode(profile.id, selectedSection);
       const next = nextViewMode(current);
       setSectionViewMode(profile.id, selectedSection, next);
-      showHome(tg, sync, profile, { selectedSection, focusViewBtn: true, fromPointer: e.detail > 0 });
+      showHome(tg, sync, profile, { fast: true, selectedSection, focusViewBtn: true, fromPointer: e.detail > 0 });
     };
   }
 
@@ -1065,8 +1089,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       }
     }
   }, 80);
-  metadataController?.abort();
-  metadataController = new AbortController();
+  perfLog(`showHome(${selectedSection}): render HTML+eventos ${Math.round(perfNow() - tBuild)} ms, total ${Math.round(perfNow() - tStart)} ms`);
+  requestAnimationFrame(() => requestAnimationFrame(() => perfLog(`showHome(${selectedSection}): pintado en pantalla ${Math.round(perfNow() - tStart)} ms`)));
 
   let metaSaveTimer = null;
   const saveMetaDebounced = () => {
@@ -1091,8 +1115,17 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     }, 2500);
   };
 
-  const pendingBg = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
-  if (pendingBg.length > 0) {
+  const pendingBg = titles.filter(t => !isExternalTitle(t) && !TMDB_ATTEMPTED.has(t.id) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+  if (BG_ENRICH && BG_ENRICH.profileId === profile.id) {
+    if (pendingBg.length) perfLog(`TMDB en segundo plano ya en curso; ${pendingBg.length} pendientes nuevos esperan`);
+  } else if (pendingBg.length > 0) {
+    metadataController?.abort();
+    metadataController = new AbortController();
+    pendingBg.forEach(t => TMDB_ATTEMPTED.add(t.id));
+    const bgRun = { profileId: profile.id };
+    BG_ENRICH = bgRun;
+    const tEnrich = perfNow();
+    perfLog(`TMDB segundo plano: ${pendingBg.length} títulos`);
     enrichTitles(pendingBg, { signal: metadataController.signal, onUpdate: title => {
       applyImagePrefs(title, profile);
       saveMetaDebounced();
@@ -1131,10 +1164,13 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         const before = TITLES_CACHE.length;
         TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
         if (TITLES_CACHE.length !== before && document.querySelector('.home-screen') && !document.querySelector('.carousel-stage:focus, .carousel-stage.dpad-focused') && (selectedSection === 'inicio' || selectedSection === 'colecciones')) {
-          showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
+          showHome(tg, sync, profile, { selectedSection: ACTIVE_HOME_SECTION, focusSort: getSectionSort(profile.id, ACTIVE_HOME_SECTION), fromPointer: true });
         }
       }
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => {
+      perfLog(`TMDB segundo plano terminado en ${Math.round(perfNow() - tEnrich)} ms`);
+      if (BG_ENRICH === bgRun) BG_ENRICH = null;
+    });
   }
 }
 

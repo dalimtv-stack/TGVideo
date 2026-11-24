@@ -78,6 +78,39 @@ export function extractTitleAndYear(name = "") {
   return { title: str || name, year };
 }
 
+/**
+ * Extrae título y año del caption del mensaje (respaldo cuando el nombre de archivo no identifica).
+ * Formato habitual: "Taxi Driver (1976) Drama | Crimen. Película de culto\n\nSinopsis\n..."
+ * Devuelve una lista de candidatos { title, year } ordenados de más a menos fiable.
+ */
+export function extractTitlesFromCaption(caption = "") {
+  const text = String(caption || "").replace(/\r/g, "");
+  if (!text.trim()) return [];
+  const skipLine = /^(sinopsis|synopsis|nombre de archivo|archivo|tmdb|imdb|puntuaci[oó]n|rating|secci[oó]n|g[eé]nero|duraci[oó]n|calidad|idioma|audio|subt[ií]tulos)\b/i;
+  const lines = text.split("\n").map(l => l.replace(/[*_`~]+/g, "").replace(/^[\s\p{Extended_Pictographic}🎬📽️🎞️▶️•·\-–—]+/u, "").trim()).filter(Boolean);
+  const out = [];
+  const push = (title, year) => {
+    const t = String(title || "").replace(/[\s.:;,|\-–—]+$/, "").replace(/^[\s.:;,|\-–—]+/, "").replace(/\s+/g, " ").trim();
+    if (t.length < 2 || t.length > 120) return;
+    if (!out.some(o => o.title.toLowerCase() === t.toLowerCase() && o.year === (year || null))) out.push({ title: t, year: year || null });
+  };
+  for (const line of lines.slice(0, 4)) {
+    if (/^(sinopsis|synopsis|argumento|resumen)\b/i.test(line)) break; // lo que sigue es la sinopsis
+    if (skipLine.test(line)) continue;
+    // 1) "Título (1976) ..." o "Título [1976] ..."
+    const m = line.match(/^(.+?)\s*[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/);
+    if (m) { push(m[1], m[2]); continue; }
+    // 2) "Título - 1976 ..." / "Título 1976 ..."
+    const m2 = line.match(/^(.+?)\s*[-–—]?\s+((?:19\d{2}|20[0-3]\d))\b/);
+    if (m2) push(m2[1], m2[2]);
+    // 3) Primer segmento antes de separadores típicos
+    const seg = line.split(/\s+\|\s+|\.\s+|\s+[-–—]\s+/)[0];
+    const parsed = extractTitleAndYear(seg);
+    push(parsed.title, parsed.year);
+  }
+  return out.slice(0, 4);
+}
+
 export function cleanSearchName(name = "") {
   return extractTitleAndYear(name).title;
 }
@@ -523,6 +556,27 @@ async function searchTmdbCandidates(type, query, year, signal) {
   return null;
 }
 
+// Búsquedas por caption fallidas en esta sesión (evita repetirlas en cada recarga de pestaña)
+const CAPTION_MISS = new Set();
+
+async function searchByCaptions(type, title, alreadyTried, signal) {
+  const captions = [...new Set((title.archivos || []).map(f => f.rawCaption).filter(c => c && c.trim()))].slice(0, 3);
+  for (const caption of captions) {
+    for (const cand of extractTitlesFromCaption(caption)) {
+      const key = `${type}:${cand.title.toLowerCase()}:${cand.year || ""}`;
+      if (CAPTION_MISS.has(key)) continue;
+      if (cand.title.toLowerCase() === String(alreadyTried || "").toLowerCase() && !cand.year) continue;
+      const id = await searchTmdbCandidates(type, cand.title, cand.year, signal).catch(() => null);
+      if (id) {
+        console.log(`[tmdb] Identificado por caption: "${title.nombre}" → "${cand.title}"${cand.year ? ` (${cand.year})` : ""} = ${id}`);
+        return id;
+      }
+      CAPTION_MISS.add(key);
+    }
+  }
+  return null;
+}
+
 export async function searchTmdbManual({ query, type = "movie", year = "", directId = null }, signal) {
   const endpoint = type === "collection" ? "collection" : type === "serie" || type === "tv" ? "tv" : "movie";
   const id = parseTmdbId(directId);
@@ -796,7 +850,14 @@ export async function enrichTitle(title, { signal } = {}) {
   if (!id) {
     id = await searchTmdbCandidates(type, query, year, signal);
   }
-  if (!id) return null;
+  if (!id) {
+    // Respaldo: probar con el caption de los mensajes (p. ej. "Taxi Driver (1976) Drama | Crimen…")
+    id = await searchByCaptions(type, title, query, signal);
+  }
+  if (!id) {
+    console.log(`[tmdb] Sin identificar: "${title.nombre}" (búsqueda "${query}"${year ? ` ${year}` : ""})`);
+    return null;
+  }
   const append = type === "tv" ? "content_ratings,external_ids" : "release_dates,external_ids";
   const data = await request(`/${type}/${id}`, { append_to_response: append }, signal);
   const ageRating = parseAgeRatingFromTmdb(data, type);
