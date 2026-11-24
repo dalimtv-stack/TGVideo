@@ -408,13 +408,25 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     if (parsed) Object.assign(ch, { name: parsed.name, group: parsed.group, category: parsed.category, macro: !!parsed.macro, isYearContainer: !!parsed.isYearContainer, isSaga: !!parsed.isSaga });
     const prev = cache[ch.id];
     let files = [];
-    if (prev && (!client || (prev.top === ch.top && prev.title === ch.title && ch.top))) {
+    let chTop = ch.top || 0;
+    if (!chTop && prev?.top && client && peerOf) {
+      try {
+        const p = peerOf(ch);
+        if (p) {
+          const msgs = await client.getMessages(p, { limit: 1 });
+          if (msgs && msgs[0]) chTop = msgs[0].id;
+        }
+      } catch (_) {}
+    }
+
+    if (prev && (!client || (prev.top === (chTop || ch.top) && prev.title === ch.title && (prev.top || chTop)))) {
       files = prev.files.map(f => ({ ...f, channel: f.channel || ch }));
     } else {
       try { files = await scanFiles(client, peerOf(ch), ch); }
       catch (e) { console.warn('[titles] no se pudo leer', ch.title, e); }
     }
-    newCache[ch.id] = { top: ch.top, title: ch.title, files: files.map(f => ({ ...f })) };
+    const finalTop = chTop || ch.top || (files[0]?.messageId || 0);
+    newCache[ch.id] = { top: finalTop, title: ch.title, files: files.map(f => ({ ...f })) };
 
     // Filtro: NO mostrar canales vacíos en TGVideo
     if (!files || files.length === 0) {
