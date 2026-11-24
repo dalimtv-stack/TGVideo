@@ -1,3 +1,12 @@
+export function isExternalTitle(t) {
+  return Boolean(
+    t?.origen?.tipo === "externo" ||
+    t?.channel?.isExternal ||
+    t?.isExternal ||
+    (typeof t?.channel?.id === "string" && t.channel.id.includes("_top_"))
+  );
+}
+
 // src/library/titles.js
 /**
  * Capa de datos: convierte canales (dedicados, contenedores de año y macro) en "Títulos" unificados.
@@ -101,6 +110,14 @@ export function mergeMoviesByTmdb(titles) {
 
   for (const t of titles) {
     if (t.tipo !== 'pelicula' || t.isSaga) {
+      result.push(t);
+      continue;
+    }
+
+    // Los títulos de canales externos se preservan de forma independiente para que
+    // el usuario siempre pueda encontrarlos y revisarlos en la cuadrícula de su canal ("+")
+    // aunque la misma película exista en otros canales.
+    if (isExternalTitle(t)) {
       result.push(t);
       continue;
     }

@@ -1019,11 +1019,18 @@ export function initDpad() {
   } catch (_) {}
 
   // Integración con botón "Atrás" del ratón en PC (e.button === 3 / Navegador Atrás)
+  // Se aplica un antirrebote de 350 ms para evitar que los eventos consecutivos
+  // pointerup, mouseup y auxclick del navegador disparen dos o tres veces el retroceso.
+  let lastMouseBackAt = 0;
   const onMouseBack = (e) => {
     if (e.button === 3) {
       e.preventDefault();
       e.stopPropagation();
-      handleBack();
+      const now = Date.now();
+      if (now - lastMouseBackAt > 350) {
+        lastMouseBackAt = now;
+        handleBack();
+      }
     }
   };
   window.addEventListener('mouseup', onMouseBack, true);

@@ -31,7 +31,7 @@ export function extractTitleAndYear(name = "") {
   }
 
   // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis
-  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|\\d{3,4}x\\d{3,4}|\\d{3,4}p?x26[45]|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
+  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|\\d{3,4}x\\d{3,4}|\\d{3,4}p?x26[45]|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|cast|cas|latino|lat|spanish|spa|esp|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
   const bracketQualityRe = new RegExp("\\[[^\\]]*" + qualityKw + "[^\\]]*\\]", "gi");
   const parenQualityRe = new RegExp("\\([^\\)]*" + qualityKw + "[^\\)]*\\)", "gi");
   str = str.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
@@ -73,7 +73,7 @@ export function extractTitleAndYear(name = "") {
 
   // 8. Normalizar separadores sin destruir puntos en siglas/abreviaturas como "L.A."
   str = str.replace(/([a-zA-Z0-9]{2,})\.([a-zA-Z0-9]{2,})/g, "$1 $2");
-  str = str.replace(/[-–—\s]+$/, "").replace(/^\s*[-–—]+/, "").replace(/\s+/g, " ").trim();
+  str = str.replace(/[-–—\s.]+$/, "").replace(/^\s*[-–—.]+/, "").replace(/\s+/g, " ").trim();
 
   return { title: str || name, year };
 }

@@ -682,7 +682,21 @@
 }
 
 .admin-upload-bar-icon {
-  font-size: 1.4rem;
+  font-size: 1.3rem;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-upload-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: spinUpload 0.8s linear infinite;
+  display: inline-block;
   flex: 0 0 auto;
 }
 

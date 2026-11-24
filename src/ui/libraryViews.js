@@ -117,6 +117,9 @@ export function createLibraryViews(deps) {
       </div>`;
 
     const initialItems = getProcessedItems();
+    const CHUNK_SIZE = 80;
+    let activeGridItems = initialItems;
+    let renderedCount = 0;
 
     showScreen(`
       <div class="screen grid-screen" data-grid-id="${esc(row.id)}">
@@ -130,42 +133,62 @@ export function createLibraryViews(deps) {
             ${renderToolsHtml()}
           </div>
         </header>
-        <main class="grid-cards">
-          ${initialItems.length > 0 ? initialItems.map(t => cardHtml(t, progress)).join("") : `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;"><p>No se encontraron vídeos ${onlyUnidentified ? "sin identificar " : ""}en este canal.</p></div>`}
-        </main>
+        <main class="grid-cards"></main>
       </div>`);
 
     document.getElementById("grid-btn-back").onclick = back;
 
-    const bindCards = (items) => {
-      document.querySelectorAll("#app .grid-cards .lib-card").forEach(card => {
+    const appendGridBatch = (mainEl, items) => {
+      if (!mainEl || renderedCount >= items.length) return;
+      const batch = items.slice(renderedCount, renderedCount + CHUNK_SIZE);
+      renderedCount += batch.length;
+      const frag = document.createRange().createContextualFragment(
+        batch.map(t => cardHtml(t, progress)).join("")
+      );
+      frag.querySelectorAll(".lib-card[data-title]").forEach(card => {
         card.onclick = () => {
           const t = items.find(x => String(x.id) === String(card.dataset.title));
           if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
         };
       });
-
-      document.querySelectorAll("#app .grid-cards .lib-card-poster img.poster-image").forEach(img => {
+      frag.querySelectorAll(".lib-card-poster img.poster-image").forEach(img => {
         const url = img.getAttribute("data-poster-url") || img.src;
         if (url) loadPoster(img, url);
       });
+      mainEl.appendChild(frag);
     };
 
     const renderCards = (items) => {
+      activeGridItems = items;
+      renderedCount = 0;
       const mainEl = document.querySelector(".grid-screen .grid-cards");
       const countEl = document.querySelector(".grid-screen .grid-count");
       if (countEl) {
         countEl.textContent = `${items.length} ${items.length === 1 ? "título" : "títulos"}`;
       }
       if (mainEl) {
+        mainEl.innerHTML = "";
         if (items.length > 0) {
-          mainEl.innerHTML = items.map(t => cardHtml(t, progress)).join("");
+          appendGridBatch(mainEl, items);
         } else {
           mainEl.innerHTML = `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;"><p>No se encontraron vídeos ${onlyUnidentified ? "sin identificar " : ""}en este canal.</p></div>`;
         }
-        bindCards(items);
       }
     };
+
+    const onGridScroll = () => {
+      const mainEl = document.querySelector(".grid-screen .grid-cards");
+      if (!mainEl?.isConnected) {
+        window.removeEventListener("scroll", onGridScroll);
+        return;
+      }
+      if (renderedCount < activeGridItems.length && window.innerHeight + window.scrollY >= document.body.offsetHeight - 800) {
+        appendGridBatch(mainEl, activeGridItems);
+      }
+    };
+    window.addEventListener("scroll", onGridScroll, { passive: true });
+
+    renderCards(initialItems);
 
     const bindTools = () => {
       document.querySelectorAll("#app .grid-sort-btn").forEach(btn => {

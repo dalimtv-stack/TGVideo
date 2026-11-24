@@ -28,7 +28,7 @@ function ensureProgressBar() {
 }
 function setProgress(bar, { title, status, percent = 0, done = false, error = false }) {
   bar.innerHTML = `<div class="admin-upload-bar-inner">
-    <div class="admin-upload-bar-left"><span class="admin-upload-bar-icon ${done || error ? '' : 'spin'}">${error ? '⚠️' : done ? '✓' : '🔄'}</span>
+    <div class="admin-upload-bar-left">${error ? '<span class="admin-upload-bar-icon" style="color:#f87171;">⚠️</span>' : done ? '<span class="admin-upload-bar-icon" style="color:#34d399;">✓</span>' : '<span class="admin-upload-spinner"></span>'}
       <div class="admin-upload-bar-text"><div class="admin-upload-bar-title"><strong>${esc(title)}</strong></div><div class="admin-upload-bar-sub" style="color:${error ? '#f87171' : done ? '#34d399' : ''}">${esc(status)}</div></div></div>
     <div class="admin-upload-bar-right"><div class="admin-upload-bar-track"><div class="admin-upload-bar-fill" style="width:${percent}%;"></div></div><span class="admin-upload-bar-pct">${percent}%</span>
       ${done || error ? '<button class="admin-upload-bar-close" title="Cerrar">×</button>' : ''}</div></div>`;

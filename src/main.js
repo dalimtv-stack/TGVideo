@@ -710,11 +710,12 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       favoriteTitles.push(t);
     }
   }
-  const collectionTitles = titles.filter(t => t.isSaga || t.metadata?.tipo === 'collection');
-  const movieTitles = titles.filter(t => t.tipo === 'pelicula' && !t.isSaga && t.metadata?.tipo !== 'collection');
-  const seriesTitles = titles.filter(t => t.tipo === 'serie');
-  const sportTitles = titles.filter(t => t.tipo === 'deporte');
-  const musicTitles = titles.filter(t => t.tipo === 'musica');
+  const externalTitles = titles.filter(t => isExternalTitle(t));
+  const collectionTitles = titles.filter(t => (t.isSaga || t.metadata?.tipo === 'collection') && !isExternalTitle(t));
+  const movieTitles = titles.filter(t => t.tipo === 'pelicula' && !t.isSaga && t.metadata?.tipo !== 'collection' && !isExternalTitle(t));
+  const seriesTitles = titles.filter(t => t.tipo === 'serie' && !isExternalTitle(t));
+  const sportTitles = titles.filter(t => t.tipo === 'deporte' && !isExternalTitle(t));
+  const musicTitles = titles.filter(t => t.tipo === 'musica' && !isExternalTitle(t));
 
   const sectionDefs = [
     ...(titles.length ? [{ id: 'inicio', label: 'Inicio', items: titles }] : []),
@@ -724,6 +725,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     ...(sportTitles.length ? [{ id: 'deportes', label: 'Deportes', items: sportTitles }] : []),
     ...(musicTitles.length ? [{ id: 'musica', label: 'Música', items: musicTitles }] : []),
     ...(collectionTitles.length ? [{ id: 'colecciones', label: 'Colecciones', items: collectionTitles }] : []),
+    ...(externalTitles.length ? [{ id: 'externos', label: 'Externos', items: externalTitles }] : []),
   ];
   const isSearch = selectedSection === 'buscar' && titles.length > 0;
   if (!isSearch && !sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
@@ -768,9 +770,10 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         const currentSort = getSectionSort(profile.id, selectedSection);
         const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
         const sortedItems = sortTitles(activeSection?.items || [], currentSort, currentOrder);
+        const initialChunk = isCarousel ? sortedItems : sortedItems.slice(0, 80);
         return `
       <section class="category-view ${isCarousel ? 'category-view--carousel' : 'category-view--grid'}" aria-label="${esc(activeSection?.label || '')}">
-        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`}
+        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${initialChunk.map(t => cardHtml(t, progress)).join('')}</div>`}
       </section>`;
       })()
     : rows.map(r => `
@@ -964,6 +967,41 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       if (t) libraryViews.showDetail(tg, sync, profile, t);
     };
   });
+
+  // Carga progresiva en cuadrícula de sección (evita bloquear la interfaz en colecciones de miles de títulos)
+  if (!isCarousel && isCategorySection && activeSection?.items) {
+    const currentSort = getSectionSort(profile.id, selectedSection);
+    const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
+    const fullSorted = sortTitles(activeSection.items || [], currentSort, currentOrder);
+    const gridEl = document.querySelector('.category-grid');
+    if (gridEl && fullSorted.length > 80) {
+      let loadedCards = 80;
+      const onCategoryScroll = () => {
+        if (!gridEl.isConnected || loadedCards >= fullSorted.length) {
+          window.removeEventListener('scroll', onCategoryScroll);
+          return;
+        }
+        if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 800) {
+          const nextBatch = fullSorted.slice(loadedCards, loadedCards + 60);
+          loadedCards += nextBatch.length;
+          const range = document.createRange();
+          const frag = range.createContextualFragment(nextBatch.map(t => cardHtml(t, progress)).join(''));
+          frag.querySelectorAll('.lib-card[data-title]').forEach(card => {
+            card.onclick = () => {
+              const t = titles.find(x => String(x.id) === String(card.dataset.title));
+              if (t) libraryViews.showDetail(tg, sync, profile, t);
+            };
+          });
+          frag.querySelectorAll('.lib-card-poster img.poster-image').forEach(img => {
+            const url = img.getAttribute('data-poster-url') || img.src;
+            if (url) loadPoster(img, url);
+          });
+          gridEl.appendChild(frag);
+        }
+      };
+      window.addEventListener('scroll', onCategoryScroll, { passive: true });
+    }
+  }
   document.querySelectorAll('#app .row').forEach(rowEl => {
     const rowId = rowEl.dataset.rowId;
     rowEl.querySelectorAll('.lib-card[data-title]').forEach((card, idx) => {
