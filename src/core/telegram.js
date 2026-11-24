@@ -168,11 +168,23 @@ export function createTelegramClient({
     /** Devuelve el cliente (después de await ready()) */
     getClient: () => client,
 
-    /** Helper para InputPeerChannel */
-    peerOf: (ch) => new Api.InputPeerChannel({
-      channelId: bigInt(ch.id),
-      accessHash: bigInt(ch.hash),
-    }),
+    /** Helper para InputPeerChannel o InputPeerChat (compatible con canales externos, temas y grupos) */
+    peerOf: (ch) => {
+      if (!ch) return null;
+      const rawId = String(ch.tgChannelId || ch.channelId || ch.id || "").split("_top_")[0].trim();
+      const cleanId = rawId.replace(/^-100/, "").replace(/^-/, "");
+      const hash = ch.accessHash || ch.hash;
+      const isBasicGroup = ch.className === "Chat" || (ch.isGroup && (!hash || String(hash) === "0"));
+      if (isBasicGroup) {
+        return new Api.InputPeerChat({
+          chatId: bigInt(rawId.replace(/^-/, "")),
+        });
+      }
+      return new Api.InputPeerChannel({
+        channelId: bigInt(cleanId || "0"),
+        accessHash: bigInt(hash || "0"),
+      });
+    },
 
     /** Asegura reconexión si se pierde la conexión */
     ensureConnected: () => ensureConnected(client),

@@ -38,6 +38,7 @@ import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { showAdminView } from './ui/adminView.js';
+import { buildTitlesForExternalChannel } from './ui/adminChannels.js';
 import { resolveTitleAgeRating } from './ui/ageRating.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
@@ -294,6 +295,35 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const saved = savedObj?.cache || {};
   const savedMeta = savedObj?.metadataMap || {};
   const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
+
+  // Reintegrar canales externos persistidos en external_sources_v1
+  const extSources = (await kv.get('external_sources_v1').catch(() => [])) || [];
+  const combinedCache = { ...saved, ...cache };
+
+  for (const ext of extSources) {
+    const extId = String(ext.id);
+    const cachedFiles = combinedCache[extId];
+    if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
+      combinedCache[extId] = cachedFiles;
+      const channelRecord = savedObj?.channels?.find(c => String(c.id) === extId) || {
+        id: extId,
+        name: ext.groupName || ext.title,
+        group: ext.groupName || ext.title,
+        category: ext.category || 'Películas',
+        title: ext.title,
+        isExternal: true,
+        isTopic: Boolean(ext.isTopic),
+        topicId: ext.topicId || null,
+        channelId: ext.channelId || extId.split('_top_')[0],
+        tgChannelId: ext.channelId || extId.split('_top_')[0],
+        hash: ext.hash || ext.accessHash || '0',
+        accessHash: ext.hash || ext.accessHash || '0',
+      };
+      const extTitles = buildTitlesForExternalChannel(channelRecord, cachedFiles);
+      titles.push(...extTitles);
+    }
+  }
+
   if (savedMeta) {
     for (const t of titles) {
       if (savedMeta[t.id]) t.metadata = savedMeta[t.id];
@@ -322,7 +352,18 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
       }
     }
   }
-  await kv.set(LIB_KEY, { cache, channels, sig, metadataMap, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
+
+  // Conservar canales tgstorage y canales externos guardados
+  const allChannels = [...channels];
+  for (const ext of extSources) {
+    const extId = String(ext.id);
+    const existingRec = savedObj?.channels?.find(c => String(c.id) === extId);
+    if (existingRec && !allChannels.some(c => String(c.id) === extId)) {
+      allChannels.push(existingRec);
+    }
+  }
+
+  await kv.set(LIB_KEY, { cache: combinedCache, channels: allChannels, sig, metadataMap, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
   return { titles, sig };
 }
 

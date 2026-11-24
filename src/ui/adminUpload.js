@@ -288,7 +288,7 @@ function startBackgroundUpload({
   uploadBar.innerHTML = `
     <div class="admin-upload-bar-inner">
       <div class="admin-upload-bar-left">
-        <span class="admin-upload-bar-icon spin" id="upload-bar-icon">⟳</span>
+        <span class="admin-upload-bar-icon spin" id="upload-bar-icon">🔄</span>
         <div class="admin-upload-bar-text">
           <div class="admin-upload-bar-title">Subiendo: <strong>${esc(finalFilename)}</strong> a <em>${esc(targetTitle)}</em></div>
           <div class="admin-upload-bar-sub" id="upload-bar-status">Iniciando subida en segundo plano… (0%)</div>

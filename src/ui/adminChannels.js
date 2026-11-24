@@ -2,7 +2,7 @@
 // Módulo para escanear, integrar y desvincular canales, grupos y temas externos en la biblioteca.
 import { Api } from 'telegram';
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
-import { extractTitleAndYear } from '../metadata/tmdb.js';
+import { extractTitleAndYear, enrichTitles } from '../metadata/tmdb.js';
 import { seriesNameFromFile } from '../library/titles.js';
 
 const LIB_KEY = 'library_v2';
@@ -14,6 +14,114 @@ function esc(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * Función modular y reutilizable para construir los títulos de la biblioteca
+ * a partir de un registro de canal externo y su lista de archivos de vídeo detectados.
+ */
+export function buildTitlesForExternalChannel(channelRecord, detectedFiles) {
+  const generatedTitles = [];
+  const virtualId = String(channelRecord.id);
+  const category = channelRecord.category || 'Películas';
+  const groupName = channelRecord.group || channelRecord.name || channelRecord.title || 'Externo';
+
+  if (category === 'Películas') {
+    const movieMap = new Map();
+    for (const f of detectedFiles) {
+      const targetFileName = f.captionFileName || f.fileName || f.label;
+      const parsed = extractTitleAndYear(targetFileName);
+      const baseName = parsed.title || f.label;
+      const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${parsed.year || ''}`;
+
+      if (!movieMap.has(key)) {
+        movieMap.set(key, {
+          id: `${virtualId}:${f.messageId}`,
+          nombre: baseName,
+          yearHint: parsed.year || null,
+          files: [f],
+          tmdbId: f.tmdbId || null,
+          imdbId: f.imdbId || null,
+        });
+      } else {
+        const grp = movieMap.get(key);
+        grp.files.push(f);
+        if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+      }
+    }
+
+    for (const grp of movieMap.values()) {
+      grp.files.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
+      generatedTitles.push({
+        id: String(grp.id),
+        tipo: 'pelicula',
+        isSaga: false,
+        grupo: groupName,
+        nombre: grp.nombre,
+        yearHint: grp.yearHint,
+        origen: { tipo: 'externo', channelId: String(virtualId), messageId: grp.files[0].messageId },
+        channel: channelRecord,
+        archivos: grp.files,
+        ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
+        tmdbId: grp.tmdbId,
+        imdbId: grp.imdbId,
+      });
+    }
+  } else if (category === 'Series') {
+    const seriesMap = new Map();
+    for (const f of detectedFiles) {
+      const sName = seriesNameFromFile(f.captionFileName || f.fileName) || groupName;
+      const key = sName.toLowerCase().trim();
+      if (!seriesMap.has(key)) {
+        seriesMap.set(key, {
+          id: `${virtualId}#${sName}`,
+          nombre: sName,
+          files: [f],
+          tmdbId: f.tmdbId || null,
+          imdbId: f.imdbId || null,
+        });
+      } else {
+        const grp = seriesMap.get(key);
+        grp.files.push(f);
+        if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+      }
+    }
+
+    for (const grp of seriesMap.values()) {
+      grp.files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
+      generatedTitles.push({
+        id: String(grp.id),
+        tipo: 'serie',
+        isSaga: false,
+        grupo: groupName,
+        nombre: grp.nombre,
+        origen: { tipo: 'externo', channelId: String(virtualId) },
+        channel: channelRecord,
+        archivos: grp.files,
+        ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
+        tmdbId: grp.tmdbId,
+        imdbId: grp.imdbId,
+      });
+    }
+  } else {
+    const tipo = category === 'Deportes' ? 'deporte' : 'musica';
+    const sortedFiles = [...detectedFiles].sort((a, b) => (b.date || 0) - (a.date || 0));
+    generatedTitles.push({
+      id: String(virtualId),
+      tipo,
+      isSaga: false,
+      grupo: groupName,
+      nombre: groupName,
+      origen: { tipo: 'externo', channelId: String(virtualId) },
+      channel: channelRecord,
+      archivos: sortedFiles,
+      ultimoMensajeFecha: sortedFiles.reduce((m, f) => Math.max(m, f.date || 0), 0),
+      tmdbId: sortedFiles.find(f => f.tmdbId)?.tmdbId || null,
+      imdbId: sortedFiles.find(f => f.imdbId)?.imdbId || null,
+    });
+  }
+
+  return generatedTitles;
 }
 
 export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg }) {
@@ -419,6 +527,7 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     const channelId = String(dialog.id);
     const virtualId = isTopic ? `${channelId}_top_${topic.id}` : channelId;
     const peer = dialog.entity;
+    const channelHash = String(dialog.entity?.accessHash || dialog.entity?.hash || '0');
     const detectedFiles = [];
 
     statusEl.textContent = 'Analizando mensajes del chat…';
@@ -446,10 +555,17 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
           messageId: msg.id,
           channel: {
             id: virtualId,
+            channelId,
+            tgChannelId: channelId,
+            hash: channelHash,
+            accessHash: channelHash,
             name: groupName,
             group: groupName,
             category,
             title: targetLabel,
+            isExternal: true,
+            isTopic,
+            topicId: topic?.id || null,
           },
           fileName,
           captionFileName,
@@ -511,6 +627,10 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
       isExternal: true,
       isTopic,
       topicId: topic?.id || null,
+      channelId,
+      tgChannelId: channelId,
+      hash: channelHash,
+      accessHash: channelHash,
     };
 
     const savedObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
@@ -531,121 +651,87 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
       title: targetLabel,
       groupName,
       category,
+      hash: channelHash,
+      accessHash: channelHash,
       filesCount: detectedFiles.length,
       savedAt: Date.now()
     });
     await kv.set(EXT_KEY, updatedExt).catch(() => {});
 
-    // Construcción modular de títulos para la biblioteca
-    const generatedTitles = [];
-
-    if (category === 'Películas') {
-      const movieMap = new Map();
-      for (const f of detectedFiles) {
-        const targetFileName = f.captionFileName || f.fileName || f.label;
-        const parsed = extractTitleAndYear(targetFileName);
-        const baseName = parsed.title || f.label;
-        const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${parsed.year || ''}`;
-
-        if (!movieMap.has(key)) {
-          movieMap.set(key, {
-            id: `${virtualId}:${f.messageId}`,
-            nombre: baseName,
-            yearHint: parsed.year || null,
-            files: [f],
-            tmdbId: f.tmdbId || null,
-            imdbId: f.imdbId || null,
-          });
-        } else {
-          const grp = movieMap.get(key);
-          grp.files.push(f);
-          if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
-        }
-      }
-
-      for (const grp of movieMap.values()) {
-        grp.files.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
-        generatedTitles.push({
-          id: String(grp.id),
-          tipo: 'pelicula',
-          isSaga: false,
-          grupo: groupName,
-          nombre: grp.nombre,
-          yearHint: grp.yearHint,
-          origen: { tipo: 'externo', channelId: String(virtualId), messageId: grp.files[0].messageId },
-          channel: channelRecord,
-          archivos: grp.files,
-          ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date), 0),
-          tmdbId: grp.tmdbId,
-          imdbId: grp.imdbId,
-        });
-      }
-    } else if (category === 'Series') {
-      const seriesMap = new Map();
-      for (const f of detectedFiles) {
-        const sName = seriesNameFromFile(f.captionFileName || f.fileName) || groupName;
-        const key = sName.toLowerCase().trim();
-        if (!seriesMap.has(key)) {
-          seriesMap.set(key, {
-            id: `${virtualId}#${sName}`,
-            nombre: sName,
-            files: [f],
-            tmdbId: f.tmdbId || null,
-            imdbId: f.imdbId || null,
-          });
-        } else {
-          const grp = seriesMap.get(key);
-          grp.files.push(f);
-          if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
-        }
-      }
-
-      for (const grp of seriesMap.values()) {
-        grp.files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
-        generatedTitles.push({
-          id: String(grp.id),
-          tipo: 'serie',
-          isSaga: false,
-          grupo: groupName,
-          nombre: grp.nombre,
-          origen: { tipo: 'externo', channelId: String(virtualId) },
-          channel: channelRecord,
-          archivos: grp.files,
-          ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date), 0),
-          tmdbId: grp.tmdbId,
-          imdbId: grp.imdbId,
-        });
-      }
-    } else {
-      const tipo = category === 'Deportes' ? 'deporte' : 'musica';
-      detectedFiles.sort((a, b) => (b.date || 0) - (a.date || 0));
-      generatedTitles.push({
-        id: String(virtualId),
-        tipo,
-        isSaga: false,
-        grupo: groupName,
-        nombre: groupName,
-        origen: { tipo: 'externo', channelId: String(virtualId) },
-        channel: channelRecord,
-        archivos: detectedFiles,
-        ultimoMensajeFecha: detectedFiles.reduce((m, f) => Math.max(m, f.date), 0),
-        tmdbId: detectedFiles.find(f => f.tmdbId)?.tmdbId || null,
-        imdbId: detectedFiles.find(f => f.imdbId)?.imdbId || null,
-      });
-    }
+    // Construcción de títulos modular
+    const generatedTitles = buildTitlesForExternalChannel(channelRecord, detectedFiles);
 
     const kept = titles.filter(t => String(t.channel?.id) !== String(virtualId));
     titles.length = 0;
     titles.push(...kept, ...generatedTitles);
 
     fillEl.style.width = '100%';
-    if (addedEl) addedEl.innerHTML = `Añadiendo: <strong>${detectedFiles.length} / ${detectedFiles.length}</strong>`;
-    statusEl.textContent = `✓ ¡Listo! Se han añadido ${detectedFiles.length} vídeos (${generatedTitles.length} títulos) a la biblioteca.`;
-    cancelBtn.textContent = 'Finalizar';
+    if (addedEl) addedEl.innerHTML = `Vídeos: <strong>${detectedFiles.length} / ${detectedFiles.length}</strong>`;
+    statusEl.textContent = `✓ Se han detectado ${detectedFiles.length} vídeos (${generatedTitles.length} títulos). Pulsa para buscar metadatos en TMDB y finalizar.`;
+
+    cancelBtn.textContent = 'Identificar y Finalizar';
     cancelBtn.className = 'btn-primary';
-    cancelBtn.onclick = () => {
-      progressOverlay.remove();
-      onSuccess?.(virtualId);
+    cancelBtn.disabled = false;
+
+    cancelBtn.onclick = async () => {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = 'Identificando en TMDB…';
+      fillEl.style.width = '0%';
+      if (addedEl) addedEl.innerHTML = `Identificados: <strong>0 / ${generatedTitles.length}</strong>`;
+      statusEl.textContent = `Identificando títulos con TMDB (0/${generatedTitles.length})…`;
+
+      const idController = new AbortController();
+      let tmdbDone = 0;
+      try {
+        await enrichTitles(generatedTitles, {
+          signal: idController.signal,
+          onProgress: (d, total) => {
+            tmdbDone = d;
+            const pct = Math.round((d / Math.max(1, total)) * 100);
+            fillEl.style.width = `${pct}%`;
+            if (addedEl) addedEl.innerHTML = `Identificados: <strong>${d} / ${total}</strong>`;
+            statusEl.textContent = `Identificando títulos con TMDB (${d}/${total})…`;
+          },
+        });
+
+        // Persistir metadatos en LIB_KEY
+        const curSaved = (await kv.get(LIB_KEY).catch(() => null)) || {};
+        curSaved.metadataMap = curSaved.metadataMap || {};
+        for (const t of generatedTitles) {
+          if (t.metadata) {
+            curSaved.metadataMap[t.id] = {
+              id: t.metadata.id,
+              name: t.metadata.name,
+              poster: t.metadata.poster,
+              background: t.metadata.background,
+              logo: t.metadata.logo,
+              overview: t.metadata.overview,
+              tipo: t.metadata.tipo,
+              year: t.metadata.year,
+              ageRating: t.metadata.ageRating,
+              genres: t.metadata.genres,
+              voteAverage: t.metadata.voteAverage,
+            };
+          }
+          if (Array.isArray(t.archivos)) {
+            for (const f of t.archivos) {
+              if (f.metadata) {
+                const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+                curSaved.metadataMap[fKey] = f.metadata;
+              }
+            }
+          }
+        }
+        await kv.set(LIB_KEY, curSaved).catch(() => {});
+        statusEl.textContent = `✓ ¡Identificación completada! Se identificaron ${tmdbDone} títulos con TMDB.`;
+        fillEl.style.width = '100%';
+        await new Promise(r => setTimeout(r, 600));
+      } catch (tmdbErr) {
+        console.warn('[admin] Error durante enriquecimiento TMDB', tmdbErr);
+      } finally {
+        progressOverlay.remove();
+        onSuccess?.(virtualId);
+      }
     };
   } catch (err) {
     console.error('Error durante el escaneo', err);

@@ -563,10 +563,22 @@ export async function playNative({
     if (loading) loading.style.display = 'flex';
     if (status) status.textContent = 'Conectando con Telegram…';
     const targetChannel = file?.channel || title?.channel;
-    if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
+    const realChannelId = targetChannel?.tgChannelId || targetChannel?.channelId || String(targetChannel?.id || "").split("_top_")[0];
+    if (!realChannelId) throw new Error('Canal no encontrado para este archivo.');
     if (status) status.textContent = 'Localizando archivo…';
     await ensureConnected(client, { forceResetSenders: true });
-    const peer = await peerOf(targetChannel);
+    let peer = null;
+    try {
+      peer = await peerOf(targetChannel);
+    } catch (_) {}
+    if (!peer || (!peer.accessHash && !peer.chatId && !peer.channelId)) {
+      try {
+        peer = await client.getInputEntity(realChannelId);
+      } catch (entityErr) {
+        console.warn("[player] Error resolviendo peer con getInputEntity", entityErr);
+        if (peerOf) peer = await peerOf(targetChannel);
+      }
+    }
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');
@@ -1204,10 +1216,22 @@ export async function playArtplayer({
     if (loading) loading.style.display = 'flex';
     if (status) status.textContent = 'Conectando con Telegram…';
     const targetChannel = file?.channel || title?.channel;
-    if (!targetChannel?.id || !targetChannel?.hash) throw new Error('Canal no encontrado para este archivo.');
+    const realChannelId = targetChannel?.tgChannelId || targetChannel?.channelId || String(targetChannel?.id || "").split("_top_")[0];
+    if (!realChannelId) throw new Error('Canal no encontrado para este archivo.');
     if (status) status.textContent = 'Localizando archivo…';
     await ensureConnected(client, { forceResetSenders: true });
-    const peer = await peerOf(targetChannel);
+    let peer = null;
+    try {
+      peer = await peerOf(targetChannel);
+    } catch (_) {}
+    if (!peer || (!peer.accessHash && !peer.chatId && !peer.channelId)) {
+      try {
+        peer = await client.getInputEntity(realChannelId);
+      } catch (entityErr) {
+        console.warn("[player] Error resolviendo peer con getInputEntity", entityErr);
+        if (peerOf) peer = await peerOf(targetChannel);
+      }
+    }
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
     if (cancelled) return;
     if (!msg?.media?.document) throw new Error('Vídeo no encontrado en el canal.');

@@ -338,26 +338,66 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
       channelsBtn.disabled = true; channelsBtn.textContent = 'Cargando…';
       resultsArea.innerHTML = '<p style="color:#38bdf8;">Organizando canales y vídeos identificados…</p>';
       try {
-        let allTitles = Array.isArray(titles) ? titles : [];
+        let allTitles = Array.isArray(titles) ? [...titles] : [];
+        const saved = await kv.get(LIB_KEY).catch(() => null);
+        const extSaved = (await kv.get('external_sources_v1').catch(() => [])) || [];
+        const extIds = new Set(extSaved.map(x => String(x.id)));
+
         if (!allTitles.length) {
-          const saved = await kv.get(LIB_KEY).catch(() => null);
-          allTitles = Object.values(saved?.cache || {}).flatMap(files => Array.isArray(files) ? files.map(f => ({ nombre: f.label || f.fileName, origen: { channelId: f.channelId }, channel: f.channel, archivos: [f] })) : []);
+          allTitles = Object.entries(saved?.cache || {}).flatMap(([cId, files]) =>
+            Array.isArray(files) ? files.map(f => ({
+              nombre: f.label || f.fileName,
+              origen: { channelId: f.channelId || cId },
+              channel: f.channel || { id: cId, title: f.title || cId },
+              archivos: [f]
+            })) : []
+          );
         }
+
         const channels = new Map();
         for (const title of allTitles) {
           const channel = title.channel || {};
           const channelId = String(title.origen?.channelId || channel.id || '');
           if (!channelId) continue;
-          if (!channels.has(channelId)) channels.set(channelId, { id: channelId, name: channel.title || channel.name || channel.group || `Canal ${channelId}`, files: new Map() });
+          const isExt = extIds.has(channelId) || Boolean(channel.isExternal);
+          if (!channels.has(channelId)) {
+            channels.set(channelId, {
+              id: channelId,
+              name: channel.title || channel.name || channel.group || `Canal ${channelId}`,
+              isExternal: isExt,
+              files: new Map(),
+            });
+          }
           const entry = channels.get(channelId);
+          if (isExt) entry.isExternal = true;
           for (const file of title.archivos || []) {
             const messageId = String(file.messageId || file.id || file.fileName || '');
-            if (!entry.files.has(messageId)) entry.files.set(messageId, { shownName: file.label || file.displayName || title.nombre || file.fileName || 'Sin nombre', filename: file.fileName || '', title: title.nombre || '', category: channel.category || '' });
+            if (!entry.files.has(messageId)) {
+              entry.files.set(messageId, {
+                shownName: file.label || file.displayName || title.nombre || file.fileName || 'Sin nombre',
+                filename: file.fileName || '',
+                title: title.nombre || '',
+                category: channel.category || ''
+              });
+            }
           }
         }
-        const sorted = [...channels.values()].filter(c => c.files.size).sort((a,b) => a.name.localeCompare(b.name, 'es'));
-        if (!sorted.length) { resultsArea.innerHTML = '<p style="color:#aaa;">No hay canales con vídeos identificados en la biblioteca actual.</p>'; return; }
-        resultsArea.innerHTML = `<p style="color:#aaa;margin-bottom:1rem">${sorted.length} canales activos con vídeos detectados.</p><div class="admin-accordion-list">${sorted.map((channel,i) => `<div class="admin-accordion-item"><div class="admin-accordion-header library-channel-header" data-index="${i}"><div style="display:flex;align-items:center;gap:.75rem"><strong>${esc(channel.name)}</strong><span>${channel.files.size} vídeos</span>${channel.files.values().next().value?.category ? `<small>${esc(channel.files.values().next().value.category)}</small>` : ''}</div><span>▼</span></div><div class="admin-accordion-content" id="library-channel-${i}" style="display:none;flex-direction:column">${[...channel.files.values()].sort((a,b) => a.shownName.localeCompare(b.shownName, 'es')).map(file => `<div class="admin-video-row" style="align-items:flex-start"><div style="display:flex;flex-direction:column;gap:.2rem"><strong>${esc(file.shownName)}</strong>${file.filename && file.filename !== file.shownName ? `<small style="color:#888">Archivo: ${esc(file.filename)}</small>` : ''}</div>${file.title ? `<span style="color:#aaa">${esc(file.title)}</span>` : ''}</div>`).join('')}</div></div>`).join('')}</div>`;
+
+        // Ordenar: canales externos añadidos VAN DE PRIMEROS, y dentro de cada grupo alfabético
+        const sorted = [...channels.values()]
+          .filter(c => c.files.size)
+          .sort((a, b) => {
+            if (a.isExternal && !b.isExternal) return -1;
+            if (!a.isExternal && b.isExternal) return 1;
+            return a.name.localeCompare(b.name, 'es');
+          });
+
+        if (!sorted.length) {
+          resultsArea.innerHTML = '<p style="color:#aaa;">No hay canales con vídeos identificados en la biblioteca actual.</p>';
+          return;
+        }
+
+        resultsArea.innerHTML = `<p style="color:#aaa;margin-bottom:1rem">${sorted.length} canales activos con vídeos detectados (canales externos al principio).</p><div class="admin-accordion-list">${sorted.map((channel,i) => `<div class="admin-accordion-item"><div class="admin-accordion-header library-channel-header" data-index="${i}"><div style="display:flex;align-items:center;gap:.75rem"><strong>${esc(channel.name)}</strong>${channel.isExternal ? '<span class="admin-badge admin-badge-channel" style="background:#0284c7;color:#fff;border-color:#38bdf8;">Externo</span>' : ''}<span>${channel.files.size} vídeos</span>${channel.files.values().next().value?.category ? `<small>${esc(channel.files.values().next().value.category)}</small>` : ''}</div><span>▼</span></div><div class="admin-accordion-content" id="library-channel-${i}" style="display:none;flex-direction:column">${[...channel.files.values()].sort((a,b) => a.shownName.localeCompare(b.shownName, 'es')).map(file => `<div class="admin-video-row" style="align-items:flex-start"><div style="display:flex;flex-direction:column;gap:.2rem"><strong>${esc(file.shownName)}</strong>${file.filename && file.filename !== file.shownName ? `<small style="color:#888">Archivo: ${esc(file.filename)}</small>` : ''}</div>${file.title ? `<span style="color:#aaa">${esc(file.title)}</span>` : ''}</div>`).join('')}</div></div>`).join('')}</div>`;
         resultsArea.querySelectorAll('.library-channel-header').forEach(header => header.addEventListener('click', () => { const list = document.getElementById(`library-channel-${header.dataset.index}`); list.style.display = list.style.display === 'none' ? 'flex' : 'none'; }));
       } catch (err) { console.error(err); resultsArea.innerHTML = `<p style="color:#f87171">Error al generar el listado: ${esc(err.message || err)}</p>`; }
       finally { channelsBtn.disabled = false; channelsBtn.textContent = 'Listar canales y videos'; }

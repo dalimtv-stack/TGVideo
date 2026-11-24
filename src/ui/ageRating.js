@@ -15,14 +15,29 @@ export function getAgeRatingInfo(raw) {
   if (!raw && raw !== 0) return null;
   const str = String(raw).trim();
   if (!str) return null;
-  const upper = str.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+  const upper = str.toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\u2011/g, "-")
+    .replace(/\s+/g, " ");
 
   // 1. Adulto / X
   if (/^X\b/i.test(upper) || upper === 'X' || upper.includes('PELICULA X') || upper.includes('+18X') || upper.includes('ADULT')) {
     return { label: 'X', color: '#ff3333', className: 'age-rating--x' };
   }
 
+  // K-16, R-16, R‑16 pasan a 16 (se evalúan antes de la regla R de 18)
+  if (/\b(?:K|R)[-‑]?16\b/i.test(upper)) {
+    return { label: '16', color: '#f97316', className: 'age-rating--16' };
+  }
+
+  // TV-PG mantiene la clasificación de 7 años; debe resolverse antes de la regla PG.
+  if (/\bTV-?PG\b/.test(upper)) {
+    return { label: '7', color: '#22c55e', className: 'age-rating--7' };
+  }
+
   // 2. 18 / R / NC-17 / TV-MA
+  // R pasa a 18 (K-16 y R-16 ya clasificados arriba)
   if (
     upper.includes('18') ||
     /\b(R|NC-?17|TV-?MA|R18)\b/.test(upper) ||
@@ -31,37 +46,44 @@ export function getAgeRatingInfo(raw) {
     return { label: '18', color: '#ff3333', className: 'age-rating--18' };
   }
 
-  // 3. 16 / 15 (BBFC)
+  // 3. 16 / 15 / 15+ / M (Mature)
+  // 15, 15+, M, K-16, R-16 pasan a 16
   if (
     upper.includes('16') ||
-    upper.includes('15') ||
-    upper.includes('MAYORES DE 16')
+    /\b15\+?\b/.test(upper) ||
+    upper.includes('MAYORES DE 16') ||
+    (/\bM\b/.test(upper) && !upper.includes('MAYORES') && !upper.includes('MIN'))
   ) {
     return { label: '16', color: '#f97316', className: 'age-rating--16' };
   }
 
-  // 4. 12 / 13 / 14 / PG-13 / TV-14 / 12A
+  // 4. 12 / 12A / 14 / PG / PG-13 / 13 / TV-14
+  // 12A, 14, PG, PG-13 pasan a 12
   if (
     upper.includes('12') ||
+    /\b12A\b/.test(upper) ||
+    /\b14\b/.test(upper) ||
     upper.includes('13') ||
-    upper.includes('14') ||
-    /\b(PG-?13|TV-?14|12A)\b/.test(upper) ||
+    /\b(PG|PG-?13|TV-?14)\b/.test(upper) ||
     upper.includes('MAYORES DE 12')
   ) {
     return { label: '12', color: '#eab308', className: 'age-rating--12' };
   }
 
-  // 5. 7 / 6 / PG / TV-PG / TV-Y7
+  // 5. 7 / 7i / 6 / TV-PG / TV-Y7
+  // 7i pasa a 7
   if (
     upper.includes('7') ||
+    /\b7I\b/.test(upper) ||
     upper.includes('6') ||
-    /\b(PG|TV-?PG|TV-?Y7)\b/.test(upper) ||
+    /\b(TV-?PG|TV-?Y7)\b/.test(upper) ||
     upper.includes('MENORES DE 7')
   ) {
     return { label: '7', color: '#22c55e', className: 'age-rating--7' };
   }
 
-  // 6. APTA / TP / Todos los públicos / Infantil / G / TV-G / TV-Y / U / 0
+  // 6. APTA / A / Ai / TP / Todos los públicos / Infantil / G / TV-G / TV-Y / U / 0
+  // A y Ai pasan a APTA
   if (
     upper.includes('APTA') ||
     upper.includes('TP') ||
@@ -69,7 +91,7 @@ export function getAgeRatingInfo(raw) {
     upper.includes('INFANTIL') ||
     upper.includes('INFANCIA') ||
     upper.includes('FSK 0') ||
-    /\b(A|G|U|TV-?G|TV-?Y|0)\b/.test(upper)
+    /\b(A|AI|G|U|TV-?G|TV-?Y|0)\b/.test(upper)
   ) {
     return { label: 'APTA', color: '#0284c7', className: 'age-rating--apta' };
   }
@@ -121,9 +143,9 @@ export function resolveTitleAgeRating(t) {
         detectedRaw = raw;
       } else {
         const candidate = `${f.sagaName || ''} ${f.fileName || ''} ${f.label || ''}`;
-        const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X|NR)\]/i)
-          || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR)\)/i)
-          || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR)\b/i);
+        const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X|NR|12A|7I|14|15\+?|AI?|K[-‑]?16|R[-‑]?16|PG(?:-?13)?|M|R)\]/i)
+          || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR|12A|7I|14|15\+?|AI?|K[-‑]?16|R[-‑]?16|PG(?:-?13)?|M|R)\)/i)
+          || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR|12A|7I|14|15\+?|K[-‑]?16|R[-‑]?16|PG(?:-?13)?)\b/i);
         if (m) { info = getAgeRatingInfo(m[1]); detectedRaw = m[1]; }
       }
       if (info) {
@@ -145,9 +167,9 @@ export function resolveTitleAgeRating(t) {
 
   // Fallback: detectar en nombre del archivo o del título (ej: [18], (+16), 18+, etc.)
   const candidate = `${t.nombre || ''} ${t.archivos?.[0]?.fileName || t.archivos?.[0]?.name || ''}`;
-  const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X|NR)\]/i)
-    || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR)\)/i)
-    || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR)\b/i);
+  const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X|NR|12A|7I|14|15\+?|AI?|K[-‑]?16|R[-‑]?16|PG(?:-?13)?|M|R)\]/i)
+    || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR|12A|7I|14|15\+?|AI?|K[-‑]?16|R[-‑]?16|PG(?:-?13)?|M|R)\)/i)
+    || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR|12A|7I|14|15\+?|K[-‑]?16|R[-‑]?16|PG(?:-?13)?)\b/i);
   if (m) {
     const info = getAgeRatingInfo(m[1]);
     return info ? { ...info, raw: m[1] } : null;
