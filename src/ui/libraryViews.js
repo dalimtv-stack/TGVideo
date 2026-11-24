@@ -160,8 +160,9 @@ export function createLibraryViews(deps) {
         batch.map(t => cardHtml(t, progress)).join("")
       );
       frag.querySelectorAll(".lib-card[data-title]").forEach(card => {
+        const t = items.find(x => String(x.id) === String(card.dataset.title));
+        if (t) card._titleData = t;
         card.onclick = () => {
-          const t = items.find(x => String(x.id) === String(card.dataset.title));
           if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
         };
       });
@@ -265,7 +266,6 @@ export function createLibraryViews(deps) {
       }
     };
 
-    bindCards(initialItems);
     bindTools();
 
     setTimeout(() => {

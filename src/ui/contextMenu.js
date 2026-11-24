@@ -435,9 +435,21 @@ export function initContextMenu(config) {
           break;
         }
       }
+      if (!targetFile) {
+        const detailEl = document.querySelector('.detail');
+        const detailTitleId = detailEl?.dataset?.title;
+        const dt = allTitles.find(x => String(x.id) === String(detailTitleId));
+        if (dt) {
+          const found = dt.archivos?.find(f => f.key === key || String(f.messageId) === String(epEl.dataset.messageId));
+          if (found) {
+            targetFile = found;
+            titleName = dt.nombre;
+          }
+        }
+      }
     } else if (cardEl) {
       const titleId = cardEl.dataset.title;
-      const t = allTitles.find(x => String(x.id) === String(titleId));
+      const t = allTitles.find(x => String(x.id) === String(titleId)) || cardEl._titleData;
       if (t && t.archivos && t.archivos.length > 0) {
         // En tarjetas tomamos el primer archivo (o película principal)
         targetFile = t.archivos[0];

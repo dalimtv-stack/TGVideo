@@ -39,6 +39,7 @@ import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { showAdminView } from './ui/adminView.js';
+import { buildTitlesForExternalChannel } from './ui/adminChannels.js';
 import { renderExternalsView } from './ui/externalsView.js';
 import { resolveTitleAgeRating } from './ui/ageRating.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
@@ -311,9 +312,36 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const savedMeta = previousObj?.metadataMap || {};
   const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
 
-  // Conservar canales externos persistidos en external_sources_v1 sin escanearlos en el arranque
+  // Conservar canales externos persistidos en external_sources_v1 sin escanearlos en la red
   const extSources = (await kv.get('external_sources_v1').catch(() => [])) || [];
   const combinedCache = { ...(force ? (previousObj?.cache || {}) : saved), ...cache };
+
+  for (const ext of extSources) {
+    const extId = String(ext.id);
+    let cachedFiles = combinedCache[extId];
+    if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
+      cachedFiles = await kv.get("ext_files_" + extId).catch(() => null);
+    }
+    if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
+      combinedCache[extId] = cachedFiles;
+      const channelRecord = previousObj?.channels?.find(c => String(c.id) === extId) || {
+        id: extId,
+        name: ext.groupName || ext.title,
+        group: ext.groupName || ext.title,
+        category: ext.category || 'Películas',
+        title: ext.title,
+        isExternal: true,
+        isTopic: Boolean(ext.isTopic),
+        topicId: ext.topicId || null,
+        channelId: ext.channelId || extId.split('_top_')[0],
+        tgChannelId: ext.channelId || extId.split('_top_')[0],
+        hash: ext.hash || ext.accessHash || '0',
+        accessHash: ext.hash || ext.accessHash || '0',
+      };
+      const extTitles = buildTitlesForExternalChannel(channelRecord, cachedFiles);
+      titles.push(...extTitles);
+    }
+  }
 
   if (savedMeta) {
     for (const t of titles) {
@@ -557,9 +585,72 @@ function applyOverridesAndUnbundle(titles = []) {
   return unbundledTitles;
 }
 
-async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
-  // 1. Sincronizar perfil y overrides desde Telegram
-  showLoading('Sincronizando perfil…');
+let BG_LIBRARY_PROMISE = null;
+let BG_LIBRARY_DONE = false;
+let BG_LIBRARY_STATUS = '';
+let WAITING_USER_SCREEN = false;
+
+function updateBackgroundProgress(statusText) {
+  BG_LIBRARY_STATUS = statusText;
+  if (WAITING_USER_SCREEN) {
+    const p = document.querySelector('.screen.center p');
+    if (p) p.textContent = statusText;
+  }
+}
+
+function startBackgroundLibraryCheck(tg) {
+  if (BG_LIBRARY_PROMISE) return BG_LIBRARY_PROMISE;
+  BG_LIBRARY_DONE = false;
+  BG_LIBRARY_STATUS = 'Comprobando nuevos vídeos…';
+
+  BG_LIBRARY_PROMISE = (async () => {
+    try {
+      const onProgress = (d, n) => {
+        updateBackgroundProgress(`Buscando nuevos vídeos… ${d}/${n}`);
+      };
+
+      const refreshed = await refreshLibrary(tg, { force: false, onProgress });
+      let titles = refreshed.titles || [];
+
+      titles = applyOverridesAndUnbundle(titles);
+      titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+      TITLES_CACHE = titles;
+      CHECKED = true;
+
+      const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+      pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
+      if (pendingTitles.length > 0) {
+        updateBackgroundProgress(`Identificando vídeos con TMDB (0/${pendingTitles.length})…`);
+        metadataController?.abort();
+        metadataController = new AbortController();
+        await enrichTitles(pendingTitles, {
+          signal: metadataController.signal,
+          onProgress: (d, total) => {
+            updateBackgroundProgress(`Identificando vídeos con TMDB (${d}/${total})…`);
+          },
+        });
+        persistTitlesMetadata();
+        titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+        TITLES_CACHE = titles;
+      }
+
+      updateBackgroundProgress('Cargando carátulas…');
+      await prewarmPosterCache(titles);
+      BG_LIBRARY_STATUS = '';
+      BG_LIBRARY_DONE = true;
+      return TITLES_CACHE;
+    } catch (err) {
+      console.error('[bgLibrary] Error en segundo plano:', err);
+      BG_LIBRARY_DONE = true;
+      if (!TITLES_CACHE) TITLES_CACHE = [];
+      return TITLES_CACHE;
+    }
+  })();
+
+  return BG_LIBRARY_PROMISE;
+}
+
+async function syncProfileOnly(sync, profile) {
   try {
     if (sync) {
       await loadOverrides(sync).catch(e => console.warn('[overrides] sync error', e));
@@ -601,12 +692,18 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   } catch (err) {
     console.warn('[sync] Error sincronizando perfil', err);
   }
+}
 
-  // 2. Comprobar canales y buscar nuevos vídeos
+async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
+  showLoading('Sincronizando perfil…');
+  await syncProfileOnly(sync, profile);
+
+  BG_LIBRARY_PROMISE = null;
+  BG_LIBRARY_DONE = false;
+  WAITING_USER_SCREEN = true;
   showLoading('Comprobando nuevos vídeos…');
   const onProgress = (d, n) => {
-    const p = document.querySelector('.screen.center p');
-    if (p) p.textContent = `Buscando nuevos vídeos… ${d}/${n}`;
+    updateBackgroundProgress(`Buscando nuevos vídeos… ${d}/${n}`);
   };
 
   try {
@@ -618,12 +715,10 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   }
   CHECKED = true;
 
-  // 3. Aplicar overrides y separar versiones con identificación distinta
   let titles = applyOverridesAndUnbundle(TITLES_CACHE || []);
   titles = attachAutoCollections(mergeMoviesByTmdb(titles));
   TITLES_CACHE = titles;
 
-  // 4. Identificar vídeos pendientes en TMDB antes de mostrar la home
   const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
   if (pendingTitles.length > 0) {
@@ -633,8 +728,7 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
     await enrichTitles(pendingTitles, {
       signal: metadataController.signal,
       onProgress: (d, total) => {
-        const p = document.querySelector('.screen.center p');
-        if (p) p.textContent = `Identificando vídeos con TMDB (${d}/${total})…`;
+        showLoading(`Identificando vídeos con TMDB (${d}/${total})…`);
       },
     });
     persistTitlesMetadata();
@@ -642,10 +736,11 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
     TITLES_CACHE = titles;
   }
 
-  // 5. Aplicar preferencias de imagen del perfil y precalentar carátulas
   titles.forEach(t => applyImagePrefs(t, profile));
   showLoading('Cargando carátulas…');
   await prewarmPosterCache(titles);
+  WAITING_USER_SCREEN = false;
+  BG_LIBRARY_DONE = true;
 
   return TITLES_CACHE;
 }
@@ -1233,7 +1328,19 @@ async function showProfileSelector(tg, sync) {
         localStorage.setItem('tgvideo_last_profile_id', profile.id);
       }
       if (profile) {
-        await loadAndSyncAll(tg, sync, profile);
+        showLoading('Sincronizando perfil…');
+        await syncProfileOnly(sync, profile);
+
+        if (BG_LIBRARY_PROMISE && !BG_LIBRARY_DONE) {
+          if (BG_LIBRARY_STATUS) {
+            showLoading(BG_LIBRARY_STATUS);
+          }
+          WAITING_USER_SCREEN = true;
+          await BG_LIBRARY_PROMISE;
+          WAITING_USER_SCREEN = false;
+        }
+
+        (TITLES_CACHE || []).forEach(t => applyImagePrefs(t, profile));
 
         if (isDevLogEnabled()) {
           startDevLogging({
@@ -1326,6 +1433,10 @@ async function start() {
 
     await loadGlobalConfig(sync);
     await loadOverrides(sync).catch(e => console.warn('[overrides]', e));
+
+    // Arrancar comprobación de biblioteca en segundo plano mientras el usuario elige perfil
+    startBackgroundLibraryCheck(tg);
+
     await showProfileSelector(tg, sync);
 
   } catch (err) {
