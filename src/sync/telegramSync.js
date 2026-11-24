@@ -18,14 +18,14 @@ function nowTimestamp() {
 }
 
 function normalizeName(name) {
-  return (name || 'perfil')
+  if (!name || typeof name !== 'string') return '';
+  return name
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9_-]/g, '_')
     .slice(0, 32);
 }
-
 /**
  * Parsea nombres de archivo de sincronización soportando timestamps de 14 dígitos
  * tanto continuos (YYYYMMDDHHMMSS) como con guion bajo (YYYYMMDD_HHMMSS) e IDs con guiones.
@@ -151,6 +151,7 @@ export function createTelegramSync({ getClient, peerOf }) {
 
       const parsed = parseSyncFilename(filename);
       if (!parsed) continue;
+      if (parsed.profileId === 'perfil' || parsed.profileId === 'default') continue;
 
       files.push({
         ...parsed,
@@ -427,19 +428,18 @@ export function createTelegramSync({ getClient, peerOf }) {
         snapshot.profile = actualProfile;
       }
       const rawPid = snapshot.profile?.id || snapshot.profile?.name;
-      if (!rawPid || rawPid === 'perfil') {
-        console.warn('[sync] pushProfile ignorado: id de perfil no especificado o inválido');
+      const pid = normalizeName(rawPid);
+      if (!pid || pid === 'perfil' || pid === 'default') {
+        console.warn('[sync] pushProfile rechazado: id de perfil no especificado o inválido:', rawPid);
         return;
       }
-      const pid = rawPid;
       if (snapshot.profile) {
         if (!snapshot.profile.maxAgeRating && typeof localStorage !== 'undefined') {
           snapshot.profile.maxAgeRating = localStorage.getItem(`tgvideo_max_age_${pid}`) || 'all';
         }
       }
-      const profileId = normalizeName(pid);
+      const profileId = pid;
       const filename = `perfil_${profileId}_${nowTimestamp()}.json`;
-
       // Asegurar que favoritos e image_prefs queden incluidos de forma exhaustiva
       const localFavs = typeof loadFavorites === 'function' ? loadFavorites(pid) : [];
       const currentFavs = mergeFavorites(localFavs, snapshot.favorites || snapshot.profile?.favorites || []);

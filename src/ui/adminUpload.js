@@ -141,6 +141,7 @@ export async function renderUploadTab({ mainPanel, client, tg }) {
         loadedTgChannels = await loadLibrary(client);
       }
       if (loadedTgChannels && loadedTgChannels.length > 0) {
+        loadedTgChannels = loadedTgChannels.filter(ch => ch.category && ['Películas', 'Series', 'Deportes', 'Música'].includes(ch.category) && !ch.isExternal);
         chSelect.innerHTML = loadedTgChannels.map(ch => `
           <option value="${esc(ch.id)}">[${esc(ch.category)}] ${esc(ch.title || ch.name)}</option>
         `).join('');
@@ -317,7 +318,23 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
 
   (async () => {
     try {
-      const peer = tg?.peerOf ? tg.peerOf(targetChannel) : (targetChannel?.entity || targetChannelId);
+      let peer = null;
+      if (client?.getInputEntity) {
+        try {
+          peer = await client.getInputEntity(targetChannel?.entity || targetChannelId);
+        } catch (_) {
+          try {
+            const clean = String(targetChannelId).replace(/^-100/, '').replace(/^-/, '');
+            peer = await client.getInputEntity(`-100${clean}`);
+          } catch (_) {}
+        }
+      }
+      if (!peer && tg?.peerOf && targetChannel) {
+        peer = tg.peerOf(targetChannel);
+      }
+      if (!peer) {
+        peer = targetChannel?.entity || targetChannelId;
+      }
 
       const inputFile = await client.uploadFile({
         file,
@@ -327,47 +344,35 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
           const uploadedBytes = Math.round(progress * file.size);
           fillEl.style.width = `${pct}%`;
           pctEl.textContent = `${pct}%`;
-          statusEl.textContent = `Subiendo: ${formatBytes(uploadedBytes)} / ${formatBytes(file.size)} (${pct}%)`;
+          statusEl.textContent = `Subiendo partes: ${formatBytes(uploadedBytes)} / ${formatBytes(file.size)} (${pct}%)`;
         }
       });
 
-      statusEl.textContent = 'Enviando archivo y metadatos al canal…';
+      statusEl.textContent = 'Registrando mensaje y metadatos en Telegram…';
       fillEl.style.width = '100%';
       pctEl.textContent = '100%';
 
-      const sendParams = {
+      // Se envía directamente como documento con el nombre de archivo indicado.
+      // Esto evita que Telegram rechace la subida con 400 CHANNEL_INVALID por codecs de vídeo no estándar.
+      const sentMsg = await client.sendFile(peer, {
         file: inputFile,
         caption,
-        forceDocument: videoAsDocument,
+        forceDocument: true,
         attributes: [new Api.DocumentAttributeFilename({ fileName: finalFilename })],
-      };
+      });
 
-      // Telegram puede rechazar el envío como vídeo con CHANNEL_INVALID aunque la subida del archivo haya llegado al 100%.
-      // Si ocurre, repetir como documento sin atributos de vídeo para que Telegram lo trate como archivo.
-      let sentMsg;
-      try {
-        sentMsg = await client.sendFile(peer, {
-          ...sendParams,
-          forceDocument: false,
-          attributes: [
-            new Api.DocumentAttributeVideo({ duration: 0, w: 1920, h: 1080, supportsStreaming: true }),
-            new Api.DocumentAttributeFilename({ fileName: finalFilename }),
-          ],
-        });
-      } catch (videoSendError) {
-        console.warn('[adminUpload] Envío como vídeo falló; reintentando como archivo', videoSendError);
-        statusEl.textContent = 'Telegram rechazó el vídeo; reintentando como archivo…';
-        sentMsg = await client.sendFile(peer, {
-          ...sendParams,
-          forceDocument: true,
-          attributes: [new Api.DocumentAttributeFilename({ fileName: finalFilename })],
-        });
+      const messageId = sentMsg?.id ||
+        sentMsg?.updates?.find?.(u => u.message?.id)?.message?.id ||
+        sentMsg?.message?.id;
+
+      if (!messageId) {
+        throw new Error('Telegram no devolvió el identificador del mensaje; no se puede confirmar que el archivo se publicara en el canal');
       }
 
       const newFileEntry = {
-        key: `${targetChannelId}:${sentMsg.id}`,
+        key: `${targetChannelId}:${messageId}`,
         channelId: String(targetChannelId),
-        messageId: sentMsg.id,
+        messageId: messageId,
         channel: targetChannel || { id: targetChannelId, name: targetTitle, group: targetTitle, category: 'Películas' },
         fileName: finalFilename,
         captionFileName: finalFilename,
@@ -397,7 +402,7 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
       iconEl.classList.remove('spin');
       iconEl.textContent = '✓';
       iconEl.style.color = '#34d399';
-      statusEl.textContent = `✓ Subida completada con éxito en ${targetTitle}`;
+      statusEl.textContent = `✓ Subida completada con éxito en ${targetTitle} (Mensaje #${messageId || 'OK'})`;
       statusEl.style.color = '#34d399';
       closeBtn.style.display = 'block';
 

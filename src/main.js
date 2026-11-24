@@ -1,4 +1,5 @@
 import { checkForUpdate } from './core/updateCheck.js';
+import { initContextMenu } from './ui/contextMenu.js';
 // Suprimir alerts intrusivos de GramJS (ej. TypeNotFoundError ID 0)
 if (typeof window !== 'undefined') {
   const _origAlert = window.alert;
@@ -1173,9 +1174,12 @@ async function showProfileSelector(tg, sync) {
     const chosenAvatar = await pickAvatar({ name, current: null, title: 'Elige tu avatar', confirmLabel: 'Crear perfil' });
     if (chosenAvatar === null) return showProfileSelector(tg, sync);
 
-    const profileId = name
+    const cleanId = name
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'perfil';
+      .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const profileId = cleanId && cleanId !== 'perfil' && cleanId !== 'default'
+      ? cleanId
+      : `usr_${Date.now().toString(36)}`;
 
     const newProfile = {
       v: 1,
@@ -1236,6 +1240,7 @@ async function start() {
 
     window.tg = tg;
     window.sync = sync;
+    initContextMenu({ tg, getTitles: () => TITLES_CACHE });
 
     await loadGlobalConfig(sync);
     await loadOverrides(sync).catch(e => console.warn('[overrides]', e));

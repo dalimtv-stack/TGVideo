@@ -131,15 +131,34 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
         <h2>Añadir canales/grupos/temas Externos</h2>
         <p>Explora tus canales y grupos de Telegram (incluyendo temas individuales en foros) para incorporarlos a la base de datos de la biblioteca o desvincularlos.</p>
       </div>
-      <button class="btn-primary" data-focusable id="btn-load-ext-channels">Cargar canales/grupos disponibles</button>
+      <div style="display:flex;gap:0.6rem;flex-wrap:wrap;">
+        <button class="btn-secondary" data-focusable id="btn-view-ext-videos">📁 Vista total canales externos</button>
+        <button class="btn-primary" data-focusable id="btn-load-ext-channels">Cargar canales/grupos disponibles</button>
+      </div>
     </div>
+    <div id="admin-ext-total-view" style="display:none;margin-bottom:1.5rem;"></div>
     <div id="admin-channels-result">
       <p style="color:#aaa;">Pulsa el botón superior para listar los canales, grupos y temas en los que participas.</p>
     </div>
   `;
 
   const loadBtn = document.getElementById('btn-load-ext-channels');
+  const viewExtBtn = document.getElementById('btn-view-ext-videos');
+  const totalViewContainer = document.getElementById('admin-ext-total-view');
   const resultContainer = document.getElementById('admin-channels-result');
+
+  let extViewVisible = false;
+  viewExtBtn?.addEventListener('click', () => {
+    extViewVisible = !extViewVisible;
+    if (extViewVisible) {
+      totalViewContainer.style.display = 'block';
+      viewExtBtn.textContent = '📁 Ocultar vista total';
+      renderExternalVideosTotalView(totalViewContainer, { kv, titles, tg });
+    } else {
+      totalViewContainer.style.display = 'none';
+      viewExtBtn.textContent = '📁 Vista total canales externos';
+    }
+  });
 
   loadBtn?.addEventListener('click', async () => {
     if (!client) {
@@ -739,5 +758,191 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     cancelBtn.textContent = 'Cerrar';
     cancelBtn.disabled = false;
     cancelBtn.onclick = () => progressOverlay.remove();
+  }
+}
+
+
+async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
+  container.innerHTML = `<div style="padding:1rem;color:#38bdf8;">Cargando archivos de canales externos…</div>`;
+  try {
+    const extSaved = (await kv.get(EXT_KEY).catch(() => [])) || [];
+    if (!extSaved.length) {
+      container.innerHTML = `
+        <div style="background:#181c24;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:1.2rem;text-align:center;color:#aaa;">
+          No hay canales externos añadidos todavía. Usa el botón "Cargar canales/grupos disponibles" para añadir alguno.
+        </div>
+      `;
+      return;
+    }
+
+    const savedLib = (await kv.get(LIB_KEY).catch(() => null)) || {};
+    const cache = savedLib.cache || {};
+    const extIds = new Set(extSaved.map(x => String(x.id)));
+
+    // Recoger archivos de canales externos desde memoria y desde caché
+    const filesMap = new Map();
+
+    // 1. Desde titles en memoria
+    for (const t of (titles || [])) {
+      const chId = String(t.channel?.id || t.origen?.channelId || '');
+      if (extIds.has(chId) || t.channel?.isExternal) {
+        const extMatch = extSaved.find(x => String(x.id) === chId);
+        const chName = extMatch?.name || t.channel?.title || t.channel?.name || chId;
+        for (const f of (t.archivos || [])) {
+          const key = f.key || `${chId}:${f.messageId}`;
+          if (!filesMap.has(key)) {
+            const hasTmdb = Boolean(f.tmdbId || t.tmdbId || t.metadata?.id || f.metadata?.id);
+            filesMap.set(key, {
+              key,
+              chId,
+              chName,
+              messageId: f.messageId,
+              fileName: f.captionFileName || f.fileName || f.label || `video_${f.messageId}`,
+              shownName: f.label || t.nombre || f.fileName,
+              date: f.date || 0,
+              size: f.size || 0,
+              tmdbId: f.tmdbId || t.tmdbId || t.metadata?.id || null,
+              tmdbTitle: t.metadata?.name || f.metadata?.name || null,
+              hasTmdb,
+              fileRef: f,
+              titleRef: t,
+            });
+          }
+        }
+      }
+    }
+
+    // 2. Desde caché guardada
+    for (const ext of extSaved) {
+      const chId = String(ext.id);
+      const chFiles = cache[chId] || [];
+      const chName = ext.name || ext.title || ext.group || chId;
+      for (const f of chFiles) {
+        const key = f.key || `${chId}:${f.messageId}`;
+        if (!filesMap.has(key)) {
+          const hasTmdb = Boolean(f.tmdbId || f.metadata?.id);
+          filesMap.set(key, {
+            key,
+            chId,
+            chName,
+            messageId: f.messageId,
+            fileName: f.captionFileName || f.fileName || f.label || `video_${f.messageId}`,
+            shownName: f.label || f.fileName,
+            date: f.date || 0,
+            size: f.size || 0,
+            tmdbId: f.tmdbId || null,
+            tmdbTitle: f.metadata?.name || null,
+            hasTmdb,
+            fileRef: f,
+            titleRef: null,
+          });
+        }
+      }
+    }
+
+    const allFiles = [...filesMap.values()];
+
+    let currentSort = 'date_desc';
+    let onlyUnidentified = false;
+
+    function renderList() {
+      let filtered = [...allFiles];
+      if (onlyUnidentified) {
+        filtered = filtered.filter(f => !f.hasTmdb);
+      }
+
+      if (currentSort === 'date_desc') {
+        filtered.sort((a, b) => (b.date || 0) - (a.date || 0));
+      } else if (currentSort === 'date_asc') {
+        filtered.sort((a, b) => (a.date || 0) - (b.date || 0));
+      } else if (currentSort === 'name_asc') {
+        filtered.sort((a, b) => a.shownName.localeCompare(b.shownName, 'es'));
+      }
+
+      const listEl = container.querySelector('#admin-ext-list-items');
+      const countEl = container.querySelector('#admin-ext-count-text');
+      if (countEl) {
+        countEl.textContent = `Mostrando ${filtered.length} de ${allFiles.length} vídeos (${extSaved.length} canales externos)`;
+      }
+
+      if (!listEl) return;
+
+      if (!filtered.length) {
+        listEl.innerHTML = `<div style="padding:1.5rem;text-align:center;color:#aaa;">No hay vídeos que coincidan con el filtro actual.</div>`;
+        return;
+      }
+
+      listEl.innerHTML = filtered.map(item => {
+        const dateStr = item.date ? new Date(item.date * 1000).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Sin fecha';
+        const sizeStr = formatBytes(item.size);
+        return `
+          <div class="admin-video-row" style="display:flex;align-items:center;justify-content:space-between;padding:0.7rem 0.9rem;border-bottom:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.015);gap:1rem;">
+            <div style="display:flex;flex-direction:column;gap:0.25rem;overflow:hidden;flex:1;">
+              <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                <strong style="color:#fff;font-size:0.92rem;">${esc(item.shownName)}</strong>
+                <span class="admin-badge admin-badge-channel" style="background:#0284c7;color:#fff;border-color:#38bdf8;font-size:0.75rem;">${esc(item.chName)}</span>
+              </div>
+              <div style="font-size:0.8rem;color:#888;display:flex;gap:0.8rem;flex-wrap:wrap;">
+                <span>📄 Archivo: ${esc(item.fileName)}</span>
+                <span>📅 Subida: ${esc(dateStr)}</span>
+                <span>💾 ${esc(sizeStr)}</span>
+              </div>
+            </div>
+            <div style="flex:0 0 auto;text-align:right;">
+              ${item.hasTmdb ? `
+                <span style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(52,211,153,0.15);color:#34d399;border:1px solid rgba(52,211,153,0.3);padding:0.25rem 0.6rem;border-radius:6px;font-size:0.8rem;">
+                  ✓ TMDB: ${esc(item.tmdbTitle || item.tmdbId)}
+                </span>
+              ` : `
+                <span style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);padding:0.25rem 0.6rem;border-radius:6px;font-size:0.8rem;">
+                  ⚠️ No identificada
+                </span>
+              `}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    container.innerHTML = `
+      <div style="background:#181c24;border:1px solid rgba(255,255,255,0.14);border-radius:8px;padding:1rem;margin-bottom:1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.8rem;">
+          <div>
+            <h3 style="margin:0 0 0.3rem;color:#fff;font-size:1.05rem;">📁 Vista total de canales externos añadidos</h3>
+            <span id="admin-ext-count-text" style="color:#94a3b8;font-size:0.85rem;"></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:0.4rem;">
+              <label style="color:#aaa;font-size:0.85rem;">Ordenar por:</label>
+              <select class="admin-select" id="admin-ext-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
+                <option value="date_desc">📅 Fecha de subida (más recientes)</option>
+                <option value="date_asc">📅 Fecha de subida (más antiguos)</option>
+                <option value="name_asc">🔤 Nombre (A - Z)</option>
+              </select>
+            </div>
+            <label style="display:inline-flex;align-items:center;gap:0.4rem;color:#e2e8f0;font-size:0.85rem;cursor:pointer;">
+              <input type="checkbox" id="admin-ext-filter-unidentified" style="cursor:pointer;" />
+              Solo no identificadas
+            </label>
+          </div>
+        </div>
+        <div id="admin-ext-list-items" style="max-height:480px;overflow-y:auto;border-top:1px solid rgba(255,255,255,0.1);"></div>
+      </div>
+    `;
+
+    container.querySelector('#admin-ext-sort-select')?.addEventListener('change', (e) => {
+      currentSort = e.target.value;
+      renderList();
+    });
+
+    container.querySelector('#admin-ext-filter-unidentified')?.addEventListener('change', (e) => {
+      onlyUnidentified = Boolean(e.target.checked);
+      renderList();
+    });
+
+    renderList();
+  } catch (err) {
+    console.error('Error en vista total de canales externos', err);
+    container.innerHTML = `<div style="color:#f87171;padding:1rem;">Error cargando vista externa: ${esc(err.message || String(err))}</div>`;
   }
 }

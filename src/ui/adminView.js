@@ -377,7 +377,10 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
                 shownName: file.label || file.displayName || title.nombre || file.fileName || 'Sin nombre',
                 filename: file.fileName || '',
                 title: title.nombre || '',
-                category: channel.category || ''
+                category: channel.category || '',
+                date: file.date || 0,
+                hasTmdb: Boolean(file.tmdbId || title.tmdbId || title.metadata?.id || file.metadata?.id),
+                tmdbTitle: title.metadata?.name || file.metadata?.name || null,
               });
             }
           }
@@ -397,8 +400,98 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
           return;
         }
 
-        resultsArea.innerHTML = `<p style="color:#aaa;margin-bottom:1rem">${sorted.length} canales activos con vídeos detectados (canales externos al principio).</p><div class="admin-accordion-list">${sorted.map((channel,i) => `<div class="admin-accordion-item"><div class="admin-accordion-header library-channel-header" data-index="${i}"><div style="display:flex;align-items:center;gap:.75rem"><strong>${esc(channel.name)}</strong>${channel.isExternal ? '<span class="admin-badge admin-badge-channel" style="background:#0284c7;color:#fff;border-color:#38bdf8;">Externo</span>' : ''}<span>${channel.files.size} vídeos</span>${channel.files.values().next().value?.category ? `<small>${esc(channel.files.values().next().value.category)}</small>` : ''}</div><span>▼</span></div><div class="admin-accordion-content" id="library-channel-${i}" style="display:none;flex-direction:column">${[...channel.files.values()].sort((a,b) => a.shownName.localeCompare(b.shownName, 'es')).map(file => `<div class="admin-video-row" style="align-items:flex-start"><div style="display:flex;flex-direction:column;gap:.2rem"><strong>${esc(file.shownName)}</strong>${file.filename && file.filename !== file.shownName ? `<small style="color:#888">Archivo: ${esc(file.filename)}</small>` : ''}</div>${file.title ? `<span style="color:#aaa">${esc(file.title)}</span>` : ''}</div>`).join('')}</div></div>`).join('')}</div>`;
-        resultsArea.querySelectorAll('.library-channel-header').forEach(header => header.addEventListener('click', () => { const list = document.getElementById(`library-channel-${header.dataset.index}`); list.style.display = list.style.display === 'none' ? 'flex' : 'none'; }));
+        let listSort = 'name';
+        let listFilterUnidentified = false;
+
+        function renderChannelsList() {
+          const channelList = sorted.map(ch => {
+            let files = [...ch.files.values()];
+            if (listFilterUnidentified) {
+              files = files.filter(f => !f.hasTmdb);
+            }
+            if (listSort === 'date_desc') {
+              files.sort((a, b) => (b.date || 0) - (a.date || 0));
+            } else if (listSort === 'date_asc') {
+              files.sort((a, b) => (a.date || 0) - (b.date || 0));
+            } else {
+              files.sort((a, b) => a.shownName.localeCompare(b.shownName, 'es'));
+            }
+            return { ...ch, visibleFiles: files };
+          }).filter(ch => ch.visibleFiles.length > 0);
+
+          const totalVideos = channelList.reduce((acc, c) => acc + c.visibleFiles.length, 0);
+
+          resultsArea.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.8rem;">
+              <p style="color:#aaa;margin:0">${channelList.length} canales activos con ${totalVideos} vídeos (canales externos primero).</p>
+              <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:0.4rem;">
+                  <label style="color:#aaa;font-size:0.85rem;">Ordenar vídeos:</label>
+                  <select class="admin-select" id="admin-list-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
+                    <option value="name" ${listSort === 'name' ? 'selected' : ''}>🔤 Nombre (A-Z)</option>
+                    <option value="date_desc" ${listSort === 'date_desc' ? 'selected' : ''}>📅 Fecha de subida (recientes)</option>
+                    <option value="date_asc" ${listSort === 'date_asc' ? 'selected' : ''}>📅 Fecha de subida (antiguos)</option>
+                  </select>
+                </div>
+                <label style="display:inline-flex;align-items:center;gap:0.4rem;color:#e2e8f0;font-size:0.85rem;cursor:pointer;">
+                  <input type="checkbox" id="admin-list-unidentified-check" ${listFilterUnidentified ? 'checked' : ''} style="cursor:pointer;" />
+                  Solo no identificadas
+                </label>
+              </div>
+            </div>
+            <div class="admin-accordion-list">
+              ${channelList.map((channel, i) => `
+                <div class="admin-accordion-item">
+                  <div class="admin-accordion-header library-channel-header" data-index="${i}">
+                    <div style="display:flex;align-items:center;gap:.75rem">
+                      <strong>${esc(channel.name)}</strong>
+                      ${channel.isExternal ? '<span class="admin-badge admin-badge-channel" style="background:#0284c7;color:#fff;border-color:#38bdf8;">Externo</span>' : ''}
+                      <span>${channel.visibleFiles.length} vídeos</span>
+                      ${channel.visibleFiles[0]?.category ? `<small>${esc(channel.visibleFiles[0].category)}</small>` : ''}
+                    </div>
+                    <span>▼</span>
+                  </div>
+                  <div class="admin-accordion-content" id="library-channel-${i}" style="display:none;flex-direction:column">
+                    ${channel.visibleFiles.map(file => {
+                      const dateStr = file.date ? new Date(file.date * 1000).toLocaleDateString('es-ES') : '';
+                      return `
+                        <div class="admin-video-row" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;">
+                          <div style="display:flex;flex-direction:column;gap:.2rem;overflow:hidden;">
+                            <strong>${esc(file.shownName)}</strong>
+                            <div style="font-size:0.8rem;color:#888;display:flex;gap:0.6rem;flex-wrap:wrap;">
+                              ${file.filename && file.filename !== file.shownName ? `<span>Archivo: ${esc(file.filename)}</span>` : ''}
+                              ${dateStr ? `<span>📅 Subida: ${esc(dateStr)}</span>` : ''}
+                            </div>
+                          </div>
+                          <div>
+                            ${file.hasTmdb ? `<span style="font-size:0.8rem;color:#34d399;background:rgba(52,211,153,0.15);padding:0.2rem 0.5rem;border-radius:4px;border:1px solid rgba(52,211,153,0.3);">✓ ${esc(file.tmdbTitle || 'TMDB')}</span>` : `<span style="font-size:0.8rem;color:#f87171;background:rgba(239,68,68,0.15);padding:0.2rem 0.5rem;border-radius:4px;border:1px solid rgba(239,68,68,0.3);">⚠️ No identificada</span>`}
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+
+          resultsArea.querySelector('#admin-list-sort-select')?.addEventListener('change', (e) => {
+            listSort = e.target.value;
+            renderChannelsList();
+          });
+          resultsArea.querySelector('#admin-list-unidentified-check')?.addEventListener('change', (e) => {
+            listFilterUnidentified = Boolean(e.target.checked);
+            renderChannelsList();
+          });
+          resultsArea.querySelectorAll('.library-channel-header').forEach(header => {
+            header.addEventListener('click', () => {
+              const list = document.getElementById(`library-channel-${header.dataset.index}`);
+              if (list) list.style.display = list.style.display === 'none' ? 'flex' : 'none';
+            });
+          });
+        }
+
+        renderChannelsList();
       } catch (err) { console.error(err); resultsArea.innerHTML = `<p style="color:#f87171">Error al generar el listado: ${esc(err.message || err)}</p>`; }
       finally { channelsBtn.disabled = false; channelsBtn.textContent = 'Listar canales y videos'; }
     });
