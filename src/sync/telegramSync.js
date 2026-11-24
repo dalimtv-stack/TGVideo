@@ -294,6 +294,10 @@ export function createTelegramSync({ getClient, peerOf }) {
         const data = JSON.parse(text);
 
         const pId = data.profile?.id || f.profileId;
+        // Filtrar y omitir perfiles fantasma huérfanos con ID o nombre 'perfil'
+        if ((pId === 'perfil' || f.profileId === 'perfil') && (!data.profile || !data.profile.name || data.profile.name === 'perfil')) {
+          continue;
+        }
         const storedMaxAge = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_max_age_${pId}`) : null;
         profiles.push({
           id: pId,
@@ -323,6 +327,7 @@ export function createTelegramSync({ getClient, peerOf }) {
           messageId: f.messageId,
         });
       } catch (err) {
+        if (f.profileId === 'perfil') continue;
         console.warn('[sync] No se pudo leer perfil', f.filename, err);
         const storedFallbackMaxAge = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_max_age_${f.profileId}`) : null;
         profiles.push({
@@ -417,7 +422,16 @@ export function createTelegramSync({ getClient, peerOf }) {
       const ch = await findOrCreateSyncChannel();
       const peer = peerOf(ch);
 
-      const pid = snapshot.profile?.id || snapshot.profile?.name || 'perfil';
+      const actualProfile = snapshot.profile || (snapshot.name ? snapshot : null);
+      if (!snapshot.profile && actualProfile) {
+        snapshot.profile = actualProfile;
+      }
+      const rawPid = snapshot.profile?.id || snapshot.profile?.name;
+      if (!rawPid || rawPid === 'perfil') {
+        console.warn('[sync] pushProfile ignorado: id de perfil no especificado o inválido');
+        return;
+      }
+      const pid = rawPid;
       if (snapshot.profile) {
         if (!snapshot.profile.maxAgeRating && typeof localStorage !== 'undefined') {
           snapshot.profile.maxAgeRating = localStorage.getItem(`tgvideo_max_age_${pid}`) || 'all';

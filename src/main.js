@@ -624,9 +624,10 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
 
   let titles = TITLES_CACHE || [];
   titles = applyOverridesAndUnbundle(titles);
-  titles = attachAutoCollections(mergeMoviesByTmdb(titles));
-  TITLES_CACHE = titles;
   titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
+  titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+  titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
+  TITLES_CACHE = titles;
   titles.forEach(t => applyImagePrefs(t, profile));
 
   // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms

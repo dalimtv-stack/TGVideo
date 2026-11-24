@@ -1,6 +1,16 @@
 // src/ui/ageRating.js
 // Normalización y renderizado del distintivo de edad recomendada con colores para TV y Web.
 
+const AGE_SEVERITY = {
+  'X': 100,
+  '18': 18,
+  '16': 16,
+  '12': 12,
+  '7': 7,
+  'APTA': 0,
+  'NR': -1,
+};
+
 export function getAgeRatingInfo(raw) {
   if (!raw && raw !== 0) return null;
   const str = String(raw).trim();
@@ -81,11 +91,56 @@ export function getAgeRatingInfo(raw) {
 
 export function resolveTitleAgeRating(t) {
   if (!t) return null;
+
+  // Si es una saga o colección: evaluar todos sus archivos y películas para tomar la calificación más restrictiva
+  const isCollectionOrSaga = t.isSaga || t.isVirtualSaga || t.metadata?.tipo === 'collection' || (Array.isArray(t.archivos) && t.archivos.length > 1 && t.tipo === 'pelicula');
+  if (isCollectionOrSaga) {
+    let maxRatingInfo = null;
+    let maxSeverity = -2;
+
+    const explicitRaw = t.metadata?.ageRating || t.ageRating;
+    if (explicitRaw) {
+      const explicitInfo = getAgeRatingInfo(explicitRaw);
+      if (explicitInfo) {
+        const sev = AGE_SEVERITY[explicitInfo.label] ?? 0;
+        if (sev > maxSeverity) {
+          maxSeverity = sev;
+          maxRatingInfo = explicitInfo;
+        }
+      }
+    }
+
+    const files = Array.isArray(t.archivos) ? t.archivos : [];
+    for (const f of files) {
+      const raw = f.ageRating || f.metadata?.ageRating;
+      let info = null;
+      if (raw) {
+        info = getAgeRatingInfo(raw);
+      } else {
+        const candidate = `${f.sagaName || ''} ${f.fileName || ''} ${f.label || ''}`;
+        const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X|NR)\]/i)
+          || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR)\)/i)
+          || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR)\b/i);
+        if (m) info = getAgeRatingInfo(m[1]);
+      }
+      if (info) {
+        const sev = AGE_SEVERITY[info.label] ?? 0;
+        if (sev > maxSeverity) {
+          maxSeverity = sev;
+          maxRatingInfo = info;
+        }
+      }
+    }
+
+    if (maxRatingInfo) return maxRatingInfo;
+  }
+
+  // Título individual estándar
   const raw = t.metadata?.ageRating || t.ageRating || t.archivos?.[0]?.ageRating;
   if (raw) return getAgeRatingInfo(raw);
 
   // Fallback: detectar en nombre del archivo o del título (ej: [18], (+16), 18+, etc.)
-  const candidate = `${t.nombre || ''} ${t.archivos?.[0]?.name || ''}`;
+  const candidate = `${t.nombre || ''} ${t.archivos?.[0]?.fileName || t.archivos?.[0]?.name || ''}`;
   const m = candidate.match(/\[(?:\+)?(18|16|12|7|APTA|X|NR)\]/i)
     || candidate.match(/\((?:\+)?(18|16|12|7|APTA|X|NR)\)/i)
     || candidate.match(/\b(?:\+|edad\s*:?\s*)?(18|16|12|7|NR)\b/i);
