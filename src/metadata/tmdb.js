@@ -14,8 +14,14 @@ export function extractTitleAndYear(name = "") {
   // 1. Quitar extensiones de vídeo
   str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, "").trim();
 
+  // 0. Eliminar prefijos numéricos iniciales tipo "15-", "1-", "01 -", respetando años como "2013 - ..." o "1984"
+  str = str.replace(/^\s*(?!(?:19\d{2}|20[0-3]\d)\s*[-_–—]\s*[a-zA-Z])\d{1,3}\s*[-_–—]\s*/, "");
+
+  // Reemplazar de entrada guiones bajos, "ª" y normalizar separadores
+  str = str.replace(/ª/g, " ");
+  str = str.replace(/[_]+/g, " ");
+
   // 2. Extraer año explícito entre paréntesis o corchetes: (1996), [2026], etc.
-  // Es la convención principal: las fechas van entre paréntesis habitualmente tras el título.
   let year = null;
   const parenMatches = [...str.matchAll(/[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/g)];
   if (parenMatches.length > 0) {
@@ -24,12 +30,8 @@ export function extractTitleAndYear(name = "") {
     str = str.slice(0, lastMatch.index) + " " + str.slice(lastMatch.index + lastMatch[0].length);
   }
 
-  // Eliminar carácter "ª" si está pegado a "[" o tras fecha/corchetes/paréntesis
-  str = str.replace(/([\)\]])\s*ª/g, "$1");
-  str = str.replace(/\s*ª\s*(?=\[|$)/g, " ");
-
-  // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis: [BlurayRip], [480p], [Dual], etc.
-  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
+  // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis
+  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|\\d{3,4}x\\d{3,4}|\\d{3,4}p?x26[45]|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
   const bracketQualityRe = new RegExp("\\[[^\\]]*" + qualityKw + "[^\\]]*\\]", "gi");
   const parenQualityRe = new RegExp("\\([^\\)]*" + qualityKw + "[^\\)]*\\)", "gi");
   str = str.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
@@ -42,8 +44,7 @@ export function extractTitleAndYear(name = "") {
   const bareQualityRe = new RegExp(`\\b${qualityKw}\\b.*`, "i");
   str = str.replace(bareQualityRe, " ");
 
-  // 6. Si aún no hay año entre paréntesis, buscar año suelto estrictamente al FINAL del texto
-  // (nunca al inicio ni en medio, para no romper títulos como "2013 - Rescate en L.A.", "Blade Runner 2049" o "1984")
+  // 6. Si aún no hay año entre paréntesis, buscar año suelto al FINAL del texto
   if (!year) {
     const trailingYearMatch = str.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
     if (trailingYearMatch) {
@@ -55,14 +56,23 @@ export function extractTitleAndYear(name = "") {
     }
   }
 
+  // 6b. Si aún no hay año, buscar si quedó un año (1900-2039) aislado dentro del texto
+  if (!year) {
+    const yearMatch = str.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
+    if (yearMatch && yearMatch.index > 0) {
+      const candidateTitle = str.slice(0, yearMatch.index).trim();
+      if (candidateTitle.length > 1) {
+        year = yearMatch[1];
+        str = candidateTitle;
+      }
+    }
+  }
+
   // 7. Limpiar corchetes o paréntesis residuales y espacios
   str = str.replace(/\[[^\]]*\]/g, " ").replace(/\([^)]*\)/g, " ").replace(/[\[\]\(\)]/g, " ");
 
   // 8. Normalizar separadores sin destruir puntos en siglas/abreviaturas como "L.A."
   str = str.replace(/([a-zA-Z0-9]{2,})\.([a-zA-Z0-9]{2,})/g, "$1 $2");
-  str = str.replace(/_/g, " ");
-  str = str.replace(/[\s\-_–—]+ª\s*$/g, "");
-  str = str.replace(/\s+ª\s+/g, " ");
   str = str.replace(/[-–—\s]+$/, "").replace(/^\s*[-–—]+/, "").replace(/\s+/g, " ").trim();
 
   return { title: str || name, year };

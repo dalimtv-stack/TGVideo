@@ -334,8 +334,145 @@
 .grid-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1.2rem;
   margin-bottom: 2rem;
+}
+
+.grid-header-info {
+  display: flex;
+  flex-direction: column;
+  margin-right: auto;
+}
+
+.grid-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.grid-sort-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.25rem 0.55rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  user-select: none;
+  max-width: 100%;
+}
+
+.grid-sort-label {
+  font-size: 0.76rem;
+  color: var(--theme-text-muted, #888);
+  margin: 0 0.2rem 0 0.3rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.grid-sort-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--theme-text-muted, #aaa);
+  padding: 0.28rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .grid-sort-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+  }
+}
+
+.grid-sort-btn:focus-visible,
+.grid-sort-btn.dpad-focused {
+  color: #fff !important;
+  border-color: #fff !important;
+  outline: 2px solid #fff !important;
+  outline-offset: 2px !important;
+  background: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.45) !important;
+}
+
+.grid-sort-btn.active {
+  color: #fff;
+  background: color-mix(in srgb, var(--theme-accent, #e50914) 80%, transparent);
+  border-color: var(--theme-accent, #e50914);
+}
+
+.grid-filter-unidentified-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--theme-text-muted, #aaa);
+  padding: 0.28rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.25rem;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .grid-filter-unidentified-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+  }
+}
+
+.grid-filter-unidentified-btn:focus-visible,
+.grid-filter-unidentified-btn.dpad-focused {
+  color: #fff !important;
+  border-color: #fff !important;
+  outline: 2px solid #fff !important;
+  outline-offset: 2px !important;
+  background: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.45) !important;
+}
+
+.grid-filter-unidentified-btn.active {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.18);
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.grid-filter-unidentified-btn .grid-filter-icon {
+  font-size: 0.88rem;
+  line-height: 1;
+}
+
+@media (max-width: 768px) {
+  .grid-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.8rem;
+  }
+  .grid-tools {
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.3rem;
+  }
 }
 
 .grid-header-info h1 {

@@ -28,7 +28,95 @@ export function createLibraryViews(deps) {
 
     const titles = getTitles() || [];
     const progress = loadProgress(profile.id);
-    const currentItems = (row.gridItems || row.items).map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+    const baseItems = (row.gridItems || row.items).map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+
+    const getGridSort = () => {
+      try { return localStorage.getItem(`tg_grid_sort_${profile.id}`) || 'subida'; }
+      catch (_) { return 'subida'; }
+    };
+    const setGridSort = (val) => {
+      try { localStorage.setItem(`tg_grid_sort_${profile.id}`, val); } catch (_) {}
+    };
+    const getGridSortDir = (currentSort = 'subida') => {
+      try {
+        const saved = localStorage.getItem(`tg_grid_sort_dir_${profile.id}`);
+        if (saved === 'asc' || saved === 'desc') return saved;
+      } catch (_) {}
+      return currentSort === 'nombre' ? 'asc' : 'desc';
+    };
+    const setGridSortDir = (val) => {
+      try { localStorage.setItem(`tg_grid_sort_dir_${profile.id}`, val); } catch (_) {}
+    };
+    const getGridFilterUnidentified = () => {
+      try { return localStorage.getItem(`tg_grid_unident_${profile.id}`) === 'true'; }
+      catch (_) { return false; }
+    };
+    const setGridFilterUnidentified = (val) => {
+      try { localStorage.setItem(`tg_grid_unident_${profile.id}`, val ? 'true' : 'false'); } catch (_) {}
+    };
+
+    let currentSort = getGridSort();
+    let currentDir = getGridSortDir(currentSort);
+    let onlyUnidentified = getGridFilterUnidentified();
+
+    const isIdentified = (t) => Boolean(t.metadata?.id || t.tmdbId);
+
+    const sortGridItems = (items, sortType, sortDir) => {
+      const list = [...items];
+      const mult = sortDir === 'asc' ? 1 : -1;
+      if (sortType === 'subida') {
+        return list.sort((a, b) => {
+          const msgA = a.ultimoMensajeFecha || 0;
+          const msgB = b.ultimoMensajeFecha || 0;
+          if (msgB !== msgA) return (msgA - msgB) * mult;
+          const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
+          const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+          return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+        });
+      }
+      if (sortType === 'nombre') {
+        return list.sort((a, b) => {
+          const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
+          const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+          return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' }) * mult;
+        });
+      }
+      if (sortType === 'estreno') {
+        return list.sort((a, b) => {
+          const dateA = a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '';
+          const dateB = b.metadata?.date || b.yearHint || b.metadata?.release_date || b.metadata?.first_air_date || '';
+          if (dateA && dateB && dateA !== dateB) return dateA.localeCompare(dateB) * mult;
+          if (dateA && !dateB) return -1 * mult;
+          if (!dateA && dateB) return 1 * mult;
+          const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
+          const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+          return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+        });
+      }
+      return list;
+    };
+
+    const getProcessedItems = () => {
+      let filtered = baseItems;
+      if (onlyUnidentified) {
+        filtered = filtered.filter(t => !isIdentified(t));
+      }
+      return sortGridItems(filtered, currentSort, currentDir);
+    };
+
+    const renderToolsHtml = () => `
+      <div class="grid-sort-bar" role="group" aria-label="Ordenar títulos">
+        <span class="grid-sort-label">Ordenar:</span>
+        <button type="button" class="grid-sort-btn ${currentSort === 'subida' ? 'active' : ''}" data-focusable data-sort="subida" aria-pressed="${currentSort === 'subida'}" title="Ordenar por fecha de subida (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Subida${currentSort === 'subida' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+        <button type="button" class="grid-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}" title="Ordenar por nombre (${currentDir === 'asc' ? 'A-Z' : 'Z-A'})">Nombre${currentSort === 'nombre' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+        <button type="button" class="grid-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}" title="Ordenar por fecha de estreno (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Estreno${currentSort === 'estreno' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+        <button type="button" class="grid-filter-unidentified-btn ${onlyUnidentified ? 'active' : ''}" data-focusable role="checkbox" aria-checked="${onlyUnidentified}" title="Mostrar solo títulos sin identificar en TMDB">
+          <span class="grid-filter-icon" aria-hidden="true">${onlyUnidentified ? '☑' : '☐'}</span>
+          <span class="grid-filter-text">No identificados</span>
+        </button>
+      </div>`;
+
+    const initialItems = getProcessedItems();
 
     showScreen(`
       <div class="screen grid-screen" data-grid-id="${esc(row.id)}">
@@ -36,27 +124,95 @@ export function createLibraryViews(deps) {
           <button class="btn-icon" data-focusable id="grid-btn-back" title="Volver al inicio" aria-label="Volver">←</button>
           <div class="grid-header-info">
             <h1>${esc(row.title)}</h1>
-            <span class="grid-count">${currentItems.length} ${currentItems.length === 1 ? "título" : "títulos"}</span>
+            <span class="grid-count">${initialItems.length} ${initialItems.length === 1 ? "título" : "títulos"}</span>
+          </div>
+          <div class="grid-tools" role="region" aria-label="Herramientas de ordenación de cuadrícula">
+            ${renderToolsHtml()}
           </div>
         </header>
         <main class="grid-cards">
-          ${currentItems.map(t => cardHtml(t, progress)).join("")}
+          ${initialItems.length > 0 ? initialItems.map(t => cardHtml(t, progress)).join("") : `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;"><p>No se encontraron vídeos ${onlyUnidentified ? "sin identificar " : ""}en este canal.</p></div>`}
         </main>
       </div>`);
 
     document.getElementById("grid-btn-back").onclick = back;
 
-    document.querySelectorAll("#app .grid-cards .lib-card").forEach(card => {
-      card.onclick = () => {
-        const t = currentItems.find(x => String(x.id) === String(card.dataset.title));
-        if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
-      };
-    });
+    const bindCards = (items) => {
+      document.querySelectorAll("#app .grid-cards .lib-card").forEach(card => {
+        card.onclick = () => {
+          const t = items.find(x => String(x.id) === String(card.dataset.title));
+          if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
+        };
+      });
 
-    document.querySelectorAll("#app .grid-cards .lib-card-poster img.poster-image").forEach(img => {
-      const url = img.getAttribute("data-poster-url") || img.src;
-      if (url) loadPoster(img, url);
-    });
+      document.querySelectorAll("#app .grid-cards .lib-card-poster img.poster-image").forEach(img => {
+        const url = img.getAttribute("data-poster-url") || img.src;
+        if (url) loadPoster(img, url);
+      });
+    };
+
+    const renderCards = (items) => {
+      const mainEl = document.querySelector(".grid-screen .grid-cards");
+      const countEl = document.querySelector(".grid-screen .grid-count");
+      if (countEl) {
+        countEl.textContent = `${items.length} ${items.length === 1 ? "título" : "títulos"}`;
+      }
+      if (mainEl) {
+        if (items.length > 0) {
+          mainEl.innerHTML = items.map(t => cardHtml(t, progress)).join("");
+        } else {
+          mainEl.innerHTML = `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;"><p>No se encontraron vídeos ${onlyUnidentified ? "sin identificar " : ""}en este canal.</p></div>`;
+        }
+        bindCards(items);
+      }
+    };
+
+    const bindTools = () => {
+      document.querySelectorAll("#app .grid-sort-btn").forEach(btn => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const sortType = btn.dataset.sort;
+          if (sortType === currentSort) {
+            currentDir = currentDir === "desc" ? "asc" : "desc";
+          } else {
+            currentSort = sortType;
+            currentDir = sortType === "nombre" ? "asc" : "desc";
+          }
+          setGridSort(currentSort);
+          setGridSortDir(currentDir);
+
+          const toolsEl = document.querySelector(".grid-tools");
+          if (toolsEl) {
+            toolsEl.innerHTML = renderToolsHtml();
+            bindTools();
+            const activeBtn = toolsEl.querySelector(`.grid-sort-btn[data-sort="${sortType}"]`);
+            activeBtn?.focus();
+          }
+          renderCards(getProcessedItems());
+        };
+      });
+
+      const filterBtn = document.querySelector("#app .grid-filter-unidentified-btn");
+      if (filterBtn) {
+        filterBtn.onclick = (e) => {
+          e.stopPropagation();
+          onlyUnidentified = !onlyUnidentified;
+          setGridFilterUnidentified(onlyUnidentified);
+
+          const toolsEl = document.querySelector(".grid-tools");
+          if (toolsEl) {
+            toolsEl.innerHTML = renderToolsHtml();
+            bindTools();
+            const newFilterBtn = toolsEl.querySelector(".grid-filter-unidentified-btn");
+            newFilterBtn?.focus();
+          }
+          renderCards(getProcessedItems());
+        };
+      }
+    };
+
+    bindCards(initialItems);
+    bindTools();
 
     setTimeout(() => {
       let el = null;
