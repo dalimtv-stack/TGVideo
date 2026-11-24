@@ -293,11 +293,14 @@ export function createTelegramSync({ getClient, peerOf }) {
         const text = new TextDecoder().decode(buffer);
         const data = JSON.parse(text);
 
+        const pId = data.profile?.id || f.profileId;
+        const storedMaxAge = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_max_age_${pId}`) : null;
         profiles.push({
-          id: data.profile?.id || f.profileId,
+          id: pId,
           name: data.profile?.name || f.profileId,
           avatar: data.profile?.avatar || null,
           age_limit: data.profile?.age_limit || 'TP',
+          maxAgeRating: data.profile?.maxAgeRating || storedMaxAge || 'all',
           pin: data.profile?.pin || null,
           is_kids: !!data.profile?.is_kids,
           player:
@@ -321,11 +324,13 @@ export function createTelegramSync({ getClient, peerOf }) {
         });
       } catch (err) {
         console.warn('[sync] No se pudo leer perfil', f.filename, err);
+        const storedFallbackMaxAge = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_max_age_${f.profileId}`) : null;
         profiles.push({
           id: f.profileId,
           name: f.profileId,
           avatar: null,
           age_limit: 'TP',
+          maxAgeRating: storedFallbackMaxAge || 'all',
           pin: null,
           is_kids: false,
           player:
@@ -413,6 +418,11 @@ export function createTelegramSync({ getClient, peerOf }) {
       const peer = peerOf(ch);
 
       const pid = snapshot.profile?.id || snapshot.profile?.name || 'perfil';
+      if (snapshot.profile) {
+        if (!snapshot.profile.maxAgeRating && typeof localStorage !== 'undefined') {
+          snapshot.profile.maxAgeRating = localStorage.getItem(`tgvideo_max_age_${pid}`) || 'all';
+        }
+      }
       const profileId = normalizeName(pid);
       const filename = `perfil_${profileId}_${nowTimestamp()}.json`;
 
