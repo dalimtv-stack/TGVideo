@@ -1,3 +1,5 @@
+import { identifyTitlesInBulk } from './adminChannels.js';
+import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
 import { groupTitles, unbundleTitles } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
@@ -134,6 +136,12 @@ export function createLibraryViews(deps) {
           <span class="grid-filter-icon" aria-hidden="true">${onlyUnidentified ? '☑' : '☐'}</span>
           <span class="grid-filter-text">No identificados</span>
         </button>
+        ${row.isExternal ? `
+          <button type="button" class="grid-filter-unidentified-btn" id="grid-btn-tools-identify" data-focusable title="Identificar vídeos de este canal con TMDB">
+            <span class="grid-filter-icon" aria-hidden="true">✨</span>
+            <span class="grid-filter-text">Identificar</span>
+          </button>
+        ` : ''}
       </div>`;
 
     const initialItems = getProcessedItems();
@@ -151,6 +159,7 @@ export function createLibraryViews(deps) {
           </div>
           ${row.isExternal ? `
             <button class="btn-icon" data-focusable id="grid-btn-reload" title="Actualizar canal" aria-label="Actualizar canal" style="font-size: 1.2rem; margin-right: 0.4rem;">↻</button>
+            <button class="btn-icon" data-focusable id="grid-btn-identify" title="Identificar vídeos sin metadatos en TMDB" aria-label="Identificar con TMDB" style="font-size: 1.1rem; margin-right: 0.4rem; color: #c084fc;">✨</button>
           ` : ''}
           <div class="grid-tools" role="region" aria-label="Herramientas de ordenación de cuadrícula">
             ${renderToolsHtml()}
@@ -300,6 +309,10 @@ export function createLibraryViews(deps) {
                   <div style="font-weight:700;font-size:1rem;color:#fff;">🔄 Forzar actualización completa</div>
                   <div style="font-size:0.82rem;color:#bbb;margin-top:0.2rem;">Reescanea todo el canal desde el principio.</div>
                 </button>
+                <button type="button" id="ext-opt-identify" class="btn btn-secondary" data-focusable style="text-align:left;padding:0.85rem 1rem;">
+                  <div style="font-weight:700;font-size:1rem;color:#c084fc;">✨ Identificar con TMDB en bloque</div>
+                  <div style="font-size:0.82rem;color:#bbb;margin-top:0.2rem;">Busca carátulas y datos para los vídeos sin identificar.</div>
+                </button>
               </div>
               <div style="text-align:right;margin-top:1.2rem;">
                 <button type="button" id="ext-opt-cancel" style="background:transparent;border:1px solid rgba(255,255,255,0.2);color:#ccc;border-radius:6px;padding:0.5rem 1rem;cursor:pointer;">Cancelar</button>
@@ -336,6 +349,42 @@ export function createLibraryViews(deps) {
               reloadBtn.style.animation = "";
             }
           };
+          reloadOverlay.querySelector("#ext-opt-identify")?.addEventListener('click', () => {
+            closeReloadModal();
+            runBulkIdentify();
+          });
+        };
+      }
+
+      const runBulkIdentify = async () => {
+        await identifyTitlesInBulk(baseItems, {
+          modalTitle: `Identificar: ${row.title || 'Canal externo'}`,
+          onComplete: (enriched) => {
+            const extChId = String(row.channel?.id ?? row.id ?? '').replace(/^ext-/, '');
+            if (extChId) {
+              EXT_CHANNEL_TITLES_CACHE.set(extChId, baseItems);
+            }
+            if (typeof persistMetadata === 'function') {
+              persistMetadata();
+            }
+            renderCards(getProcessedItems());
+          },
+        });
+      };
+
+      const topIdentifyBtn = document.getElementById("grid-btn-identify");
+      if (topIdentifyBtn) {
+        topIdentifyBtn.onclick = (e) => {
+          e.stopPropagation();
+          runBulkIdentify();
+        };
+      }
+
+      const toolIdentifyBtn = document.getElementById("grid-btn-tools-identify");
+      if (toolIdentifyBtn) {
+        toolIdentifyBtn.onclick = (e) => {
+          e.stopPropagation();
+          runBulkIdentify();
         };
       }
     };

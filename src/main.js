@@ -39,7 +39,6 @@ import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { showAdminView } from './ui/adminView.js';
-import { buildTitlesForExternalChannel } from './ui/adminChannels.js';
 import { renderExternalsView } from './ui/externalsView.js';
 import { resolveTitleAgeRating } from './ui/ageRating.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
@@ -312,36 +311,10 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const savedMeta = previousObj?.metadataMap || {};
   const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
 
-  // Conservar canales externos persistidos en external_sources_v1 sin escanearlos en la red
+  // Conservar canales externos persistidos en external_sources_v1 sin escanearlos en el arranque
+  // (los títulos de canales externos se cargan bajo demanda en su pestaña dedicada sin ralentizar el inicio)
   const extSources = (await kv.get('external_sources_v1').catch(() => [])) || [];
   const combinedCache = { ...(force ? (previousObj?.cache || {}) : saved), ...cache };
-
-  for (const ext of extSources) {
-    const extId = String(ext.id);
-    let cachedFiles = combinedCache[extId];
-    if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
-      cachedFiles = await kv.get("ext_files_" + extId).catch(() => null);
-    }
-    if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
-      combinedCache[extId] = cachedFiles;
-      const channelRecord = previousObj?.channels?.find(c => String(c.id) === extId) || {
-        id: extId,
-        name: ext.groupName || ext.title,
-        group: ext.groupName || ext.title,
-        category: ext.category || 'Películas',
-        title: ext.title,
-        isExternal: true,
-        isTopic: Boolean(ext.isTopic),
-        topicId: ext.topicId || null,
-        channelId: ext.channelId || extId.split('_top_')[0],
-        tgChannelId: ext.channelId || extId.split('_top_')[0],
-        hash: ext.hash || ext.accessHash || '0',
-        accessHash: ext.hash || ext.accessHash || '0',
-      };
-      const extTitles = buildTitlesForExternalChannel(channelRecord, cachedFiles);
-      titles.push(...extTitles);
-    }
-  }
 
   if (savedMeta) {
     for (const t of titles) {

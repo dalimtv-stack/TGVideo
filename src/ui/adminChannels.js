@@ -733,7 +733,7 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     if (addedEl) addedEl.innerHTML = `Vídeos: <strong>${detectedFiles.length} / ${detectedFiles.length}</strong>`;
     statusEl.textContent = `✓ Se han detectado ${detectedFiles.length} vídeos (${generatedTitles.length} títulos). Pulsa para buscar metadatos en TMDB y finalizar.`;
 
-    
+
     // Botón de finalización rápida sin demora de TMDB
     cancelBtn.textContent = 'Guardar y Finalizar (Rápido)';
     cancelBtn.className = 'btn-primary';
@@ -751,7 +751,7 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     }
 
 
-    
+
     cancelBtn.onclick = () => {
       progressOverlay.remove();
       onSuccess?.();
@@ -830,6 +830,97 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
   }
 }
 
+
+
+/**
+ * Identifica en lote un conjunto de títulos pendientes mediante TMDB,
+ * mostrando una ventana modal con barra de progreso y persistiendo los metadatos.
+ */
+export async function identifyTitlesInBulk(titlesToEnrich = [], { modalTitle = 'Identificar con TMDB en bloque', onProgress, onComplete } = {}) {
+  const pending = (titlesToEnrich || []).filter(t => !t.metadata?.id && !t.tmdbId);
+  if (pending.length === 0) {
+    alert('Todos los títulos seleccionados ya están identificados en TMDB.');
+    return { total: 0, identified: 0 };
+  }
+
+  const idOverlay = document.createElement('div');
+  idOverlay.className = 'modal-overlay';
+  idOverlay.style.cssText = 'position:fixed;inset:0;z-index:100060;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:1rem;';
+  idOverlay.innerHTML = `
+    <div style="background:#181c24;border:1px solid rgba(255,255,255,0.18);border-radius:14px;max-width:480px;width:100%;color:#fff;padding:1.8rem;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,0.9);">
+      <div style="font-size:2.4rem;margin-bottom:0.6rem;">✨</div>
+      <h3 style="margin:0 0 0.5rem;font-size:1.25rem;font-weight:700;">${esc(modalTitle)}</h3>
+      <p id="bulk-id-status" style="color:#94a3b8;font-size:0.92rem;margin:0 0 1.2rem;">Identificando títulos con TMDB (0/${pending.length})…</p>
+      <div style="background:rgba(255,255,255,0.08);height:8px;border-radius:4px;overflow:hidden;margin-bottom:1.5rem;">
+        <div id="bulk-id-fill" style="background:linear-gradient(90deg, #a855f7, #38bdf8);height:100%;width:0%;transition:width 0.2s ease;"></div>
+      </div>
+      <button type="button" id="bulk-id-cancel" class="btn btn-secondary" style="padding:0.5rem 1.4rem;border-radius:8px;cursor:pointer;">Cancelar</button>
+    </div>
+  `;
+  document.body.appendChild(idOverlay);
+
+  const statusEl = idOverlay.querySelector('#bulk-id-status');
+  const fillEl = idOverlay.querySelector('#bulk-id-fill');
+  const cancelBtn = idOverlay.querySelector('#bulk-id-cancel');
+
+  const controller = new AbortController();
+  cancelBtn.onclick = () => {
+    controller.abort();
+    idOverlay.remove();
+  };
+
+  let identifiedCount = 0;
+  try {
+    await enrichTitles(pending, {
+      signal: controller.signal,
+      onProgress: (d, total) => {
+        identifiedCount = d;
+        const pct = Math.round((d / Math.max(1, total)) * 100);
+        if (fillEl) fillEl.style.width = `${pct}%`;
+        if (statusEl) statusEl.textContent = `Identificando títulos con TMDB (${d}/${total})…`;
+        onProgress?.(d, total);
+      },
+    });
+
+    const curSaved = (await kv.get(LIB_KEY).catch(() => null)) || {};
+    curSaved.metadataMap = curSaved.metadataMap || {};
+    for (const t of pending) {
+      if (t.metadata) {
+        curSaved.metadataMap[t.id] = {
+          id: t.metadata.id,
+          name: t.metadata.name,
+          poster: t.metadata.poster,
+          background: t.metadata.background,
+          logo: t.metadata.logo,
+          overview: t.metadata.overview,
+          tipo: t.metadata.tipo,
+          year: t.metadata.year,
+          ageRating: t.metadata.ageRating,
+          genres: t.metadata.genres,
+          voteAverage: t.metadata.voteAverage,
+        };
+      }
+      if (Array.isArray(t.archivos)) {
+        for (const f of t.archivos) {
+          if (f.metadata) {
+            const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+            curSaved.metadataMap[fKey] = f.metadata;
+          }
+        }
+      }
+    }
+    await kv.set(LIB_KEY, curSaved).catch(() => {});
+    if (statusEl) statusEl.textContent = `✓ ¡Identificación completada! (${identifiedCount} procesados)`;
+    if (fillEl) fillEl.style.width = '100%';
+    await new Promise(r => setTimeout(r, 600));
+  } catch (err) {
+    if (err.name !== 'AbortError') console.warn('[bulk-identify]', err);
+  } finally {
+    idOverlay.remove();
+    onComplete?.(pending);
+  }
+  return { total: pending.length, identified: identifiedCount };
+}
 
 async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
   container.innerHTML = `<div style="padding:1rem;color:#38bdf8;">Cargando archivos de canales externos…</div>`;
@@ -984,6 +1075,7 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
             <span id="admin-ext-count-text" style="color:#94a3b8;font-size:0.85rem;"></span>
           </div>
           <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
+            <button type="button" class="btn-primary" id="admin-ext-btn-identify-all" style="padding:0.45rem 0.9rem;font-size:0.85rem;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:0.4rem;background:#9333ea;">✨ Identificar pendientes con TMDB</button>
             <div style="display:flex;align-items:center;gap:0.4rem;">
               <label style="color:#aaa;font-size:0.85rem;">Ordenar por:</label>
               <select class="admin-select" id="admin-ext-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
@@ -1010,6 +1102,49 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
     container.querySelector('#admin-ext-filter-unidentified')?.addEventListener('change', (e) => {
       onlyUnidentified = Boolean(e.target.checked);
       renderList();
+    });
+
+    container.querySelector('#admin-ext-btn-identify-all')?.addEventListener('click', async () => {
+      const unidentifiedItems = allFiles.filter(item => !item.hasTmdb);
+      if (unidentifiedItems.length === 0) {
+        alert('Todos los archivos externos ya están identificados en TMDB.');
+        return;
+      }
+      const candidateTitles = unidentifiedItems.map(item => {
+        const parsed = extractTitleAndYear(item.fileName || item.shownName);
+        return {
+          id: item.key,
+          tipo: 'pelicula',
+          nombre: parsed.title || item.shownName,
+          yearHint: parsed.year,
+          archivos: [{
+            messageId: item.messageId,
+            fileName: item.fileName,
+            label: item.shownName,
+            size: item.size,
+            date: item.date,
+            key: item.key,
+          }],
+        };
+      });
+
+      await identifyTitlesInBulk(candidateTitles, {
+        modalTitle: `Identificar ${unidentifiedItems.length} vídeos externos`,
+        onComplete: (enriched) => {
+          clearExternalChannelCache();
+          for (const cand of enriched) {
+            if (cand.metadata) {
+              const matched = allFiles.find(f => f.key === cand.id);
+              if (matched) {
+                matched.hasTmdb = true;
+                matched.tmdbId = cand.metadata.id;
+                matched.tmdbTitle = cand.metadata.name;
+              }
+            }
+          }
+          renderList();
+        },
+      });
     });
 
     renderList();
