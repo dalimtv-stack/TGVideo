@@ -12,10 +12,10 @@ export function isExternalTitle(t) {
  * Capa de datos: convierte canales (dedicados, contenedores de año y macro) en "Títulos" unificados.
  * No toca el DOM.
  */
-import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from './parse.js';
+import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName, prettyEpisodeName } from './parse.js';
 import { splitBySection } from './macro.js';
 import { parseChannelTitle } from './channels.js';
-import { extractTitleAndYear } from '../metadata/tmdb.js';
+import { extractTitleAndYear, extractTitlesFromCaption } from '../metadata/tmdb.js';
 
 async function scanFiles(client, peer, ch) {
   const files = [];
@@ -28,7 +28,7 @@ async function scanFiles(client, peer, ch) {
     const captionFileName = cap.fileName ? cap.fileName.trim() : null;
     const rawFileName = getFileName(msg) || '';
     const fileName = captionFileName || rawFileName || `video_${msg.id}`;
-    const ep = parseEpisode(fileName);
+    const ep = parseEpisode(fileName) || parseEpisode(rawCaption);
     const doc = msg.document || msg.media?.document;
     const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
     files.push({
@@ -38,9 +38,10 @@ async function scanFiles(client, peer, ch) {
       captionFileName,
       rawFileName,
       rawCaption,
+      caption: rawCaption,
       label: prettyName(fileName), section: cap.section || null,
       synopsis: cap.synopsis || null, tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null, imdbId: cap.imdbId ? String(cap.imdbId).trim() : null, rating: cap.rating ? Number(cap.rating) : null,
-      season: ep.season, episode: ep.episode,
+      season: ep?.season, episode: ep?.episode,
       size: Number(doc?.size?.toString?.() || doc?.size || 0),
       duration: durAttr?.duration || 0, mimeType: doc?.mimeType || 'video/mp4', date: msg.date,
     });
@@ -100,6 +101,112 @@ function normalizeMovieKey(str) {
 }
 
 /**
+ * Desagrupa títulos que tengan múltiples archivos en tarjetas sueltas (1 por archivo o episodio).
+ */
+export function unbundleTitles(items = []) {
+  if (!Array.isArray(items)) return [];
+  const result = [];
+  for (const t of items) {
+    const files = t.archivos || [];
+    if (files.length <= 1) {
+      result.push(t);
+      continue;
+    }
+    for (const f of files) {
+      const epLabel = t.tipo === 'serie' ? (f.label || prettyEpisodeName(f) || f.fileName) : (f.label || f.fileName || t.nombre);
+      result.push({
+        ...t,
+        id: `${t.channel?.id || t.id}:${f.messageId}`,
+        nombre: epLabel,
+        archivos: [f],
+        metadata: f.metadata || t.metadata,
+        ultimoMensajeFecha: f.date || t.ultimoMensajeFecha || 0,
+        parentTitle: t,
+        isLooseFile: true,
+      });
+    }
+  }
+  return result;
+}
+
+/**
+ * Agrupa una lista de títulos/archivos sueltos por serie (para episodios) y por película/TMDB.
+ */
+export function groupTitles(items = []) {
+  if (!Array.isArray(items)) return [];
+  const seriesMap = new Map();
+  const movieMap = new Map();
+  const others = [];
+
+  for (const it of items) {
+    const isSeries = it.tipo === 'serie';
+    const isMovie = it.tipo === 'pelicula';
+    const files = it.archivos && it.archivos.length > 0 ? it.archivos : [{
+      messageId: it.messageId || String(it.id).split(':')[1] || 0,
+      fileName: it.fileName || it.nombre,
+      date: it.ultimoMensajeFecha || 0,
+      channel: it.channel,
+      metadata: it.metadata,
+    }];
+
+    if (isSeries) {
+      const firstFile = files[0];
+      const rawName = firstFile?.captionFileName || firstFile?.fileName || it.nombre;
+      const sName = it.parentTitle?.nombre || (it.isLooseFile ? seriesNameFromFile(rawName) : null) || it.nombre;
+      const key = `${it.channel?.id || ''}:${sName.toLowerCase().trim()}`;
+      if (!seriesMap.has(key)) {
+        seriesMap.set(key, {
+          ...it,
+          id: it.parentTitle?.id || it.id,
+          nombre: sName,
+          archivos: [...files],
+        });
+      } else {
+        const grp = seriesMap.get(key);
+        for (const f of files) {
+          if (!grp.archivos.some(existing => existing.messageId === f.messageId)) {
+            grp.archivos.push(f);
+          }
+        }
+      }
+    } else if (isMovie) {
+      const firstFile = files[0];
+      const rawTmdb = it.tmdbId || it.metadata?.id || firstFile?.tmdbId || firstFile?.metadata?.id;
+      const baseName = it.parentTitle?.nombre || it.nombre;
+      const key = rawTmdb ? `tmdb_${rawTmdb}` : `${it.channel?.id || ''}:${normalizeMovieKey(baseName)}`;
+      if (!movieMap.has(key)) {
+        movieMap.set(key, {
+          ...it,
+          id: it.parentTitle?.id || it.id,
+          nombre: baseName,
+          archivos: [...files],
+        });
+      } else {
+        const grp = movieMap.get(key);
+        for (const f of files) {
+          if (!grp.archivos.some(existing => existing.messageId === f.messageId)) {
+            grp.archivos.push(f);
+          }
+        }
+      }
+    } else {
+      others.push(it);
+    }
+  }
+
+  // Ordenar episodios dentro de cada serie
+  for (const s of seriesMap.values()) {
+    s.archivos.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
+  }
+  // Ordenar archivos de versiones de película por tamaño
+  for (const m of movieMap.values()) {
+    m.archivos.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0));
+  }
+
+  return [...seriesMap.values(), ...movieMap.values(), ...others];
+}
+
+/**
  * Agrupa películas con el mismo ID de TMDB en una sola ficha de biblioteca,
  * consolidando todas sus versiones de vídeo en el array `archivos`.
  */
@@ -153,8 +260,6 @@ export function mergeMoviesByTmdb(titles) {
 
   return result;
 }
-
-/** cache: { [channelId]: { top, title, files } } */
 
 /**
  * Detecta películas que pertenecen a una saga/colección (vía metadata TMDB)
@@ -325,8 +430,10 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       for (const f of files) {
         const targetFileName = f.captionFileName || f.fileName || f.label;
         const parsedFile = extractTitleAndYear(targetFileName);
-        const yearHint = parsedFile.year || channelYear;
-        const baseName = parsedFile.title || movieName(f);
+        const capCand = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
+        const isGenericName = !parsedFile.title || /^video_\d+/i.test(parsedFile.title) || /^[0-9\-_.]+(?:accion|pelicula|movie|fhd|hd|rip)?/i.test(parsedFile.title) || parsedFile.title.length < 3;
+        const baseName = (isGenericName && capCand?.title) ? capCand.title : (parsedFile.title || capCand?.title || movieName(f));
+        const yearHint = parsedFile.year || capCand?.year || channelYear;
         const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
         if (!movieMap.has(normKey)) {
           movieMap.set(normKey, {
@@ -366,7 +473,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
         nombre: ch.name, origen: { tipo: 'saga', channelId: String(ch.id) }, channel: ch,
         archivos: sagaFiles, ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
         tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
-    imdbId: files.find(f => f.imdbId)?.imdbId || null,
+        imdbId: files.find(f => f.imdbId)?.imdbId || null,
       });
 
       // Y además, cada película de la saga aparece suelta en Películas y Novedades
@@ -374,8 +481,10 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       for (const f of files) {
         const targetFileName = f.captionFileName || f.fileName || f.label;
         const parsedFile = extractTitleAndYear(targetFileName);
-        const yearHint = parsedFile.year || null;
-        const baseName = parsedFile.title || movieName(f);
+        const capCand = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
+        const isGenericName = !parsedFile.title || /^video_\d+/i.test(parsedFile.title) || /^[0-9\-_.]+(?:accion|pelicula|movie|fhd|hd|rip)?/i.test(parsedFile.title) || parsedFile.title.length < 3;
+        const baseName = (isGenericName && capCand?.title) ? capCand.title : (parsedFile.title || capCand?.title || movieName(f));
+        const yearHint = parsedFile.year || capCand?.year || null;
         const normKey = f.tmdbId ? `tmdb_${f.tmdbId}` : `${normalizeMovieKey(baseName)}_${yearHint || ''}`;
         if (!movieMap.has(normKey)) {
           movieMap.set(normKey, {
@@ -409,11 +518,17 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       }
     } else if (ch.macro) {
       const isSeries = ch.category === 'Series';
-      const keyed = files.map(f => (f.section || !isSeries) ? f : { ...f, section: seriesNameFromFile(f.captionFileName || f.fileName) });
+      const keyed = files.map(f => {
+        if (f.section) return f;
+        if (isSeries) return { ...f, section: seriesNameFromFile(f.captionFileName || f.fileName) };
+        const capCand = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
+        const parsedFile = extractTitleAndYear(f.captionFileName || f.fileName || f.label);
+        return { ...f, section: capCand?.title || parsedFile.title || movieName(f), yearHint: capCand?.year || parsedFile.year };
+      });
       for (const [sec, fs] of splitBySection(keyed)) {
         if (fs && fs.length > 0) {
           const parsedSec = extractTitleAndYear(sec);
-          const fileYear = fs.map(f => extractTitleAndYear(f.captionFileName || f.fileName || f.label).year).find(Boolean) || null;
+          const fileYear = fs.map(f => f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year).find(Boolean) || null;
           const titleYearHint = parsedSec.year || fileYear;
           const t = makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs });
           if (titleYearHint) t.yearHint = titleYearHint;

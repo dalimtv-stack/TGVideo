@@ -460,6 +460,70 @@
   line-height: 1;
 }
 
+.grid-filter-group-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--theme-text-muted, #aaa);
+  padding: 0.28rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.25rem;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .grid-filter-group-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+  }
+}
+
+.grid-filter-group-btn:focus-visible,
+.grid-filter-group-btn.dpad-focused {
+  color: #fff !important;
+  border-color: #fff !important;
+  outline: 2px solid #fff !important;
+  outline-offset: 2px !important;
+  background: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.45) !important;
+}
+
+.grid-filter-group-btn.active {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.5);
+}
+
+.grid-filter-group-btn .grid-filter-icon {
+  font-size: 0.88rem;
+  line-height: 1;
+}
+
+.ext-channel-banner:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+
+.ext-channel-banner:focus-visible,
+.ext-channel-banner.dpad-focused {
+  border-color: var(--theme-accent, #e50914) !important;
+  outline: 2px solid var(--theme-accent, #e50914) !important;
+  outline-offset: 2px !important;
+  transform: translateY(-2px);
+  box-shadow: 0 0 16px rgba(229, 9, 20, 0.4) !important;
+}
+
+
 @media (max-width: 768px) {
   .grid-header {
     flex-direction: column;

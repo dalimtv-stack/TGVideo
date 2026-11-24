@@ -1,6 +1,7 @@
 // Proveedor de filas de la Home (independiente del HTML / skin)
 import { titleState } from '../player/progress.js';
 import { sortNews, NEWS_HOME_LIMIT, NEWS_GRID_LIMIT } from '../library/newsPrefs.js';
+import { isExternalTitle } from '../library/titles.js';
 
 export const HOME_ROW_LIMIT = 20;
 
@@ -9,14 +10,14 @@ export function getSagaMovieGroups(titles) {
   const seenSagas = new Set();
 
   // 1. Canales físicos de sagas
-  const physicalSagas = titles.filter(t => t.isSaga && !t.isVirtualSaga);
+  const physicalSagas = titles.filter(t => t.isSaga && !t.isVirtualSaga && !isExternalTitle(t));
   for (const s of physicalSagas) {
     const chId = String(s.channel?.id || s.id);
     if (seenSagas.has(`ch_${chId}`)) continue;
     seenSagas.add(`ch_${chId}`);
 
     const movies = titles.filter(t =>
-      !t.isSaga && !t.isVirtualSaga &&
+      !t.isSaga && !t.isVirtualSaga && !isExternalTitle(t) &&
       (String(t.channel?.id) === chId || String(t.sagaChannelId) === chId || String(t.origen?.channelId) === chId)
     );
     if (movies.length > 0) {
@@ -25,14 +26,14 @@ export function getSagaMovieGroups(titles) {
   }
 
   // 2. Colecciones virtuales de TMDB
-  const virtualSagas = titles.filter(t => t.isVirtualSaga || t.origen?.tipo === 'auto_collection');
+  const virtualSagas = titles.filter(t => (t.isVirtualSaga || t.origen?.tipo === 'auto_collection') && !isExternalTitle(t));
   for (const s of virtualSagas) {
     const colId = String(s.tmdbId || s.origen?.collectionId || s.metadata?.id);
     if (!colId || seenSagas.has(`col_${colId}`)) continue;
     seenSagas.add(`col_${colId}`);
 
     const movies = titles.filter(t =>
-      !t.isSaga && !t.isVirtualSaga &&
+      !t.isSaga && !t.isVirtualSaga && !isExternalTitle(t) &&
       String(t.metadata?.collection?.id || t.metadata?.belongs_to_collection?.id) === colId
     );
     if (movies.length > 0) {
@@ -43,7 +44,7 @@ export function getSagaMovieGroups(titles) {
   // 3. Películas que comparten collection ID (TMDB) aunque aún no se haya instanciado el objeto saga
   const colMap = new Map();
   for (const t of titles) {
-    if (t.isSaga || t.isVirtualSaga) continue;
+    if (t.isSaga || t.isVirtualSaga || isExternalTitle(t)) continue;
     const cid = t.metadata?.collection?.id || t.metadata?.belongs_to_collection?.id;
     if (cid) {
       const key = `col_${cid}`;
@@ -75,10 +76,13 @@ export function getSagaMovieGroups(titles) {
 export function buildHomeRows(titles, progress, newsPrefs = {}) {
   const rows = [];
 
+  // Excluir de forma estricta los títulos de canales externos de la Home y de Seguir viendo
+  const standardTitles = titles.filter(t => !isExternalTitle(t));
+
   // En "Seguir viendo":
   // Solo debe aparecer la película concreta que se está viendo, NO la saga/colección y la película.
   // Al terminar una película de la saga, como en cualquier episodio, si hay siguiente parte debe aparecer en "Seguir viendo".
-  const sagaGroups = getSagaMovieGroups(titles);
+  const sagaGroups = getSagaMovieGroups(standardTitles);
   const sagaMovieMap = new Map(); // movieId -> sagaGroup
   for (const g of sagaGroups) {
     for (const m of g.movies) {
@@ -89,7 +93,7 @@ export function buildHomeRows(titles, progress, newsPrefs = {}) {
   const continueItems = [];
   const processedSagaIds = new Set();
 
-  for (const t of titles) {
+  for (const t of standardTitles) {
     // Excluir colecciones y sagas como contenedor (nunca van en Seguir viendo)
     if (t.isSaga || t.isVirtualSaga || t.metadata?.type === 'collection' || (t.grupo || '').trim().toLowerCase() === 'sagas') {
       continue;
@@ -161,16 +165,16 @@ export function buildHomeRows(titles, progress, newsPrefs = {}) {
   if (cont.length) rows.push({ id: 'continue', title: 'Seguir viendo', items: cont.slice(0, HOME_ROW_LIMIT), gridItems: cont });
 
   const byDate = (a, b) => b.ultimoMensajeFecha - a.ultimoMensajeFecha;
-  const movies = titles.filter(t => t.tipo === 'pelicula').sort(byDate);
+  const movies = standardTitles.filter(t => t.tipo === 'pelicula').sort(byDate);
   const looseMovies = movies.filter(t => !t.isSaga);
-  const series = titles.filter(t => t.tipo === 'serie').sort(byDate);
+  const series = standardTitles.filter(t => t.tipo === 'serie').sort(byDate);
   // Novedades: máx. 30 en la fila y 60 en la cuadrícula ("+"), con el orden configurado
   const newsMovies = sortNews(looseMovies, newsPrefs.movies || 'upload');
   const newsSeries = sortNews(series, newsPrefs.series || 'upload');
   if (newsMovies.length) rows.push({ id: 'new-movies', title: 'Novedades · Películas', items: newsMovies.slice(0, HOME_ROW_LIMIT), gridItems: newsMovies.slice(0, NEWS_GRID_LIMIT) });
   if (newsSeries.length) rows.push({ id: 'new-series', title: 'Novedades · Series', items: newsSeries.slice(0, HOME_ROW_LIMIT), gridItems: newsSeries.slice(0, NEWS_GRID_LIMIT) });
-  const sports = titles.filter(t => t.tipo === 'deporte').sort(byDate);
-  const music = titles.filter(t => t.tipo === 'musica').sort(byDate);
+  const sports = standardTitles.filter(t => t.tipo === 'deporte').sort(byDate);
+  const music = standardTitles.filter(t => t.tipo === 'musica').sort(byDate);
   if (sports.length) rows.push({ id: 'new-sports', title: 'Deportes', items: sports.slice(0, HOME_ROW_LIMIT), gridItems: sports });
   if (music.length) rows.push({ id: 'new-music', title: 'Música', items: music.slice(0, HOME_ROW_LIMIT), gridItems: music });
 

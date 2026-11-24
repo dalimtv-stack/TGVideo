@@ -40,6 +40,8 @@ import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/over
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { showAdminView } from './ui/adminView.js';
 import { buildTitlesForExternalChannel } from './ui/adminChannels.js';
+import { renderExternalsView } from './ui/externalsView.js';
+import { isVideoMessage, parseCaption, getFileName, parseEpisode, prettyName } from './library/parse.js';
 import { resolveTitleAgeRating } from './ui/ageRating.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
@@ -214,6 +216,7 @@ function promptApiCredentialsUI() {
 
 // ---------- Home con biblioteca ----------
 let TITLES_CACHE = null;
+let CHANNELS_CACHE = [];
 let ACTIVE_HOME_SECTION = 'inicio';
 let metadataController = null;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -301,6 +304,7 @@ const libraryViews = createLibraryViews({
 async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const client = tg.getClient();
   const channels = await loadLibrary(client);
+  CHANNELS_CACHE = channels;
   // En una actualización completa se invalida el caché de los canales TGStorage,
   // pero se conserva la biblioteca previa para restaurar los canales externos.
   const previousObj = await kv.get(LIB_KEY).catch(() => null);
@@ -315,7 +319,68 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
 
   for (const ext of extSources) {
     const extId = String(ext.id);
-    const cachedFiles = combinedCache[extId];
+    let cachedFiles = combinedCache[extId];
+    if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
+      cachedFiles = await kv.get(`ext_files_${extId}`).catch(() => null);
+    }
+
+    if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
+      try {
+        const rawChId = ext.channelId || extId.split('_top_')[0];
+        const isTopic = Boolean(ext.isTopic || ext.topicId || extId.includes('_top_'));
+        const topicId = ext.topicId || (extId.includes('_top_') ? Number(extId.split('_top_')[1]) : null);
+        let peer = null;
+        try { peer = await client.getInputEntity(rawChId); } catch (_) {
+          try { peer = await client.getInputEntity(`-100${rawChId.replace(/^-100/, '').replace(/^-/, '')}`); } catch (_) {}
+        }
+        if (peer) {
+          const iterOpts = isTopic && topicId ? { replyTo: topicId } : {};
+          const recovered = [];
+          for await (const msg of client.iterMessages(peer, iterOpts)) {
+            if (isVideoMessage(msg)) {
+              const rawCaption = msg.message || '';
+              const cap = parseCaption(rawCaption);
+              const captionFileName = cap.fileName ? cap.fileName.trim() : null;
+              const rawFileName = getFileName(msg) || '';
+              const fileName = captionFileName || rawFileName || `video_${msg.id}.mp4`;
+              const ep = parseEpisode(fileName);
+              const doc = msg.document || msg.media?.document;
+              const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
+              recovered.push({
+                key: `${extId}:${msg.id}`,
+                channelId: extId,
+                messageId: msg.id,
+                channel: { id: extId, name: ext.groupName || ext.title, group: ext.groupName || ext.title, category: ext.category || 'Películas', title: ext.title, isExternal: true, isTopic, topicId },
+                fileName,
+                captionFileName,
+                rawFileName,
+                rawCaption,
+                caption: rawCaption,
+                label: prettyName(fileName),
+                section: cap.section || null,
+                synopsis: cap.synopsis || null,
+                tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null,
+                imdbId: cap.imdbId ? String(cap.imdbId).trim() : null,
+                rating: cap.rating ? Number(cap.rating) : null,
+                season: ep?.season,
+                episode: ep?.episode,
+                size: Number(doc?.size?.toString?.() || doc?.size || 0),
+                duration: durAttr?.duration || 0,
+                mimeType: doc?.mimeType || 'video/mp4',
+                date: msg.date,
+              });
+            }
+          }
+          if (recovered.length > 0) {
+            cachedFiles = recovered;
+            await kv.set(`ext_files_${extId}`, recovered).catch(() => {});
+          }
+        }
+      } catch (recErr) {
+        console.warn('[main] Auto-recuperación de canal externo falló', ext.title, recErr);
+      }
+    }
+
     if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
       combinedCache[extId] = cachedFiles;
       const channelRecord = previousObj?.channels?.find(c => String(c.id) === extId) || {
@@ -646,7 +711,7 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   TITLES_CACHE = titles;
 
   // 4. Identificar vídeos pendientes en TMDB antes de mostrar la home
-  const pendingTitles = titles.filter(t => (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+  const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
   if (pendingTitles.length > 0) {
     showLoading(`Identificando vídeos con TMDB (0/${pendingTitles.length})…`);
@@ -736,6 +801,7 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       favoriteTitles.push(t);
     }
   }
+  const extSources = (await kv.get("external_sources_v1").catch(() => [])) || [];
   const externalTitles = titles.filter(t => isExternalTitle(t));
   const collectionTitles = titles.filter(t => (t.isSaga || t.metadata?.tipo === 'collection') && !isExternalTitle(t));
   const movieTitles = titles.filter(t => t.tipo === 'pelicula' && !t.isSaga && t.metadata?.tipo !== 'collection' && !isExternalTitle(t));
@@ -751,14 +817,15 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     ...(sportTitles.length ? [{ id: 'deportes', label: 'Deportes', items: sportTitles }] : []),
     ...(musicTitles.length ? [{ id: 'musica', label: 'Música', items: musicTitles }] : []),
     ...(collectionTitles.length ? [{ id: 'colecciones', label: 'Colecciones', items: collectionTitles }] : []),
-    ...(SHOW_EXTERNALS_SECTION && externalTitles.length ? [{ id: 'externos', label: 'Externos', items: externalTitles }] : []),
+    ...(SHOW_EXTERNALS_SECTION && (externalTitles.length || extSources.length) ? [{ id: 'externos', label: 'Externo', items: externalTitles }] : []),
   ];
   const isSearch = selectedSection === 'buscar' && titles.length > 0;
   if (!isSearch && !sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
   ACTIVE_HOME_SECTION = selectedSection;
   const activeSection = sectionDefs.find(section => section.id === selectedSection);
 
-  const isCategorySection = selectedSection !== 'inicio' && !isSearch;
+  const isExternalsTab = selectedSection === 'externos';
+  const isCategorySection = selectedSection !== 'inicio' && !isSearch && !isExternalsTab;
   const currentView = isCategorySection ? getSectionViewMode(profile.id, selectedSection) : 'grid';
   const isCarousel = isCategorySection && (currentView === 'posters' || currentView === 'logos');
 
@@ -787,11 +854,12 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
   };
 
 
-  const body = !titles.length ? `
+  const body = (!titles.length && !isExternalsTab) ? `
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
         <p style="opacity:.6;margin-top:.5rem">Los canales deben terminar en <code>::Series::tgstorage</code> o <code>::Películas::tgstorage</code></p></div>`
     : isSearch ? searchViewHtml()
+    : isExternalsTab ? '<div id="externals-view-mount"></div>'
     : selectedSection !== 'inicio' ? (() => {
         const currentSort = getSectionSort(profile.id, selectedSection);
         const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
@@ -850,6 +918,21 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       showHome(tg, sync, profile, { fast: true, selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
     };
   });
+  if (isExternalsTab) {
+    const extMount = document.getElementById('externals-view-mount');
+    if (extMount) {
+      renderExternalsView({
+        tg,
+        sync,
+        profile,
+        externalTitles,
+        extSources,
+        libraryViews,
+        showHome,
+        app: extMount,
+      });
+    }
+  }
   if (isSearch) {
     mountSearchView({
       titles,
@@ -1118,7 +1201,7 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     }, 2500);
   };
 
-  const pendingBg = titles.filter(t => !TMDB_ATTEMPTED.has(t.id) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+  const pendingBg = titles.filter(t => !isExternalTitle(t) && !TMDB_ATTEMPTED.has(t.id) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   if (BG_ENRICH && BG_ENRICH.profileId === profile.id) {
     if (pendingBg.length) perfLog(`TMDB en segundo plano ya en curso; ${pendingBg.length} pendientes nuevos esperan`);
   } else if (pendingBg.length > 0) {
@@ -1326,7 +1409,7 @@ async function start() {
 
     window.tg = tg;
     window.sync = sync;
-    initContextMenu({ tg, getTitles: () => TITLES_CACHE });
+    initContextMenu({ tg, getTitles: () => TITLES_CACHE, getChannels: () => CHANNELS_CACHE });
 
     await loadGlobalConfig(sync);
     await loadOverrides(sync).catch(e => console.warn('[overrides]', e));

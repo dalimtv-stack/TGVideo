@@ -1,3 +1,4 @@
+import { groupTitles, unbundleTitles } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
 import { extractTitleAndYear } from '../metadata/tmdb.js';
@@ -23,7 +24,8 @@ export function createLibraryViews(deps) {
 
   function showGroupGrid(tg, sync, profile, row, { focusTitleId = null } = {}) {
     applyProfileScale(profile);
-    const back = () => showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
+    const isExt = Boolean(row.isExternal || String(row.id || "").startsWith("ext-"));
+    const back = () => isExt ? showHome(tg, sync, profile, { selectedSection: "externos" }) : showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
     setBackHandler(back);
 
     const titles = getTitles() || [];
@@ -58,6 +60,14 @@ export function createLibraryViews(deps) {
     let currentSort = getGridSort();
     let currentDir = getGridSortDir(currentSort);
     let onlyUnidentified = getGridFilterUnidentified();
+    const getGridGrouped = () => {
+      try { return localStorage.getItem(`tg_grid_grouped_${profile.id}`) === "true"; }
+      catch (_) { return false; }
+    };
+    const setGridGrouped = (val) => {
+      try { localStorage.setItem(`tg_grid_grouped_${profile.id}`, val ? "true" : "false"); } catch (_) {}
+    };
+    let isGrouped = getGridGrouped();
 
     const isIdentified = (t) => Boolean(t.metadata?.id || t.tmdbId);
 
@@ -97,7 +107,7 @@ export function createLibraryViews(deps) {
     };
 
     const getProcessedItems = () => {
-      let filtered = baseItems;
+      let filtered = isGrouped ? groupTitles(baseItems) : unbundleTitles(baseItems);
       if (onlyUnidentified) {
         filtered = filtered.filter(t => !isIdentified(t));
       }
@@ -110,6 +120,10 @@ export function createLibraryViews(deps) {
         <button type="button" class="grid-sort-btn ${currentSort === 'subida' ? 'active' : ''}" data-focusable data-sort="subida" aria-pressed="${currentSort === 'subida'}" title="Ordenar por fecha de subida (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Subida${currentSort === 'subida' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
         <button type="button" class="grid-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}" title="Ordenar por nombre (${currentDir === 'asc' ? 'A-Z' : 'Z-A'})">Nombre${currentSort === 'nombre' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
         <button type="button" class="grid-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}" title="Ordenar por fecha de estreno (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Estreno${currentSort === 'estreno' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+        <button type="button" class="grid-filter-group-btn ${isGrouped ? "active" : ""}" data-focusable role="checkbox" aria-checked="${isGrouped}" title="Agrupar series y películas">
+          <span class="grid-filter-icon" aria-hidden="true">${isGrouped ? "☑" : "☐"}</span>
+          <span class="grid-filter-text">Agrupar</span>
+        </button>
         <button type="button" class="grid-filter-unidentified-btn ${onlyUnidentified ? 'active' : ''}" data-focusable role="checkbox" aria-checked="${onlyUnidentified}" title="Mostrar solo títulos sin identificar en TMDB">
           <span class="grid-filter-icon" aria-hidden="true">${onlyUnidentified ? '☑' : '☐'}</span>
           <span class="grid-filter-text">No identificados</span>
@@ -214,6 +228,23 @@ export function createLibraryViews(deps) {
           renderCards(getProcessedItems());
         };
       });
+
+      const groupBtn = document.querySelector("#app .grid-filter-group-btn");
+      if (groupBtn) {
+        groupBtn.onclick = (e) => {
+          e.stopPropagation();
+          isGrouped = !isGrouped;
+          setGridGrouped(isGrouped);
+          const toolsEl = document.querySelector(".grid-tools");
+          if (toolsEl) {
+            toolsEl.innerHTML = renderToolsHtml();
+            bindTools();
+            const newGroupBtn = toolsEl.querySelector(".grid-filter-group-btn");
+            newGroupBtn?.focus();
+          }
+          renderCards(getProcessedItems());
+        };
+      }
 
       const filterBtn = document.querySelector("#app .grid-filter-unidentified-btn");
       if (filterBtn) {

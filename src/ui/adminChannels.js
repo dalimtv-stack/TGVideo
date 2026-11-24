@@ -2,7 +2,7 @@
 // Módulo para escanear, integrar y desvincular canales, grupos y temas externos en la biblioteca.
 import { Api } from 'telegram';
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
-import { extractTitleAndYear, enrichTitles } from '../metadata/tmdb.js';
+import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../metadata/tmdb.js';
 import { seriesNameFromFile } from '../library/titles.js';
 
 const LIB_KEY = 'library_v2';
@@ -30,7 +30,8 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles) {
     const movieMap = new Map();
     for (const f of detectedFiles) {
       const targetFileName = f.captionFileName || f.fileName || f.label;
-      const parsed = extractTitleAndYear(targetFileName);
+      const captionCandidate = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
+      const parsed = captionCandidate || extractTitleAndYear(targetFileName);
       const baseName = parsed.title || f.label;
       const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${parsed.year || ''}`;
 
@@ -425,6 +426,7 @@ async function removeExternalSource({ virtualId, displayName, kv, titles, onRemo
       savedObj.channels = savedObj.channels.filter(c => String(c.id) !== String(virtualId));
     }
     await kv.set(LIB_KEY, savedObj).catch(() => {});
+    await kv.set(`ext_files_${virtualId}`, null).catch(() => {});
 
     const kept = titles.filter(t => {
       const matchChannel = String(t.channel?.id) === String(virtualId);
@@ -659,6 +661,7 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     savedObj.channels = savedObj.channels.filter(c => String(c.id) !== String(virtualId));
     savedObj.channels.push(channelRecord);
     await kv.set(LIB_KEY, savedObj).catch(e => console.warn('[admin] Error guardando en library_v2', e));
+    await kv.set(`ext_files_${virtualId}`, detectedFiles).catch(() => {});
 
     const extList = (await kv.get(EXT_KEY).catch(() => [])) || [];
     const updatedExt = extList.filter(x => String(x.id) !== String(virtualId));
@@ -688,13 +691,36 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     if (addedEl) addedEl.innerHTML = `Vídeos: <strong>${detectedFiles.length} / ${detectedFiles.length}</strong>`;
     statusEl.textContent = `✓ Se han detectado ${detectedFiles.length} vídeos (${generatedTitles.length} títulos). Pulsa para buscar metadatos en TMDB y finalizar.`;
 
-    cancelBtn.textContent = 'Identificar y Finalizar';
+    
+    // Botón de finalización rápida sin demora de TMDB
+    cancelBtn.textContent = 'Guardar y Finalizar (Rápido)';
     cancelBtn.className = 'btn-primary';
     cancelBtn.disabled = false;
 
-    cancelBtn.onclick = async () => {
-      cancelBtn.disabled = true;
-      cancelBtn.textContent = 'Identificando en TMDB…';
+    // Crear botón opcional de TMDB
+    let tmdbBtn = progressOverlay.querySelector('#prog-tmdb-btn');
+    if (!tmdbBtn) {
+      tmdbBtn = document.createElement('button');
+      tmdbBtn.id = 'prog-tmdb-btn';
+      tmdbBtn.className = 'btn-secondary';
+      tmdbBtn.style.marginRight = '0.8rem';
+      tmdbBtn.textContent = 'Identificar en TMDB (Opcional)';
+      cancelBtn.parentNode.insertBefore(tmdbBtn, cancelBtn);
+    }
+
+
+    
+    cancelBtn.onclick = () => {
+      progressOverlay.remove();
+      onSuccess?.();
+    };
+
+    if (tmdbBtn) {
+      tmdbBtn.onclick = async () => {
+        tmdbBtn.disabled = true;
+        cancelBtn.disabled = true;
+        tmdbBtn.textContent = 'Identificando en TMDB…';
+
       fillEl.style.width = '0%';
       if (addedEl) addedEl.innerHTML = `Identificados: <strong>0 / ${generatedTitles.length}</strong>`;
       statusEl.textContent = `Identificando títulos con TMDB (0/${generatedTitles.length})…`;
@@ -750,8 +776,9 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
       } finally {
         progressOverlay.remove();
         onSuccess?.(virtualId);
-      }
-    };
+        }
+      };
+    }
   } catch (err) {
     console.error('Error durante el escaneo', err);
     statusEl.textContent = `Error: ${esc(err.message || String(err))}`;
