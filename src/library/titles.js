@@ -279,12 +279,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
   const titles = [];
   const newCache = {};
   let done = 0;
-  const CHANNEL_CONCURRENCY = 3;
-  let chIdx = 0;
-  await Promise.all(Array.from({ length: Math.min(CHANNEL_CONCURRENCY, channels.length) }, async () => {
-    while (chIdx < channels.length) {
-      const rawChannel = channels[chIdx++];
-      if (!rawChannel) break;
+  await Promise.all(channels.map(async (rawChannel) => {
     // Recupera las banderas derivadas también de la caché local creada antes de esta mejora.
     const ch = { ...rawChannel };
     const parsed = parseChannelTitle(ch.title);
@@ -302,7 +297,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     // Filtro: NO mostrar canales vacíos en TGVideo
     if (!files || files.length === 0) {
       onProgress?.(++done, channels.length);
-      continue;
+      return;
     }
 
     if (ch.isYearContainer) {
@@ -412,7 +407,6 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       titles.push(makeTitle({ id: ch.id, ch, name: ch.name, origen: 'dedicado', files }));
     }
     onProgress?.(++done, channels.length);
-    }
   }));
 
   // Consolidar películas con el mismo ID de TMDB detectado previamente

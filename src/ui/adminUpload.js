@@ -338,7 +338,7 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
 
       const inputFile = await client.uploadFile({
         file,
-        workers: 2,
+        workers: 3,
         onProgress: (progress) => {
           const pct = Math.min(100, Math.round(progress * 100));
           const uploadedBytes = Math.round(progress * file.size);

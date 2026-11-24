@@ -136,7 +136,7 @@ async function reuploadQueue(entries, client) {
       setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Descargando original · ${i + 1} de ${entries.length}`, percent: 0 });
       const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Descargando ${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(45, Math.round(done / (total || item.size || 1) * 45)) }) });
       const blob = new Blob([bytes], { type: item.msg.document?.mimeType || 'application/octet-stream' });
-      const upload = await client.uploadFile({ file: new File([blob], item.newName, { type: blob.type }), workers: 2, onProgress: progress => setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Subiendo ${formatBytes(progress * item.size)} / ${formatBytes(item.size)}`, percent: 45 + Math.round(progress * 50) }) });
+      const upload = await client.uploadFile({ file: new File([blob], item.newName, { type: blob.type }), workers: 3, onProgress: progress => setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Subiendo ${formatBytes(progress * item.size)} / ${formatBytes(item.size)}`, percent: 45 + Math.round(progress * 50) }) });
       const caption = item.msg.message || '';
       await client.sendFile(item.peer, { file: upload, caption, forceDocument: true, attributes: [new Api.DocumentAttributeFilename({ fileName: item.newName })] });
     } catch (error) {

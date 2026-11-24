@@ -19,6 +19,22 @@ export function unregisterPlayerController() {
 }
 
 export function handleBack() {
+  // 0. Menús contextuales de PC
+  const contextMenu = document.querySelector('.pc-context-menu');
+  if (contextMenu) {
+    contextMenu.remove();
+    return true;
+  }
+
+  // 0.1 Modales de administración o diálogos
+  const adminModal = document.querySelector('.admin-modal-overlay');
+  if (adminModal) {
+    const cancelBtn = adminModal.querySelector('#modal-cancel-btn, #reupload-cancel, .btn-secondary');
+    if (cancelBtn) cancelBtn.click();
+    else adminModal.remove();
+    return true;
+  }
+
   // 1. Cerrar diálogo modal si está abierto
   const trailerModal = document.querySelector('.carousel-trailer-modal');
   if (trailerModal) {
@@ -246,7 +262,7 @@ function move(dir) {
     const firstRowCard = document.querySelector('.home-main .row-track .lib-card[data-title]');
     if (firstRowCard) return firstRowCard;
 
-    const sortToggle = document.querySelector('.category-sort-toggle');
+    const sortToggle = document.querySelector('.category-sort-bar .category-sort-btn.active') || document.querySelector('.category-sort-bar [data-focusable], .category-sort-toggle');
     if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) return sortToggle;
 
     const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
@@ -532,7 +548,7 @@ function move(dir) {
         return oRect.bottom <= curRect.top + 10;
       });
       if (isTopRow) {
-        const sortToggle = document.querySelector('.category-sort-toggle');
+        const sortToggle = document.querySelector('.category-sort-bar .category-sort-btn.active') || document.querySelector('.category-sort-bar [data-focusable], .category-sort-toggle');
         if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) {
           sortToggle.focus();
           sortToggle.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
@@ -1000,6 +1016,33 @@ export function initDpad() {
         App.exitApp();
       }
     });
+  } catch (_) {}
+
+  // Integración con botón "Atrás" del ratón en PC (e.button === 3 / Navegador Atrás)
+  const onMouseBack = (e) => {
+    if (e.button === 3) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleBack();
+    }
+  };
+  window.addEventListener('mouseup', onMouseBack, true);
+  window.addEventListener('auxclick', onMouseBack, true);
+  window.addEventListener('pointerup', onMouseBack, true);
+
+  // Soporte para botón "Atrás" de navegación en navegador de escritorio (popstate)
+  window.addEventListener('popstate', (e) => {
+    if (handleBack()) {
+      e.preventDefault();
+      try {
+        window.history.pushState(null, '', window.location.href);
+      } catch (_) {}
+    }
+  });
+  try {
+    if (window.history && window.history.pushState) {
+      window.history.pushState(null, '', window.location.href);
+    }
   } catch (_) {}
 
   document.addEventListener('keydown', (e) => {

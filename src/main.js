@@ -395,7 +395,30 @@ function showUpdateDialog({ onQuick, onFull }) {
 }
 
 
+export function isExternalTitle(t) {
+  return Boolean(
+    t?.origen?.tipo === 'externo' ||
+    t?.channel?.isExternal ||
+    t?.isExternal ||
+    (typeof t?.channel?.id === 'string' && t.channel.id.includes('_top_'))
+  );
+}
+
 let CHECKED = false;
+function getSectionFilterUnidentified(profileId, sectionId) {
+  try {
+    return localStorage.getItem(`tg_unidentified_${profileId}_${sectionId}`) === 'true';
+  } catch (_) {
+    return false;
+  }
+}
+
+function setSectionFilterUnidentified(profileId, sectionId, value) {
+  try {
+    localStorage.setItem(`tg_unidentified_${profileId}_${sectionId}`, value ? 'true' : 'false');
+  } catch (_) {}
+}
+
 function getSectionSort(profileId, sectionId) {
   try {
     return localStorage.getItem(`tg_sort_${profileId}_${sectionId}`) || 'nombre';
@@ -454,6 +477,16 @@ function sortTitles(items, sortType, sortOrder = 'desc') {
   const list = [...items];
   const mult = sortOrder === 'asc' ? 1 : -1;
 
+  if (sortType === 'subida') {
+    return list.sort((a, b) => {
+      const msgA = a.ultimoMensajeFecha || 0;
+      const msgB = b.ultimoMensajeFecha || 0;
+      if (msgB !== msgA) return (msgA - msgB) * mult;
+      const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
+      const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+      return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+    });
+  }
   if (sortType === 'estreno') {
     return list.sort((a, b) => {
       const dateA = a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '';
@@ -624,8 +657,8 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   titles = attachAutoCollections(mergeMoviesByTmdb(titles));
   TITLES_CACHE = titles;
 
-  // 4. Identificar vídeos pendientes en TMDB antes de mostrar la home
-  const pendingTitles = titles.filter(t => !t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata)));
+  // 4. Identificar vídeos pendientes en TMDB antes de mostrar la home (omitiendo canales externos)
+  const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   if (pendingTitles.length > 0) {
     showLoading(`Identificando vídeos con TMDB (0/${pendingTitles.length})…`);
     metadataController?.abort();
@@ -728,19 +761,18 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   const categoryToolsHtml = (inHeader = false) => {
     const currentSort = getSectionSort(profile.id, selectedSection);
     const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
-    const isSortExpanded = false;
+    const onlyUnidentified = getSectionFilterUnidentified(profile.id, selectedSection);
     return `
       <div class="${inHeader ? 'category-header--in-header' : 'category-header-inner'}" role="region" aria-label="Herramientas de ordenación y vista">
-        <div class="category-sort-bar ${isSortExpanded ? 'is-expanded' : ''}" role="group" aria-label="Ordenar por">
-          <button type="button" class="category-sort-toggle" data-focusable aria-expanded="${isSortExpanded}" aria-haspopup="true" title="Desplegar opciones de ordenación (actual: orden ${currentOrder === 'asc' ? 'ascendente' : 'descendente'})">
-            <span class="category-sort-label">Ordenar:</span>
-            <span class="category-sort-icon" aria-hidden="true">${currentOrder === 'asc' ? '↑' : '↓'}</span>
+        <div class="category-sort-bar" role="group" aria-label="Ordenar por">
+          <span class="category-sort-label">Ordenar:</span>
+          <button type="button" class="category-sort-btn ${currentSort === 'subida' ? 'active' : ''}" data-focusable data-sort="subida" aria-pressed="${currentSort === 'subida'}" title="Ordenar por fecha de subida (${currentOrder === 'asc' ? 'antiguos primero' : 'recientes primero'})">Subida${currentSort === 'subida' ? (currentOrder === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+          <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}" title="Ordenar por nombre (${currentOrder === 'asc' ? 'A-Z' : 'Z-A'})">Nombre${currentSort === 'nombre' ? (currentOrder === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+          <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}" title="Ordenar por fecha de estreno (${currentOrder === 'asc' ? 'antiguos primero' : 'recientes primero'})">Estreno${currentSort === 'estreno' ? (currentOrder === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+          <button type="button" class="category-filter-unidentified-btn ${onlyUnidentified ? 'active' : ''}" data-focusable role="checkbox" aria-checked="${onlyUnidentified}" title="Mostrar solo títulos sin identificar en TMDB">
+            <span class="category-filter-icon" aria-hidden="true">${onlyUnidentified ? '☑' : '☐'}</span>
+            <span class="category-filter-text">No identificados</span>
           </button>
-          <div class="category-sort-options">
-            <button type="button" class="category-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}">Nombre</button>
-            <button type="button" class="category-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}">Fecha de estreno</button>
-            <button type="button" class="category-sort-btn ${currentSort === 'puntuacion' ? 'active' : ''}" data-focusable data-sort="puntuacion" aria-pressed="${currentSort === 'puntuacion'}">Puntuación</button>
-          </div>
         </div>
         <div class="category-views-bar" role="group" aria-label="Modo de vista">
           <span class="category-views-label">Vista:</span>
@@ -758,10 +790,20 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     : selectedSection !== 'inicio' ? (() => {
         const currentSort = getSectionSort(profile.id, selectedSection);
         const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
-        const sortedItems = sortTitles(activeSection?.items || [], currentSort, currentOrder);
+        const onlyUnidentified = getSectionFilterUnidentified(profile.id, selectedSection);
+        const isIdentified = (t) => Boolean(t.metadata?.id || t.tmdbId);
+        let itemsToShow = activeSection?.items || [];
+        if (onlyUnidentified) {
+          itemsToShow = itemsToShow.filter(t => !isIdentified(t));
+        }
+        const sortedItems = sortTitles(itemsToShow, currentSort, currentOrder);
         return `
       <section class="category-view ${isCarousel ? 'category-view--carousel' : 'category-view--grid'}" aria-label="${esc(activeSection?.label || '')}">
-        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`}
+        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : (
+          sortedItems.length > 0
+            ? `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`
+            : `<div class="category-grid-empty" style="text-align:center;padding:4rem 1rem;color:#aaa;"><p>No se encontraron vídeos ${onlyUnidentified ? 'sin identificar ' : ''}en esta sección.</p></div>`
+        )}
       </section>`;
       })()
     : rows.map(r => `
@@ -823,53 +865,6 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     });
     setBackHandler(() => showHome(tg, sync, profile, { selectedSection: 'inicio' }));
   }
-  // Plegado y despliegue del selector "Ordenar:"
-  const sortBar = document.querySelector('.category-sort-bar:not(.search-bar)');
-  const sortToggle = document.querySelector('.category-sort-toggle');
-  if (sortBar && sortToggle) {
-    const expandSort = () => {
-      sortBar.classList.add('is-expanded');
-      sortToggle.setAttribute('aria-expanded', 'true');
-    };
-    const collapseSort = () => {
-      sortBar.classList.remove('is-expanded');
-      sortToggle.setAttribute('aria-expanded', 'false');
-    };
-
-    sortToggle.onclick = (e) => {
-      e.stopPropagation();
-      const isExpanded = sortBar.classList.contains('is-expanded');
-      if (isExpanded) {
-        collapseSort();
-      } else {
-        expandSort();
-        const activeBtn = sortBar.querySelector('.category-sort-btn.active') || sortBar.querySelector('.category-sort-btn');
-        activeBtn?.focus();
-      }
-    };
-
-    // Prevenir que toques dentro de la barra en iOS/iPhone disparen cierres accidentales
-    sortBar.addEventListener('pointerdown', (e) => {
-      e.stopPropagation();
-    });
-
-    sortBar.addEventListener('focusout', (e) => {
-      // Solo colapsar si el foco realmente se movió a otro elemento interactivo fuera de sortBar.
-      // En dispositivos táctiles (iOS/iPhone) e.relatedTarget es null al tocar un botón,
-      // lo que causaba que el menú se cerrara antes de procesar el evento click.
-      if (e.relatedTarget && !sortBar.contains(e.relatedTarget)) {
-        collapseSort();
-      }
-    });
-
-    const handleOutsideSort = (e) => {
-      if (!sortBar.contains(e.target)) {
-        collapseSort();
-      }
-    };
-    document.addEventListener('pointerdown', handleOutsideSort, { passive: true });
-  }
-
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
     btn.onclick = (e) => {
       e.stopPropagation();
@@ -888,9 +883,20 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         setSectionSort(profile.id, selectedSection, sortType);
         setSectionSortOrder(profile.id, selectedSection, defaultOrder);
       }
-      showHome(tg, sync, profile, { selectedSection, focusSortToggle: true, fromPointer: e.detail > 0 });
+      showHome(tg, sync, profile, { selectedSection, focusSort: sortType, fromPointer: e.detail > 0 });
     };
   });
+
+  const filterUnidentBtn = document.querySelector('.category-filter-unidentified-btn');
+  if (filterUnidentBtn) {
+    filterUnidentBtn.onclick = (e) => {
+      e.stopPropagation();
+      filterUnidentBtn.blur();
+      const currentVal = getSectionFilterUnidentified(profile.id, selectedSection);
+      setSectionFilterUnidentified(profile.id, selectedSection, !currentVal);
+      showHome(tg, sync, profile, { selectedSection, focusSort: 'unidentified', fromPointer: e.detail > 0 });
+    };
+  }
   const viewBtn = document.querySelector('.category-view-btn');
   if (viewBtn) {
     viewBtn.onclick = (e) => {
@@ -907,7 +913,13 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     if (carouselHost && activeSection?.items) {
       const currentSort = getSectionSort(profile.id, selectedSection);
       const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
-      const sortedItems = sortTitles(activeSection?.items || [], currentSort, currentOrder);
+      const onlyUnidentified = getSectionFilterUnidentified(profile.id, selectedSection);
+      const isIdentified = (t) => Boolean(t.metadata?.id || t.tmdbId);
+      let itemsToShow = activeSection?.items || [];
+      if (onlyUnidentified) {
+        itemsToShow = itemsToShow.filter(t => !isIdentified(t));
+      }
+      const sortedItems = sortTitles(itemsToShow, currentSort, currentOrder);
       mountCarousel(carouselHost, {
         items: sortedItems,
         mode: currentView,
@@ -974,11 +986,14 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     let el = null;
     if (focusViewBtn) {
       el = document.querySelector('.category-view-btn');
-    } else if (focusSortToggle) {
-      el = document.querySelector('.category-sort-toggle');
-    } else if (focusSort && !fromPointer) {
-      document.querySelector('.category-sort-bar')?.classList.add('is-expanded');
-      el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);
+    } else if (focusSortToggle || focusSort) {
+      if (focusSort === 'unidentified') {
+        el = document.querySelector('.category-filter-unidentified-btn');
+      } else if (focusSort) {
+        el = document.querySelector(`.category-sort-btn[data-sort="${focusSort}"]`);
+      } else {
+        el = document.querySelector('.category-sort-btn.active') || document.querySelector('.category-sort-bar [data-focusable]');
+      }
     } else if (isCarousel) {
       el = document.querySelector('.carousel-stage');
     }
@@ -1044,7 +1059,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     }, 2500);
   };
 
-  const pendingBg = titles.filter(t => !t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata)));
+  const pendingBg = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   if (pendingBg.length > 0) {
     enrichTitles(pendingBg, { signal: metadataController.signal, onUpdate: title => {
       applyImagePrefs(title, profile);

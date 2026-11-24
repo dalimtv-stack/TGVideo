@@ -828,7 +828,7 @@ export async function enrichTitles(titles, { signal, onUpdate, onProgress } = {}
   let done = 0;
   let index = 0;
   const total = titles.length;
-  await Promise.all(Array.from({ length: Math.min(3, titles.length) }, async () => {
+  await Promise.all(Array.from({ length: Math.min(6, titles.length) }, async () => {
     while (index < titles.length && !signal?.aborted) {
       const title = titles[index++];
       try {
