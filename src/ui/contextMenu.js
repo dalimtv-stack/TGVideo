@@ -5,6 +5,9 @@
 // - Opción de reenviar o subida rápida a canal tgstorage
 
 import { loadLibrary } from '../library/channels.js';
+import { parseCaption, buildStandardCaption } from '../library/parse.js';
+import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
+import { startUploadTask, updateUploadTask } from './uploadTasks.js';
 
 function esc(value) {
   return String(value ?? '')
@@ -23,69 +26,12 @@ function formatBytes(bytes) {
 }
 
 function ensureProgressBar() {
-  let bar = document.getElementById('admin-global-upload-bar');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'admin-global-upload-bar';
-    bar.className = 'admin-global-upload-bar';
-    document.body.appendChild(bar);
-  }
-  return bar;
+  return document.getElementById('admin-global-upload-bar');
 }
 
-function setProgressBar(bar, { title, status, percent = 0, done = false, error = false }) {
-  bar.innerHTML = `
-    <div class="admin-upload-bar-inner">
-      <div class="admin-upload-bar-left">
-        ${error ? '<span class="admin-upload-bar-icon" style="color:#f87171;">⚠️</span>' : done ? '<span class="admin-upload-bar-icon" style="color:#34d399;">✓</span>' : '<span class="admin-upload-spinner"></span>'}
-        <div class="admin-upload-bar-text">
-          <div class="admin-upload-bar-title"><strong>${esc(title)}</strong></div>
-          <div class="admin-upload-bar-sub" style="color:${error ? '#f87171' : done ? '#34d399' : '#94a3b8'};">${esc(status)}</div>
-        </div>
-      </div>
-      <div class="admin-upload-bar-right">
-        <div class="admin-upload-bar-track">
-          <div class="admin-upload-bar-fill" style="width:${Math.max(0, Math.min(100, percent))}%;background:${error ? '#ef4444' : done ? '#10b981' : '#38bdf8'};"></div>
-        </div>
-        <span class="admin-upload-bar-pct">${Math.round(percent)}%</span>
-        ${done || error ? '<button class="admin-upload-bar-close" title="Cerrar">×</button>' : ''}
-      </div>
-    </div>
-  `;
-  const closeBtn = bar.querySelector('.admin-upload-bar-close');
-  if (closeBtn) {
-    closeBtn.onclick = () => bar.remove();
-  }
-}
-
-/**
- * Resuelve el InputPeer o entidad de Telegram para un canal dado.
- */
-async function resolvePeer(client, tg, channelOrId) {
-  if (!client) return null;
-  const channelId = String(channelOrId?.id || channelOrId || '').split('_top_')[0];
-  const cleanId = channelId.replace(/^-100/, '').replace(/^-/, '');
-
-  if (channelOrId?.entity) return channelOrId.entity;
-
-  if (client.getInputEntity) {
-    try {
-      return await client.getInputEntity(channelId);
-    } catch (_) {
-      try {
-        return await client.getInputEntity(`-100${cleanId}`);
-      } catch (_) {}
-    }
-  }
-
-  if (tg?.peerOf && channelOrId) {
-    try {
-      const p = tg.peerOf(channelOrId);
-      if (p) return p;
-    } catch (_) {}
-  }
-
-  return channelId;
+function setProgressBar(_bar, { id, title, status, percent = 0, done = false, error = false }) {
+  if (!id) return;
+  updateUploadTask(id, { title, status, percent, done, error });
 }
 
 /**
@@ -98,9 +44,11 @@ async function triggerFileDownload(client, tg, file) {
   }
   const bar = ensureProgressBar();
   const filename = file.fileName || file.captionFileName || file.label || `video_${file.messageId}.mp4`;
+  const taskId = startUploadTask(`Descargando: ${filename}`, 'Conectando con Telegram…', 0);
   const totalSize = Number(file.size) || 0;
 
   setProgressBar(bar, {
+    id: taskId,
     title: `Descargando: ${filename}`,
     status: `Conectando con Telegram… (${formatBytes(totalSize)})`,
     percent: 0,
@@ -118,6 +66,7 @@ async function triggerFileDownload(client, tg, file) {
         const t = total || totalSize || 1;
         const pct = Math.min(100, Math.round((done / t) * 100));
         setProgressBar(bar, {
+          id: taskId,
           title: `Descargando: ${filename}`,
           status: `${formatBytes(done)} / ${formatBytes(t)} (${pct}%)`,
           percent: pct,
@@ -139,6 +88,7 @@ async function triggerFileDownload(client, tg, file) {
     }, 1000);
 
     setProgressBar(bar, {
+      id: taskId,
       title: `Descarga completada: ${filename}`,
       status: `Guardado en tu equipo (${formatBytes(blob.size)})`,
       percent: 100,
@@ -147,6 +97,7 @@ async function triggerFileDownload(client, tg, file) {
   } catch (err) {
     console.error('[contextMenu] Error descargando archivo', err);
     setProgressBar(bar, {
+      id: taskId,
       title: `Error al descargar: ${filename}`,
       status: err.message || String(err),
       percent: 0,
@@ -317,8 +268,10 @@ async function showForwardModal(client, tg, file, getChannels) {
     closeModal();
 
     const bar = ensureProgressBar();
+    const taskId = startUploadTask(`${isFastUpload ? '⚡ Subida rápida' : '📤 Envío con caption app'}: ${filename}`, `Conectando con canal destino "${targetChannelName}"…`, 20);
     setProgressBar(bar, {
-      title: `${isFastUpload ? '⚡ Subida rápida' : 'Reenviando'}: ${filename}`,
+      id: taskId,
+      title: `${isFastUpload ? '⚡ Subida rápida' : '📤 Envío con caption app'}: ${filename}`,
       status: `Conectando con canal destino "${targetChannelName}"…`,
       percent: 20,
     });
@@ -333,40 +286,47 @@ async function showForwardModal(client, tg, file, getChannels) {
       }
 
       setProgressBar(bar, {
-        title: `${isFastUpload ? '⚡ Subida rápida' : 'Reenviando'}: ${filename}`,
+        id: taskId,
+        title: `${isFastUpload ? '⚡ Subida rápida' : '📤 Envío con caption app'}: ${filename}`,
         status: `Transmitiendo metadatos a "${targetChannelName}"…`,
         percent: 60,
       });
 
-      let sentSuccess = false;
-
-      if (isFastUpload && (msg.media.document || msg.media)) {
-        try {
-          const docMedia = msg.media.document || msg.media;
-          const caption = msg.message || file.rawCaption || file.caption || file.label || '';
-          
-          await client.sendFile(targetPeer, {
-            file: docMedia,
-            caption: caption,
-            forceDocument: false,
-            attributes: docMedia.attributes || [],
-          });
-          sentSuccess = true;
-        } catch (fastErr) {
-          console.warn('[contextMenu] La subida rápida directa falló, recurriendo a reenvío estándar', fastErr);
-        }
-      }
-
-      if (!sentSuccess) {
-        // Fallback a reenvío nativo de Telegram
-        await client.forwardMessages(targetPeer, {
-          messages: [msg.id],
-          fromPeer: sourcePeer,
+      // Construir caption estándar de la app para que el archivo quede perfectamente identificado
+      let standardCaption = '';
+      try {
+        const cap = parseCaption(file.rawCaption || msg.message || '');
+        standardCaption = buildStandardCaption({
+          fileName: file.fileName || file.captionFileName || file.label,
+          section: targetChannel?.section || targetChannel?.group || file.section || '',
+          tmdbId: file.metadata?.id || file.tmdbId || cap.tmdbId || '',
+          imdbId: file.metadata?.imdb_id || file.imdbId || cap.imdbId || '',
+          director: file.metadata?.director || cap.director || '',
+          writer: file.metadata?.writer || cap.writer || '',
+          cast: file.metadata?.cast || cap.cast || '',
+          rating: file.metadata?.rating || file.metadata?.vote_average || cap.rating || '',
+          ageRating: file.metadata?.ageRating || cap.ageRating || '',
+          synopsis: file.metadata?.overview || file.metadata?.synopsis || file.synopsis || cap.synopsis || '',
         });
+      } catch (_) {
+        standardCaption = file.rawCaption || msg.message || file.caption || file.label || '';
       }
+
+      const docMedia = msg.media?.document || msg.media;
+      if (!docMedia) throw new Error('El mensaje original no contiene un archivo reenviable.');
+
+      // Enviar el medio con sendFile para aplicar el caption estándar. forwardMessages
+      // conserva el caption original y no permite sustituirlo.
+      await client.sendFile(targetPeer, {
+        file: docMedia,
+        caption: standardCaption,
+        forceDocument: false,
+        attributes: docMedia.attributes || [],
+      });
 
       setProgressBar(bar, {
-        title: `${isFastUpload ? '⚡ Subida rápida completada' : 'Reenvío completado'}: ${filename}`,
+        id: taskId,
+        title: `${isFastUpload ? '⚡ Subida rápida completada' : '📤 Envío completado'}: ${filename}`,
         status: `Añadido a "${targetChannelName}" con éxito`,
         percent: 100,
         done: true,
@@ -374,6 +334,7 @@ async function showForwardModal(client, tg, file, getChannels) {
     } catch (err) {
       console.error('[contextMenu] Error en subida/reenvío', err);
       setProgressBar(bar, {
+        id: taskId,
         title: `Error al enviar: ${filename}`,
         status: err.message || String(err),
         percent: 0,
@@ -423,7 +384,9 @@ export function initContextMenu(config) {
     let targetFile = null;
     let titleName = '';
     const config = activeContextConfig || {};
-    const allTitles = (typeof config.getTitles === 'function' ? config.getTitles() : []) || [];
+    const internalTitles = (typeof config.getTitles === 'function' ? config.getTitles() : []) || [];
+    const externalTitlesList = Array.from(EXT_CHANNEL_TITLES_CACHE?.values?.() || []).flat();
+    const allTitles = [...internalTitles, ...externalTitlesList];
 
     if (epEl) {
       const key = epEl.dataset.key;
@@ -438,7 +401,7 @@ export function initContextMenu(config) {
       if (!targetFile) {
         const detailEl = document.querySelector('.detail');
         const detailTitleId = detailEl?.dataset?.title;
-        const dt = allTitles.find(x => String(x.id) === String(detailTitleId));
+        const dt = allTitles.find(x => String(x.id) === String(detailTitleId)) || detailEl?._titleData;
         if (dt) {
           const found = dt.archivos?.find(f => f.key === key || String(f.messageId) === String(epEl.dataset.messageId));
           if (found) {

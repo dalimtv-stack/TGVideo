@@ -113,7 +113,10 @@ export function unbundleTitles(items = []) {
       continue;
     }
     for (const f of files) {
-      const epLabel = t.tipo === 'serie' ? (f.label || prettyEpisodeName(f) || f.fileName) : (f.label || f.fileName || t.nombre);
+      const rawEpName = f.captionFileName || f.fileName || '';
+      const epLabel = t.tipo === 'serie'
+        ? (f.label || prettyEpisodeName(rawEpName, t.nombre) || f.fileName || 'Episodio')
+        : (f.label || f.fileName || t.nombre);
       result.push({
         ...t,
         id: `${t.channel?.id || t.id}:${f.messageId}`,
@@ -140,7 +143,7 @@ export function groupTitles(items = []) {
 
   for (const it of items) {
     const isSeries = it.tipo === 'serie';
-    const isMovie = it.tipo === 'pelicula';
+    const isMovie = it.tipo === 'pelicula' || it.tipo === 'documental';
     const files = it.archivos && it.archivos.length > 0 ? it.archivos : [{
       messageId: it.messageId || String(it.id).split(':')[1] || 0,
       fileName: it.fileName || it.nombre,
@@ -152,8 +155,8 @@ export function groupTitles(items = []) {
     if (isSeries) {
       const firstFile = files[0];
       const rawName = firstFile?.captionFileName || firstFile?.fileName || it.nombre;
-      const sName = it.parentTitle?.nombre || (it.isLooseFile ? seriesNameFromFile(rawName) : null) || it.nombre;
-      const key = `${it.channel?.id || ''}:${sName.toLowerCase().trim()}`;
+      const sName = String(it.parentTitle?.nombre || (it.isLooseFile ? seriesNameFromFile(rawName) : null) || it.nombre || 'Serie').trim();
+      const key = `${it.channel?.id || ''}:${sName.toLowerCase()}`;
       if (!seriesMap.has(key)) {
         seriesMap.set(key, {
           ...it,
@@ -408,25 +411,13 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     if (parsed) Object.assign(ch, { name: parsed.name, group: parsed.group, category: parsed.category, macro: !!parsed.macro, isYearContainer: !!parsed.isYearContainer, isSaga: !!parsed.isSaga });
     const prev = cache[ch.id];
     let files = [];
-    let chTop = ch.top || 0;
-    if (!chTop && prev?.top && client && peerOf) {
-      try {
-        const p = peerOf(ch);
-        if (p) {
-          const msgs = await client.getMessages(p, { limit: 1 });
-          if (msgs && msgs[0]) chTop = msgs[0].id;
-        }
-      } catch (_) {}
-    }
-
-    if (prev && (!client || (prev.top === (chTop || ch.top) && prev.title === ch.title && (prev.top || chTop)))) {
+    if (prev && (!client || (prev.top === ch.top && prev.title === ch.title && ch.top))) {
       files = prev.files.map(f => ({ ...f, channel: f.channel || ch }));
     } else {
       try { files = await scanFiles(client, peerOf(ch), ch); }
       catch (e) { console.warn('[titles] no se pudo leer', ch.title, e); }
     }
-    const finalTop = chTop || ch.top || (files[0]?.messageId || 0);
-    newCache[ch.id] = { top: finalTop, title: ch.title, files: files.map(f => ({ ...f })) };
+    newCache[ch.id] = { top: ch.top, title: ch.title, files: files.map(f => ({ ...f })) };
 
     // Filtro: NO mostrar canales vacíos en TGVideo
     if (!files || files.length === 0) {

@@ -1,7 +1,7 @@
 // src/ui/adminChannels.js
 // Módulo para escanear, integrar y desvincular canales, grupos y temas externos en la biblioteca.
 import { Api } from 'telegram';
-import { clearExternalChannelCache } from './externalsView.js';
+import { clearExternalChannelCache } from './externalTitlesCache.js';
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
 import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../metadata/tmdb.js';
 import { seriesNameFromFile } from '../library/titles.js';
@@ -57,6 +57,45 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles) {
       generatedTitles.push({
         id: String(grp.id),
         tipo: 'pelicula',
+        isSaga: false,
+        grupo: groupName,
+        nombre: grp.nombre,
+        yearHint: grp.yearHint,
+        origen: { tipo: 'externo', channelId: String(virtualId), messageId: grp.files[0].messageId },
+        channel: channelRecord,
+        archivos: grp.files,
+        ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
+        tmdbId: grp.tmdbId,
+        imdbId: grp.imdbId,
+      });
+    }
+  } else if (category === 'Documentales') {
+    const docMap = new Map();
+    for (const f of detectedFiles) {
+      const targetFileName = f.captionFileName || f.fileName || f.label;
+      const captionCandidate = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
+      const parsed = captionCandidate || extractTitleAndYear(targetFileName);
+      const baseName = parsed.title || f.label;
+      const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${parsed.year || ''}`;
+      if (!docMap.has(key)) {
+        docMap.set(key, {
+          id: `${virtualId}:${f.messageId}`,
+          nombre: baseName,
+          yearHint: parsed.year || null,
+          files: [f],
+          tmdbId: f.tmdbId || null,
+          imdbId: f.imdbId || null,
+        });
+      } else {
+        const grp = docMap.get(key);
+        grp.files.push(f);
+        if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+      }
+    }
+    for (const grp of docMap.values()) {
+      generatedTitles.push({
+        id: String(grp.id),
+        tipo: 'documental',
         isSaga: false,
         grupo: groupName,
         nombre: grp.nombre,
@@ -978,4 +1017,99 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
     console.error('Error en vista total de canales externos', err);
     container.innerHTML = `<div style="color:#f87171;padding:1rem;">Error cargando vista externa: ${esc(err.message || String(err))}</div>`;
   }
+}
+/**
+ * Escanea o actualiza un único canal externo (rápido o completo) y refresca su almacenamiento.
+ */
+export async function scanSingleExternalChannel({ tg, sync, channelRecord, isFull = false }) {
+  if (!tg || !channelRecord) return;
+  const client = tg.getClient?.() || tg.client;
+  if (!client) throw new Error('Cliente de Telegram no disponible');
+
+  const channelId = String(channelRecord.channelId || channelRecord.tgChannelId || channelRecord.id).split('_top_')[0];
+  const isTopic = Boolean(channelRecord.isTopic && channelRecord.topicId);
+  const virtualId = isTopic ? `${channelId}_top_${channelRecord.topicId}` : String(channelRecord.id || channelId);
+
+  let peer = channelRecord.entity;
+  if (!peer) {
+    try {
+      peer = await client.getInputEntity(channelId);
+    } catch (_) {
+      try {
+        const cleanId = channelId.replace(/^-100/, '').replace(/^-/, '');
+        peer = await client.getInputEntity(`-100${cleanId}`);
+      } catch (err) {
+        throw new Error('No se pudo resolver el canal en Telegram: ' + (err.message || String(err)));
+      }
+    }
+  }
+
+  let existingFiles = [];
+  let minId = 0;
+  if (!isFull) {
+    existingFiles = (await kv.get(`ext_files_${virtualId}`).catch(() => [])) || [];
+    minId = existingFiles.reduce((m, f) => Math.max(m, Number(f.messageId || 0)), 0);
+  }
+
+  const iterOptions = {};
+  if (isTopic) iterOptions.replyTo = channelRecord.topicId;
+  if (minId > 0) iterOptions.minId = minId;
+
+  const newDetected = [];
+  for await (const msg of client.iterMessages(peer, iterOptions)) {
+    if (isVideoMessage(msg)) {
+      const rawCaption = msg.message || '';
+      const cap = parseCaption(rawCaption);
+      const captionFileName = cap.fileName ? cap.fileName.trim() : null;
+      const rawFileName = getFileName(msg) || '';
+      const fileName = captionFileName || rawFileName || `video_${msg.id}.mp4`;
+      const ep = parseEpisode(fileName);
+      const doc = msg.document || msg.media?.document;
+      const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
+
+      newDetected.push({
+        key: `${virtualId}:${msg.id}`,
+        channelId: virtualId,
+        messageId: msg.id,
+        channel: channelRecord,
+        fileName,
+        captionFileName,
+        rawFileName,
+        rawCaption,
+        label: prettyName(fileName),
+        section: cap.section || null,
+        synopsis: cap.synopsis || null,
+        tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null,
+        imdbId: cap.imdbId ? String(cap.imdbId).trim() : null,
+        rating: cap.rating ? Number(cap.rating) : null,
+        ageRating: cap.ageRating || null,
+        season: ep.season,
+        episode: ep.episode,
+        size: Number(doc?.size?.toString?.() || doc?.size || 0),
+        duration: durAttr?.duration || 0,
+        mimeType: doc?.mimeType || 'video/mp4',
+        date: msg.date,
+      });
+    }
+  }
+
+  const finalFiles = isFull ? newDetected : [...newDetected, ...existingFiles];
+  // Deduplicar por messageId
+  const uniqueMap = new Map();
+  finalFiles.forEach(f => {
+    if (!uniqueMap.has(f.messageId)) uniqueMap.set(f.messageId, f);
+  });
+  const mergedFiles = Array.from(uniqueMap.values());
+
+  // Guardar en kv
+  await kv.set(`ext_files_${virtualId}`, mergedFiles).catch(() => {});
+  const savedObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
+  savedObj.cache = savedObj.cache || {};
+  savedObj.cache[virtualId] = mergedFiles;
+  await kv.set(LIB_KEY, savedObj).catch(() => {});
+
+  if (sync?.saveProfile) {
+    await sync.saveProfile().catch(() => {});
+  }
+  return mergedFiles;
 }

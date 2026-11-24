@@ -2,6 +2,7 @@
 // Listado y gestión real de vídeos reenviados en canales ::tgstorage.
 import { loadLibrary } from '../library/channels.js';
 import { Api } from 'telegram';
+import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
 
 function esc(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -16,23 +17,8 @@ function getFilename(msg) {
   const doc = msg.document || msg.media?.document;
   return doc?.attributes?.find(a => a.className === 'DocumentAttributeFilename')?.fileName || `video_${msg.id}.mp4`;
 }
-function ensureProgressBar() {
-  let bar = document.getElementById('admin-global-upload-bar');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'admin-global-upload-bar';
-    bar.className = 'admin-global-upload-bar';
-    document.body.appendChild(bar);
-  }
-  return bar;
-}
-function setProgress(bar, { title, status, percent = 0, done = false, error = false }) {
-  bar.innerHTML = `<div class="admin-upload-bar-inner">
-    <div class="admin-upload-bar-left">${error ? '<span class="admin-upload-bar-icon" style="color:#f87171;">⚠️</span>' : done ? '<span class="admin-upload-bar-icon" style="color:#34d399;">✓</span>' : '<span class="admin-upload-spinner"></span>'}
-      <div class="admin-upload-bar-text"><div class="admin-upload-bar-title"><strong>${esc(title)}</strong></div><div class="admin-upload-bar-sub" style="color:${error ? '#f87171' : done ? '#34d399' : ''}">${esc(status)}</div></div></div>
-    <div class="admin-upload-bar-right"><div class="admin-upload-bar-track"><div class="admin-upload-bar-fill" style="width:${percent}%;"></div></div><span class="admin-upload-bar-pct">${percent}%</span>
-      ${done || error ? '<button class="admin-upload-bar-close" title="Cerrar">×</button>' : ''}</div></div>`;
-  bar.querySelector('.admin-upload-bar-close')?.addEventListener('click', () => bar.remove());
+function setProgress(taskId, { title, status, percent = 0, done = false, error = false }) {
+  updateUploadTask(taskId, { title, status, percent, done, error });
 }
 
 export async function renderForwardedTab({ mainPanel, client, tg }) {
@@ -99,18 +85,20 @@ function selectedEntries(selected, byChannel) {
 async function downloadSelected(selected, byChannel, client) {
   const entries = selectedEntries(selected, byChannel);
   if (!entries.length) return;
-  const bar = ensureProgressBar();
-  try {
-    for (let i = 0; i < entries.length; i++) {
-      const item = entries[i];
-      setProgress(bar, { title: `Descargando ${item.filename}`, status: `${i + 1} de ${entries.length}`, percent: 0 });
-      const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(bar, { title: `Descargando ${item.filename}`, status: `${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(100, Math.round(done / (total || item.size || 1) * 100)) }) });
+  const taskIds = entries.map(item => startUploadTask(`Descargando ${item.filename}`, 'En cola…', 0));
+  for (let i = 0; i < entries.length; i++) {
+    const item = entries[i];
+    const taskId = taskIds[i];
+    try {
+      setProgress(taskId, { title: `Descargando ${item.filename}`, status: `Iniciando · ${i + 1} de ${entries.length}`, percent: 0 });
+      const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(taskId, { title: `Descargando ${item.filename}`, status: `${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(100, Math.round(done / (total || item.size || 1) * 100)) }) });
       const blob = new Blob([bytes], { type: item.msg.document?.mimeType || 'application/octet-stream' });
       const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = item.filename; anchor.click(); URL.revokeObjectURL(url);
-    }
-    setProgress(bar, { title: 'Descarga completada', status: `Se descargaron ${entries.length} archivos.`, percent: 100, done: true });
-  } catch (error) { console.error(error); setProgress(bar, { title: 'Error al descargar', status: error.message || String(error), error: true }); }
+      finishUploadTask(taskId, 'Descarga guardada en el dispositivo', 100);
+    } catch (error) { console.error(error); failUploadTask(taskId, error.message || String(error)); }
+  }
 }
+
 function showRenameAndReupload(selected, byChannel, client) {
   const entries = selectedEntries(selected, byChannel);
   if (!entries.length) return;
@@ -129,21 +117,22 @@ function showRenameAndReupload(selected, byChannel, client) {
 }
 async function reuploadQueue(entries, client) {
   if (!entries.length) return;
-  const bar = ensureProgressBar();
+  const taskIds = entries.map(item => startUploadTask(`Resubiendo ${item.newName}`, 'En cola…', 0));
   for (let i = 0; i < entries.length; i++) {
     const item = entries[i];
+    const taskId = taskIds[i];
     try {
-      setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Descargando original · ${i + 1} de ${entries.length}`, percent: 0 });
-      const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Descargando ${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(45, Math.round(done / (total || item.size || 1) * 45)) }) });
+      setProgress(taskId, { title: `Resubiendo ${item.newName}`, status: `Descargando original · ${i + 1} de ${entries.length}`, percent: 0 });
+      const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(taskId, { title: `Resubiendo ${item.newName}`, status: `Descargando ${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(45, Math.round(done / (total || item.size || 1) * 45)) }) });
       const blob = new Blob([bytes], { type: item.msg.document?.mimeType || 'application/octet-stream' });
-      const upload = await client.uploadFile({ file: new File([blob], item.newName, { type: blob.type }), workers: 3, onProgress: progress => setProgress(bar, { title: `Resubiendo ${item.newName}`, status: `Subiendo ${formatBytes(progress * item.size)} / ${formatBytes(item.size)}`, percent: 45 + Math.round(progress * 50) }) });
+      const upload = await client.uploadFile({ file: new File([blob], item.newName, { type: blob.type }), workers: 3, onProgress: progress => setProgress(taskId, { title: `Resubiendo ${item.newName}`, status: `Subiendo ${formatBytes(progress * item.size)} / ${formatBytes(item.size)}`, percent: 45 + Math.round(progress * 50) }) });
       const caption = item.msg.message || '';
       await client.sendFile(item.peer, { file: upload, caption, forceDocument: true, attributes: [new Api.DocumentAttributeFilename({ fileName: item.newName })] });
+      finishUploadTask(taskId, 'Resubida completada', 100);
     } catch (error) {
       console.error('[adminForwarded] Error resubiendo', item.newName, error);
-      setProgress(bar, { title: `Error con ${item.newName}`, status: error.message || String(error), error: true });
+      failUploadTask(taskId, error.message || String(error));
       return;
     }
   }
-  setProgress(bar, { title: 'Resubida completada', status: `Se resubieron ${entries.length} archivos.`, percent: 100, done: true });
 }

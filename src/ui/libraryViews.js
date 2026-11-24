@@ -79,27 +79,27 @@ export function createLibraryViews(deps) {
           const msgA = a.ultimoMensajeFecha || 0;
           const msgB = b.ultimoMensajeFecha || 0;
           if (msgB !== msgA) return (msgA - msgB) * mult;
-          const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
-          const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+          const nameA = String(a.metadata?.name || a.metadata?.title || a.nombre || '');
+          const nameB = String(b.metadata?.name || b.metadata?.title || b.nombre || '');
           return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
         });
       }
       if (sortType === 'nombre') {
         return list.sort((a, b) => {
-          const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
-          const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+          const nameA = String(a.metadata?.name || a.metadata?.title || a.nombre || '');
+          const nameB = String(b.metadata?.name || b.metadata?.title || b.nombre || '');
           return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' }) * mult;
         });
       }
       if (sortType === 'estreno') {
         return list.sort((a, b) => {
-          const dateA = a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '';
-          const dateB = b.metadata?.date || b.yearHint || b.metadata?.release_date || b.metadata?.first_air_date || '';
+          const dateA = String(a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '');
+          const dateB = String(b.metadata?.date || b.yearHint || b.metadata?.release_date || b.metadata?.first_air_date || '');
           if (dateA && dateB && dateA !== dateB) return dateA.localeCompare(dateB) * mult;
           if (dateA && !dateB) return -1 * mult;
           if (!dateA && dateB) return 1 * mult;
-          const nameA = a.metadata?.name || a.metadata?.title || a.nombre || '';
-          const nameB = b.metadata?.name || b.metadata?.title || b.nombre || '';
+          const nameA = String(a.metadata?.name || a.metadata?.title || a.nombre || '');
+          const nameB = String(b.metadata?.name || b.metadata?.title || b.nombre || '');
           return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
         });
       }
@@ -143,6 +143,9 @@ export function createLibraryViews(deps) {
             <h1>${esc(row.title)}</h1>
             <span class="grid-count">${initialItems.length} ${initialItems.length === 1 ? "título" : "títulos"}</span>
           </div>
+          ${row.isExternal ? `
+            <button class="btn-icon" data-focusable id="grid-btn-reload" title="Actualizar canal" aria-label="Actualizar canal" style="font-size: 1.2rem; margin-right: 0.4rem;">↻</button>
+          ` : ''}
           <div class="grid-tools" role="region" aria-label="Herramientas de ordenación de cuadrícula">
             ${renderToolsHtml()}
           </div>
@@ -205,8 +208,34 @@ export function createLibraryViews(deps) {
 
     renderCards(initialItems);
 
+    const updateToolsUI = () => {
+      document.querySelectorAll(".grid-sort-btn").forEach(btn => {
+        const s = btn.dataset.sort;
+        const isActive = s === currentSort;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-pressed", String(isActive));
+        const baseName = s === "subida" ? "Subida" : s === "nombre" ? "Nombre" : "Estreno";
+        const arrow = isActive ? (currentDir === "asc" ? " ↑" : " ↓") : "";
+        btn.textContent = `${baseName}${arrow}`;
+      });
+      const gBtn = document.querySelector(".grid-filter-group-btn");
+      if (gBtn) {
+        gBtn.classList.toggle("active", isGrouped);
+        gBtn.setAttribute("aria-checked", String(isGrouped));
+        const icon = gBtn.querySelector(".grid-filter-icon");
+        if (icon) icon.textContent = isGrouped ? "☑" : "☐";
+      }
+      const fBtn = document.querySelector(".grid-filter-unidentified-btn");
+      if (fBtn) {
+        fBtn.classList.toggle("active", onlyUnidentified);
+        fBtn.setAttribute("aria-checked", String(onlyUnidentified));
+        const icon = fBtn.querySelector(".grid-filter-icon");
+        if (icon) icon.textContent = onlyUnidentified ? "☑" : "☐";
+      }
+    };
+
     const bindTools = () => {
-      document.querySelectorAll("#app .grid-sort-btn").forEach(btn => {
+      document.querySelectorAll(".grid-sort-btn").forEach(btn => {
         btn.onclick = (e) => {
           e.stopPropagation();
           const sortType = btn.dataset.sort;
@@ -218,50 +247,89 @@ export function createLibraryViews(deps) {
           }
           setGridSort(currentSort);
           setGridSortDir(currentDir);
-
-          const toolsEl = document.querySelector(".grid-tools");
-          if (toolsEl) {
-            toolsEl.innerHTML = renderToolsHtml();
-            bindTools();
-            const activeBtn = toolsEl.querySelector(`.grid-sort-btn[data-sort="${sortType}"]`);
-            activeBtn?.focus();
-          }
+          updateToolsUI();
           renderCards(getProcessedItems());
         };
       });
 
-      const groupBtn = document.querySelector("#app .grid-filter-group-btn");
+      const groupBtn = document.querySelector(".grid-filter-group-btn");
       if (groupBtn) {
         groupBtn.onclick = (e) => {
           e.stopPropagation();
           isGrouped = !isGrouped;
           setGridGrouped(isGrouped);
-          const toolsEl = document.querySelector(".grid-tools");
-          if (toolsEl) {
-            toolsEl.innerHTML = renderToolsHtml();
-            bindTools();
-            const newGroupBtn = toolsEl.querySelector(".grid-filter-group-btn");
-            newGroupBtn?.focus();
-          }
+          updateToolsUI();
           renderCards(getProcessedItems());
         };
       }
 
-      const filterBtn = document.querySelector("#app .grid-filter-unidentified-btn");
+      const filterBtn = document.querySelector(".grid-filter-unidentified-btn");
       if (filterBtn) {
         filterBtn.onclick = (e) => {
           e.stopPropagation();
           onlyUnidentified = !onlyUnidentified;
           setGridFilterUnidentified(onlyUnidentified);
-
-          const toolsEl = document.querySelector(".grid-tools");
-          if (toolsEl) {
-            toolsEl.innerHTML = renderToolsHtml();
-            bindTools();
-            const newFilterBtn = toolsEl.querySelector(".grid-filter-unidentified-btn");
-            newFilterBtn?.focus();
-          }
+          updateToolsUI();
           renderCards(getProcessedItems());
+        };
+      }
+
+      const reloadBtn = document.getElementById("grid-btn-reload");
+      if (reloadBtn && row.isExternal && typeof row.onRefreshRequested === "function") {
+        reloadBtn.onclick = (e) => {
+          e.stopPropagation();
+          const reloadOverlay = document.createElement("div");
+          reloadOverlay.className = "modal-overlay";
+          reloadOverlay.style.cssText = "position:fixed;inset:0;z-index:100050;background:rgba(0,0,0,0.78);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:1rem;";
+          reloadOverlay.innerHTML = `
+            <div style="background:#181c24;border:1px solid rgba(255,255,255,0.15);border-radius:12px;max-width:480px;width:100%;color:#fff;padding:1.5rem;box-shadow:0 20px 40px rgba(0,0,0,0.8);">
+              <h3 style="margin:0 0 0.8rem;font-size:1.15rem;font-weight:700;">Actualizar canal externo</h3>
+              <p style="color:#aaa;font-size:0.9rem;margin:0 0 1.2rem;">Selecciona el modo de actualización para este canal:</p>
+              <div style="display:flex;flex-direction:column;gap:0.75rem;">
+                <button type="button" id="ext-opt-quick" class="btn" data-focusable style="text-align:left;padding:0.85rem 1rem;">
+                  <div style="font-weight:700;font-size:1rem;color:#fff;">⚡ Actualización rápida</div>
+                  <div style="font-size:0.82rem;color:#bbb;margin-top:0.2rem;">Comprueba solo mensajes nuevos posteriores al último escaneo.</div>
+                </button>
+                <button type="button" id="ext-opt-full" class="btn btn-secondary" data-focusable style="text-align:left;padding:0.85rem 1rem;">
+                  <div style="font-weight:700;font-size:1rem;color:#fff;">🔄 Forzar actualización completa</div>
+                  <div style="font-size:0.82rem;color:#bbb;margin-top:0.2rem;">Reescanea todo el canal desde el principio.</div>
+                </button>
+              </div>
+              <div style="text-align:right;margin-top:1.2rem;">
+                <button type="button" id="ext-opt-cancel" style="background:transparent;border:1px solid rgba(255,255,255,0.2);color:#ccc;border-radius:6px;padding:0.5rem 1rem;cursor:pointer;">Cancelar</button>
+              </div>
+            </div>`;
+          document.body.appendChild(reloadOverlay);
+          const closeReloadModal = () => reloadOverlay.remove();
+          reloadOverlay.querySelector("#ext-opt-cancel").onclick = closeReloadModal;
+          reloadOverlay.querySelector("#ext-opt-quick").onclick = async () => {
+            closeReloadModal();
+            reloadBtn.style.animation = "spinUpload 1s linear infinite";
+            try {
+              const freshTitles = await row.onRefreshRequested(false);
+              if (Array.isArray(freshTitles)) {
+                baseItems.length = 0;
+                baseItems.push(...freshTitles);
+                renderCards(getProcessedItems());
+              }
+            } finally {
+              reloadBtn.style.animation = "";
+            }
+          };
+          reloadOverlay.querySelector("#ext-opt-full").onclick = async () => {
+            closeReloadModal();
+            reloadBtn.style.animation = "spinUpload 1s linear infinite";
+            try {
+              const freshTitles = await row.onRefreshRequested(true);
+              if (Array.isArray(freshTitles)) {
+                baseItems.length = 0;
+                baseItems.push(...freshTitles);
+                renderCards(getProcessedItems());
+              }
+            } finally {
+              reloadBtn.style.animation = "";
+            }
+          };
         };
       }
     };

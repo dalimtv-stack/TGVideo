@@ -5,6 +5,7 @@ import { loadLibrary } from '../library/channels.js';
 import { buildStandardCaption, prettyName } from '../library/parse.js';
 import { searchTmdbManual, cleanSearchName, extractTitleAndYear, parseTmdbId } from '../metadata/tmdb.js';
 import { createKV } from '../core/kv.js';
+import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
 
 const kv = createKV();
 const LIB_KEY = 'library_v2';
@@ -371,40 +372,12 @@ function startBackgroundUpload({
     return;
   }
 
-  let uploadBar = document.getElementById('admin-global-upload-bar');
-  if (!uploadBar) {
-    uploadBar = document.createElement('div');
-    uploadBar.id = 'admin-global-upload-bar';
-    uploadBar.className = 'admin-global-upload-bar';
-    document.body.appendChild(uploadBar);
-  }
-
-  uploadBar.innerHTML = `
-    <div class="admin-upload-bar-inner">
-      <div class="admin-upload-bar-left">
-        <span class="admin-upload-bar-icon" id="upload-bar-icon"><span class="admin-upload-spinner"></span></span>
-        <div class="admin-upload-bar-text">
-          <div class="admin-upload-bar-title">Subiendo: <strong>${esc(finalFilename)}</strong> a <em>${esc(targetTitle)}</em></div>
-          <div class="admin-upload-bar-sub" id="upload-bar-status">Iniciando subida en segundo plano… (0%)</div>
-        </div>
-      </div>
-      <div class="admin-upload-bar-right">
-        <div class="admin-upload-bar-track">
-          <div class="admin-upload-bar-fill" id="upload-bar-fill" style="width:0%;"></div>
-        </div>
-        <span class="admin-upload-bar-pct" id="upload-bar-pct">0%</span>
-        <button class="admin-upload-bar-close" id="upload-bar-close" style="display:none;" title="Cerrar">×</button>
-      </div>
-    </div>
-  `;
-
-  const statusEl = uploadBar.querySelector('#upload-bar-status');
-  const fillEl = uploadBar.querySelector('#upload-bar-fill');
-  const pctEl = uploadBar.querySelector('#upload-bar-pct');
-  const iconEl = uploadBar.querySelector('#upload-bar-icon');
-  const closeBtn = uploadBar.querySelector('#upload-bar-close');
-
-  closeBtn.addEventListener('click', () => uploadBar.remove());
+  let currentPercent = 0;
+  const taskId = startUploadTask(`Subiendo: ${finalFilename}`, `Preparando subida a ${targetTitle}…`, 0);
+  const setTaskStatus = (status, percent = currentPercent) => {
+    currentPercent = Math.max(0, Math.min(100, Number(percent) || 0));
+    updateUploadTask(taskId, { title: `Subiendo: ${finalFilename}`, status, percent: currentPercent });
+  };
 
   alert(`La subida de "${finalFilename}" ha comenzado en segundo plano.
 Puedes seguir navegando mientras avanza la barra inferior.`);
@@ -435,15 +408,11 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
         onProgress: (progress) => {
           const pct = Math.min(100, Math.round(progress * 100));
           const uploadedBytes = Math.round(progress * file.size);
-          fillEl.style.width = `${pct}%`;
-          pctEl.textContent = `${pct}%`;
-          statusEl.textContent = `Subiendo partes: ${formatBytes(uploadedBytes)} / ${formatBytes(file.size)} (${pct}%)`;
+          setTaskStatus(`Subiendo partes: ${formatBytes(uploadedBytes)} / ${formatBytes(file.size)} (${pct}%)`, pct);
         }
       });
 
-      statusEl.textContent = 'Registrando mensaje y metadatos en Telegram…';
-      fillEl.style.width = '100%';
-      pctEl.textContent = '100%';
+      setTaskStatus('Registrando mensaje y metadatos en Telegram…', 100);
 
       const safeCaption = fitTelegramCaption(caption, 1024);
       if (safeCaption.length < String(caption || '').length) {
@@ -458,10 +427,10 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
       if (!videoAsDocument) {
         // MP4: se envía como vídeo nativo con streaming, duración, resolución y miniatura.
         try {
-          statusEl.textContent = 'Preparando vídeo (duración y miniatura)…';
+          setTaskStatus('Preparando vídeo (duración y miniatura)…');
           videoInfo = await probeVideo(file);
           console.log('[upload] vídeo detectado', { duration: videoInfo.duration, width: videoInfo.width, height: videoInfo.height, thumb: !!videoInfo.thumb });
-          statusEl.textContent = 'Publicando como vídeo en Telegram…';
+          setTaskStatus('Publicando como vídeo en Telegram…');
           const opts = {
             file: inputFile,
             caption: safeCaption,
@@ -482,7 +451,7 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
           sentAsVideo = true;
         } catch (e) {
           console.warn('[upload] Envío como vídeo rechazado, se reintenta como documento:', e?.message || e);
-          statusEl.textContent = 'Telegram rechazó el vídeo; reintentando como documento…';
+          setTaskStatus('Telegram rechazó el vídeo; reintentando como documento…');
         }
       }
 
@@ -531,22 +500,10 @@ Puedes seguir navegando mientras avanza la barra inferior.`);
         await addEntryToLibraryCache(targetChannelId, targetChannel, null, null);
       }
 
-      iconEl.innerHTML = '<span style="font-size:1.3rem;color:#34d399;">✓</span>';
-      iconEl.style.color = '#34d399';
-      statusEl.textContent = `✓ Subida completada (${sentAsVideo ? 'como vídeo' : 'como documento'}) en ${targetTitle} (Mensaje #${messageId || 'OK'})`;
-      statusEl.style.color = '#34d399';
-      closeBtn.style.display = 'block';
-
-      setTimeout(() => {
-        uploadBar?.remove();
-      }, 10000);
+      finishUploadTask(taskId, `✓ Subida completada (${sentAsVideo ? 'como vídeo' : 'como documento'}) en ${targetTitle} (Mensaje #${messageId || 'OK'})`, 100);
     } catch (err) {
       console.error('Error durante la subida en segundo plano', err);
-      iconEl.innerHTML = '<span style="font-size:1.3rem;color:#f87171;">⚠️</span>';
-      iconEl.style.color = '#f87171';
-      statusEl.textContent = `Error en la subida: ${esc(err.message || String(err))}`;
-      statusEl.style.color = '#f87171';
-      closeBtn.style.display = 'block';
+      failUploadTask(taskId, `Error en la subida: ${err.message || String(err)}`);
     }
   })();
 }
