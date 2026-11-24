@@ -1333,3 +1333,7 @@ async function start() {
     showError(err?.message || String(err));
   }
 }
+
+hookConsole();
+initDpad();
+start();
