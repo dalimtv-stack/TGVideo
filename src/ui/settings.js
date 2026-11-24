@@ -312,7 +312,7 @@ export function modal(title, body, subtitle = '', onClose = null) {
   return { overlay, close };
 }
 
-export async function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalChanged, libraryTitles = [] }) {
+export async function showProfileMenu({ profile, sync, onSwitch, onChanged, onGlobalChanged, onOpenAdmin, libraryTitles = [] }) {
   const isApk = isAndroidApp();
   let updateInfo = null;
 
@@ -354,6 +354,7 @@ export async function showProfileMenu({ profile, sync, onSwitch, onChanged, onGl
       <button class="btn-ghost" data-focusable data-action="profile">Ajustes de perfil</button>
       <button class="btn-ghost" data-focusable data-action="device">Ajustes de dispositivo</button>
       <button class="btn-ghost" data-focusable data-action="global">Ajustes globales</button>
+      <button class="btn-ghost" data-focusable data-action="admin">Administrador</button>
       <button class="btn-ghost" data-focusable data-action="developer">Desarrollador</button>
       ${updateBtnHtml}
     </nav>
@@ -362,6 +363,7 @@ export async function showProfileMenu({ profile, sync, onSwitch, onChanged, onGl
   overlay.querySelector('[data-action="profile"]').onclick = () => { close(); profileSettings(profile, sync, onChanged); };
   overlay.querySelector('[data-action="device"]').onclick = () => { close(); deviceSettings(profile, sync, onChanged); };
   overlay.querySelector('[data-action="global"]').onclick = () => { close(); globalSettings(sync, onGlobalChanged, libraryTitles); };
+  overlay.querySelector('[data-action="admin"]').onclick = () => { close(); onOpenAdmin?.(); };
   overlay.querySelector('[data-action="developer"]').onclick = () => { close(); developerSettings(profile, sync); };
 
   const updateBtn = overlay.querySelector('[data-action="update"]');

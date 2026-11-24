@@ -37,6 +37,8 @@ import { hookConsole, isDevLogEnabled, startDevLogging } from './utils/devLogger
 import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
+import { showAdminView } from './ui/adminView.js';
+import { resolveTitleAgeRating } from './ui/ageRating.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
 import { createLibraryViews } from './ui/libraryViews.js';
@@ -48,6 +50,21 @@ const kv = createKV();
 const LIB_KEY = 'library_v2';
 
 const app = document.getElementById('app');
+
+
+function isTitleAllowedByProfileAge(title, profile) {
+  const limit = profile?.maxAgeRating;
+  if (!limit || limit === 'all' || limit === 'sin-limite') return true;
+  const info = resolveTitleAgeRating(title);
+  if (!info) return true;
+  const label = String(info.label).toUpperCase();
+  if (limit === '18') return label !== 'X';
+  if (limit === '16') return label !== 'X' && label !== '18';
+  if (limit === '12') return label !== 'X' && label !== '18' && label !== '16';
+  if (limit === '7') return label === 'APTA' || label === '7';
+  if (limit === 'APTA') return label === 'APTA';
+  return true;
+}
 
 function showScreen(html) {
   app.innerHTML = html;
@@ -609,6 +626,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   titles = applyOverridesAndUnbundle(titles);
   titles = attachAutoCollections(mergeMoviesByTmdb(titles));
   TITLES_CACHE = titles;
+  titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
   titles.forEach(t => applyImagePrefs(t, profile));
 
   // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
@@ -862,6 +880,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   }
   document.getElementById('btn-change-profile').onclick = () => showProfileMenu({ profile, sync, libraryTitles: titles,
     onSwitch: () => showProfileSelector(tg, sync), onChanged: () => showHome(tg, sync, profile),
+    onOpenAdmin: () => showAdminView({ tg, sync, profile, titles: TITLES_CACHE, onBack: () => showHome(tg, sync, profile) }),
     onGlobalChanged: () => { TITLES_CACHE?.forEach(t => delete t.metadata); showHome(tg, sync, profile); } });
     if (isAndroidApp()) {
     checkForUpdate().then(updateInfo => {

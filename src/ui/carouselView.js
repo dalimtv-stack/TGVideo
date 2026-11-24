@@ -151,7 +151,7 @@ export async function getTitleTrailers(t, allTitles = [], signal) {
   return trailers;
 }
 
-export function openFullscreenTrailer(trailers, titleName = '', initialIndex = 0) {
+export function openFullscreenTrailer(trailers, titleName = '', initialIndex = 0, onClose = null) {
   if (!trailers || !trailers.length) return;
 
   const existing = document.querySelector('.carousel-trailer-modal');
@@ -238,6 +238,7 @@ export function openFullscreenTrailer(trailers, titleName = '', initialIndex = 0
     window.removeEventListener('message', onMessage);
     window.removeEventListener('keydown', onKeyDown, true);
     modal.remove();
+    onClose?.();
   };
 
   const onKeyDown = (e) => {
@@ -447,7 +448,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     trailerBox.onclick = (e) => {
       if (e.target !== trailerBox.querySelector('iframe') && logoTrailerTrailers.length > 0) {
         const t = items[cur];
-        openFullscreenTrailer(logoTrailerTrailers, displayName(t), logoTrailerIdx);
+        openFullscreenTrailer(logoTrailerTrailers, displayName(t), logoTrailerIdx, () => { stage?.focus({ preventScroll: true }); });
       }
     };
   }
@@ -647,12 +648,13 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       }
       case 'ArrowUp': {
         stop();
-        const up = document.querySelector('.category-sort-toggle')
-          || document.querySelector('.category-views-bar [data-focusable]')
-          || document.querySelector('.category-sort-bar [data-focusable]')
-          || document.querySelector('#home-logo[data-focusable]')
-          || document.querySelector('.home-nav-item.active');
-        up?.focus({ preventScroll: true });
+        const activeTab = document.querySelector('.home-nav-item.active')
+          || document.querySelector('.home-nav [data-focusable].active')
+          || document.querySelector('.home-nav [data-focusable]');
+        if (activeTab) {
+          activeTab.focus({ preventScroll: true });
+          activeTab.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+        }
         break;
       }
       default: break;
@@ -726,7 +728,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
 
         if (textEl) textEl.textContent = prevText;
         trailerBtn.disabled = false;
-        openFullscreenTrailer(trailers, displayName(t), 0);
+        openFullscreenTrailer(trailers, displayName(t), 0, () => { stage?.focus({ preventScroll: true }); });
       } catch (_) {
         if (textEl) textEl.textContent = 'Error';
         setTimeout(() => {
