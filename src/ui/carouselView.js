@@ -7,6 +7,7 @@ import { memoryCache, loadPoster } from '../metadata/posterCache.js';
 import { getAutoLogo } from '../metadata/autoLogo.js';
 import { fetchTmdbTrailer, fetchCollectionMovieTrailers, fetchImdbRating, fetchExternalIds } from '../metadata/tmdb.js';
 import { renderAgeBadgeHtml } from './ageRating.js';
+import { isAndroidTV } from '../core/platform.js';
 
 let active = null;
 const LOAD_WINDOW = 10;
@@ -424,7 +425,7 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
     const playlistKeys = allKeys.slice(idx).concat(allKeys.slice(0, idx));
     const curKey = playlistKeys[0];
     const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://localhost';
-    const isTv = isAndroidTV();
+    const isTv = typeof isAndroidTV === 'function' ? isAndroidTV() : false;
     // En Android TV reproducir con sonido (mute=0); en iPhone/navegadores web silenciado por directiva de autoplay
     const muteParam = isTv ? '0' : '1';
     // En Android TV ocultar controles para aspecto cinemático; en iPhone/pantallas táctiles mostrar controles para pulsar Play si no arranca solo
@@ -471,7 +472,12 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
       }
       logoTrailerTrailers = trailers;
       logoTrailerIdx = 0;
-      renderLogoTrailer(trailers, 0);
+      try {
+        renderLogoTrailer(trailers, 0);
+      } catch (err) {
+        console.warn('[carouselView] Error mostrando tráiler:', err);
+        trailerBox.innerHTML = '<div class="carousel-trailer-msg">Sin tráiler disponible</div>';
+      }
     }, TRAILER_DELAY_MS);
   }
 
@@ -504,11 +510,13 @@ export function mountCarousel(host, { items, mode = 'posters', initialId = null,
 
   const getItemMetrics = () => {
     const isLogos = logos;
-    const stageH = stage.clientHeight || (isLogos ? 130 : 340);
-    const itemH = isLogos ? 110 : Math.max(60, Math.round(stageH - 24));
-    const itemW = isLogos ? 250 : Math.round(itemH * (2 / 3));
+    const logosScale = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--carousel-logos-scale'))) || 1.0;
+    const postersScale = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--carousel-posters-scale'))) || 1.83;
+    const stageH = stage.clientHeight || (isLogos ? Math.round(130 * logosScale) : Math.round(340 * postersScale));
+    const itemH = isLogos ? Math.round(110 * logosScale) : Math.max(60, Math.round(stageH - 24));
+    const itemW = isLogos ? Math.round(250 * logosScale) : Math.round(itemH * (2 / 3));
     const rem = (typeof window !== 'undefined' && parseFloat(getComputedStyle(document.documentElement).fontSize)) || 16;
-    const gap = isLogos ? Math.round(1.4 * rem) : Math.round(0.45 * rem);
+    const gap = isLogos ? Math.round(1.35 * rem * logosScale) : Math.round(0.45 * rem);
     return { itemW, itemH, gap };
   };
 
