@@ -58,6 +58,7 @@ export function createLibraryViews(deps) {
     };
 
     let currentSort = getGridSort();
+    if (currentSort === 'tamano' && !row.isExternal) currentSort = 'subida';
     let currentDir = getGridSortDir(currentSort);
     let onlyUnidentified = getGridFilterUnidentified();
     const getGridGrouped = () => {
@@ -91,6 +92,10 @@ export function createLibraryViews(deps) {
           return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' }) * mult;
         });
       }
+      if (sortType === 'tamano') {
+        const sizeOf = (title) => (title.archivos || []).reduce((sum, file) => sum + (Number(file.size) || 0), 0);
+        return list.sort((a, b) => (sizeOf(a) - sizeOf(b)) * mult);
+      }
       if (sortType === 'estreno') {
         return list.sort((a, b) => {
           const dateA = String(a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '');
@@ -120,6 +125,7 @@ export function createLibraryViews(deps) {
         <button type="button" class="grid-sort-btn ${currentSort === 'subida' ? 'active' : ''}" data-focusable data-sort="subida" aria-pressed="${currentSort === 'subida'}" title="Ordenar por fecha de subida (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Subida${currentSort === 'subida' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
         <button type="button" class="grid-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}" title="Ordenar por nombre (${currentDir === 'asc' ? 'A-Z' : 'Z-A'})">Nombre${currentSort === 'nombre' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
         <button type="button" class="grid-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}" title="Ordenar por fecha de estreno (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Estreno${currentSort === 'estreno' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+        ${row.isExternal ? `<button type="button" class="grid-sort-btn ${currentSort === 'tamano' ? 'active' : ''}" data-focusable data-sort="tamano" aria-pressed="${currentSort === 'tamano'}" title="Ordenar por tamaño total de los vídeos">Tamaño${currentSort === 'tamano' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>` : ''}
         <button type="button" class="grid-filter-group-btn ${isGrouped ? "active" : ""}" data-focusable role="checkbox" aria-checked="${isGrouped}" title="Agrupar series y películas">
           <span class="grid-filter-icon" aria-hidden="true">${isGrouped ? "☑" : "☐"}</span>
           <span class="grid-filter-text">Agrupar</span>
@@ -214,7 +220,7 @@ export function createLibraryViews(deps) {
         const isActive = s === currentSort;
         btn.classList.toggle("active", isActive);
         btn.setAttribute("aria-pressed", String(isActive));
-        const baseName = s === "subida" ? "Subida" : s === "nombre" ? "Nombre" : "Estreno";
+        const baseName = s === "subida" ? "Subida" : s === "nombre" ? "Nombre" : s === "tamano" ? "Tamaño" : "Estreno";
         const arrow = isActive ? (currentDir === "asc" ? " ↑" : " ↓") : "";
         btn.textContent = `${baseName}${arrow}`;
       });

@@ -1,6 +1,7 @@
 // src/ui/externalsView.js
 // Pestaña de Canales Externos: navegación por banners categorizados (Películas, Series, Deportes, Documentales, Música, Otros).
 import { createKV } from '../core/kv.js';
+import { focusFirst } from './dpad.js';
 import { buildTitlesForExternalChannel, scanSingleExternalChannel } from './adminChannels.js';
 import { EXT_CHANNEL_TITLES_CACHE, clearExternalChannelCache } from './externalTitlesCache.js';
 export { EXT_CHANNEL_TITLES_CACHE, clearExternalChannelCache } from './externalTitlesCache.js';
@@ -88,6 +89,16 @@ export function renderExternalsView({
     grouped.get(cat).push(src);
   });
 
+  const getChannelCountLabel = (ch) => {
+    const extId = String(ch.id ?? ch.channelId);
+    const titles = EXT_CHANNEL_TITLES_CACHE.get(extId) || (externalTitles || []).filter(t => {
+      const oId = String(t.origen?.channelId || t.channel?.id || '');
+      return oId === extId || oId.startsWith(extId + ':');
+    });
+    const totalFiles = Number(ch.filesCount) || titles.reduce((n, t) => n + (t.archivos?.length || 1), 0);
+    return totalFiles ? `${totalFiles} vídeos` : `${titles.length} títulos`;
+  };
+
   let html = `<div class="externals-categories-container" style="display: flex; flex-direction: column; gap: 2.2rem; padding: 0.5rem 0 3rem;">`;
 
   CATEGORY_ORDER.forEach(cat => {
@@ -107,14 +118,14 @@ export function renderExternalsView({
             const subtitle = ch.isTopic && ch.group ? `Tema en ${ch.group}` : (ch.group || 'Telegram');
             const targetExtId = String(ch.id ?? ch.channelId);
             return `
-              <div class="ext-channel-banner" data-ext-id="${esc(targetExtId)}" data-focusable tabindex="0" role="button" aria-label="Abrir ${esc(titleName)}" title="Click para abrir · Click derecho para opciones">
+              <div class="ext-channel-banner card-interactive" data-ext-id="${esc(targetExtId)}" data-focusable tabindex="0" role="button" aria-label="Abrir ${esc(titleName)}" title="Click para abrir · Click derecho para opciones">
                 <div class="ext-banner-glow"></div>
                 <div class="ext-banner-content">
                   <div class="ext-banner-badge">${esc(cat)}</div>
                   <h3 class="ext-banner-title">${esc(titleName)}</h3>
                   <p class="ext-banner-sub">${esc(subtitle)}</p>
                 </div>
-                <div class="ext-banner-icon">➔</div>
+                <div class="ext-banner-footer"><span class="ext-banner-count">📼 ${getChannelCountLabel(ch)}</span><span class="ext-banner-action">Explorar <span>➔</span></span></div>
               </div>`;
           }).join('')}
         </div>
@@ -278,4 +289,6 @@ export function renderExternalsView({
       });
     };
   });
+
+  focusFirst(app);
 }
