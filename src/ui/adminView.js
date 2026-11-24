@@ -1,7 +1,8 @@
 // src/ui/adminView.js
 // Pantalla completa del Panel de Administración para perfiles, canales y subidas.
-import { showScreen, setBackHandler } from '../main.js';
-import { isAndroidApp, applyProfileScale } from '../settings/device.js';
+import { setBackHandler } from './dpad.js';
+import { isAndroidApp } from '../core/platform.js';
+import { applyProfileScale } from './settings.js';
 import { resolveTitleAgeRating, getAgeRatingInfo } from './ageRating.js';
 import { searchTmdbManual, cleanSearchName, imageUrl } from '../metadata/tmdb.js';
 import { buildStandardCaption } from '../library/parse.js';
@@ -85,7 +86,9 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
     </div>
   `;
 
-  showScreen(initialHtml);
+  const appEl = document.getElementById('app');
+  if (appEl) appEl.innerHTML = initialHtml;
+  window.scrollTo(0, 0);
 
   const backBtn = document.getElementById('admin-btn-back');
   backBtn?.addEventListener('click', handleBack);
