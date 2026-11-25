@@ -86,11 +86,35 @@ async function triggerFileDownload(client, tg, file) {
     alert('Cliente de Telegram no disponible para descargar.');
     return;
   }
-  const bar = ensureProgressBar();
   const filename = file.fileName || file.captionFileName || file.label || `video_${file.messageId}.mp4`;
-  const taskId = startUploadTask(`Descargando: ${filename}`, 'Conectando con Telegram…', 0);
   const totalSize = Number(file.size) || 0;
+  let writableStream = null;
 
+  // Mostrar el selector nativo antes de iniciar la transferencia cuando el navegador lo admite.
+  if (typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function') {
+    try {
+      const ext = (filename.match(/\.([a-zA-Z0-9]+)$/)?.[1] || 'mp4').toLowerCase();
+      const mimeByExt = {
+        mp4: 'video/mp4', m4v: 'video/mp4', mkv: 'video/x-matroska',
+        avi: 'video/x-msvideo', mov: 'video/quicktime', webm: 'video/webm',
+        mpeg: 'video/mpeg', mpg: 'video/mpeg', ts: 'video/mp2t',
+      };
+      const mime = file.mimeType || mimeByExt[ext] || 'application/octet-stream';
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'Archivo de vídeo', accept: { [mime]: [`.${ext}`] } }],
+      });
+      writableStream = await handle.createWritable();
+    } catch (pickerErr) {
+      if (pickerErr?.name === 'AbortError') return;
+      console.warn('[contextMenu] No se pudo abrir el selector de destino', pickerErr);
+      alert('No se pudo abrir el selector de destino. Comprueba los permisos del navegador e inténtalo de nuevo.');
+      return;
+    }
+  }
+
+  const bar = ensureProgressBar();
+  const taskId = startUploadTask(`Descargando: ${filename}`, 'Conectando con Telegram…', 0);
   setProgressBar(bar, {
     id: taskId,
     title: `Descargando: ${filename}`,
@@ -101,9 +125,7 @@ async function triggerFileDownload(client, tg, file) {
   try {
     const peer = await resolvePeer(client, tg, file.channel || file.channelId);
     const [msg] = await client.getMessages(peer, { ids: [file.messageId] });
-    if (!msg || !msg.media) {
-      throw new Error('No se encontró el mensaje o archivo en Telegram');
-    }
+    if (!msg || !msg.media) throw new Error('No se encontró el mensaje o archivo en Telegram');
 
     const bytes = await client.downloadMedia(msg.media, {
       progressCallback: (done, total) => {
@@ -118,27 +140,33 @@ async function triggerFileDownload(client, tg, file) {
       },
     });
 
-    const doc = msg.document || msg.media?.document;
-    const blob = new Blob([bytes], { type: doc?.mimeType || 'video/mp4' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      a.remove();
-      URL.revokeObjectURL(url);
-    }, 1000);
+    if (writableStream) {
+      await writableStream.write(bytes);
+      await writableStream.close();
+    } else {
+      const doc = msg.document || msg.media?.document;
+      const blob = new Blob([bytes], { type: doc?.mimeType || 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+    }
 
+    const savedBytes = Number(bytes?.byteLength || bytes?.length || totalSize) || 0;
     setProgressBar(bar, {
       id: taskId,
       title: `Descarga completada: ${filename}`,
-      status: `Guardado en tu equipo (${formatBytes(blob.size)})`,
+      status: `Guardado en tu equipo (${formatBytes(savedBytes)})`,
       percent: 100,
       done: true,
     });
   } catch (err) {
+    if (writableStream) {
+      try { await writableStream.abort(); } catch (_) {}
+    }
     console.error('[contextMenu] Error descargando archivo', err);
     setProgressBar(bar, {
       id: taskId,
@@ -1081,6 +1109,12 @@ export function initContextMenu(config) {
     const displayName = targetFile.label || targetFile.fileName || titleName || `Vídeo ${targetFile.messageId}`;
     const sizeStr = formatBytes(targetFile.size);
 
+    const isExt = isExternalTitle(targetTitle) || Boolean(targetFile.channel?.isExternal) || Boolean(targetTitle?.isExternal) || Boolean(targetTitle?._isExternalContext) || Boolean(targetFile.channelId && String(targetFile.channelId).startsWith('ext-'));
+    const allMovieFiles = (targetTitle?.archivos && targetTitle.archivos.length > 0) ? targetTitle.archivos : [targetFile];
+    const isMovie = targetTitle?.tipo === 'pelicula' || (!targetTitle?.tipo && !targetTitle?.isSaga && !targetFile.season);
+    const hasMultipleVersions = isMovie && allMovieFiles.length > 1;
+    const isEpClick = Boolean(epEl);
+
     menu.innerHTML = `
       <div style="padding: 0.5rem 0.9rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 0.8rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
         <strong style="color: #e2e8f0; display: block; overflow: hidden; text-overflow: ellipsis;">${esc(displayName)}</strong>
@@ -1106,21 +1140,43 @@ export function initContextMenu(config) {
         <span style="font-size: 1.1rem;">✈️</span>
         <span>Mostrar en Telegram</span>
       </div>
-      ${isExternalTitle(targetTitle) || targetFile.channel?.isExternal ? (() => {
-        const targetFiles = (targetTitle?.archivos && targetTitle.archivos.length > 0) ? targetTitle.archivos : [targetFile];
-        const isFullyHidden = targetFiles.every(f => isExternalFileHiddenSync(f));
+      ${isExt ? (() => {
+        if (hasMultipleVersions && isEpClick) {
+          const hidden = isExternalFileHiddenSync(targetFile);
+          const allHidden = allMovieFiles.every(f => isExternalFileHiddenSync(f));
+          return `
+            <div class="pc-menu-item" id="pc-menu-toggle-hidden-single" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${hidden ? '#86efac' : '#fca5a5'};">
+              <span style="font-size:1.1rem;">${hidden ? '👁️' : '🙈'}</span>
+              <span>${hidden ? 'Mostrar esta versión' : 'Ocultar solo esta versión'}</span>
+            </div>
+            <div class="pc-menu-item" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${allHidden ? '#86efac' : '#f87171'};border-top:1px solid rgba(255,255,255,.08);">
+              <span style="font-size:1.1rem;">${allHidden ? '👁️' : '🙈'}</span>
+              <span>${allHidden ? 'Mostrar película completa' : 'Ocultar película completa'}</span>
+            </div>
+          `;
+        }
+        if (hasMultipleVersions) {
+          const allHidden = allMovieFiles.every(f => isExternalFileHiddenSync(f));
+          return `
+            <div class="pc-menu-item" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${allHidden ? '#86efac' : '#fca5a5'};">
+              <span style="font-size:1.1rem;">${allHidden ? '👁️' : '🙈'}</span>
+              <span>${allHidden ? 'Mostrar película completa' : 'Ocultar película completa'}</span>
+            </div>
+            <div style="padding:.35rem .9rem .2rem;font-size:.72rem;text-transform:uppercase;color:#94a3b8;font-weight:700;border-top:1px solid rgba(255,255,255,.08);margin-top:.25rem;">Ocultar solo una versión:</div>
+            ${allMovieFiles.map((f, index) => {
+              const hidden = isExternalFileHiddenSync(f);
+              const label = f.label || f.fileName || `Versión ${index + 1}`;
+              return `<div class="pc-menu-item pc-menu-toggle-version-item" data-msg-id="${esc(f.messageId)}" data-version-index="${index}" style="display:flex;align-items:center;gap:.5rem;padding:.45rem .9rem;cursor:pointer;font-size:.84rem;color:${hidden ? '#86efac' : '#cbd5e1'};"><span>${hidden ? '👁️' : '🙈'}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${hidden ? 'Mostrar' : 'Ocultar'} ${esc(label)}</span></div>`;
+            }).join('')}
+          `;
+        }
+        const targetFiles = allMovieFiles;
+        const fullyHidden = targetFiles.every(f => isExternalFileHiddenSync(f));
         const isSeries = targetTitle?.tipo === 'serie' || targetFiles.length > 1;
-        const labelText = isFullyHidden
+        const labelText = fullyHidden
           ? (isSeries ? 'Mostrar serie oculta' : 'Mostrar archivo oculto')
           : (isSeries ? 'Ocultar serie ya gestionada' : 'Ocultar archivo ya gestionado');
-        const color = isFullyHidden ? '#86efac' : '#fca5a5';
-        const icon = isFullyHidden ? '👁️' : '🙈';
-        return `
-          <div class="pc-menu-item" id="pc-menu-toggle-hidden" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: ${color};">
-            <span style="font-size: 1.1rem;">${icon}</span>
-            <span>${labelText}</span>
-          </div>
-        `;
+        return `<div class="pc-menu-item" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${fullyHidden ? '#86efac' : '#fca5a5'};"><span style="font-size:1.1rem;">${fullyHidden ? '👁️' : '🙈'}</span><span>${labelText}</span></div>`;
       })() : ''}
     `;
 
@@ -1370,28 +1426,52 @@ export function initContextMenu(config) {
       openInTelegram(targetFile);
     });
 
-    menu.querySelector('#pc-menu-toggle-hidden')?.addEventListener('click', async (ev) => {
+    const toggleExternalFiles = async (files) => {
+      const isFullyHidden = files.every(f => isExternalFileHiddenSync(f));
+      if (isFullyHidden) await unhideExternalFiles(files);
+      else await hideExternalFiles(files);
+      window.dispatchEvent(new CustomEvent('tgvideo:external-hidden-changed', {
+        detail: {
+          channelId: targetFile.channelId || targetFile.channel?.id,
+          messageId: targetFile.messageId,
+          titleId: targetTitle?.id,
+        },
+      }));
+    };
+
+    menu.querySelector('#pc-menu-toggle-hidden-single')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       removeActiveMenu();
-      try {
-        const targetFiles = (targetTitle?.archivos && targetTitle.archivos.length > 0) ? targetTitle.archivos : [targetFile];
-        const isFullyHidden = targetFiles.every(f => isExternalFileHiddenSync(f));
-        if (isFullyHidden) {
-          await unhideExternalFiles(targetFiles);
-        } else {
-          await hideExternalFiles(targetFiles);
-        }
-        window.dispatchEvent(new CustomEvent('tgvideo:external-hidden-changed', {
-          detail: {
-            channelId: targetFile.channelId || targetFile.channel?.id,
-            messageId: targetFile.messageId,
-            titleId: targetTitle?.id,
-          },
-        }));
-      } catch (err) {
+      try { await toggleExternalFiles([targetFile]); }
+      catch (err) {
+        console.error('[contextMenu] Error al cambiar visibilidad de versión', err);
+        alert(`No se pudo actualizar la visibilidad: ${err?.message || err}`);
+      }
+    });
+
+    menu.querySelector('#pc-menu-toggle-hidden-all')?.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      removeActiveMenu();
+      try { await toggleExternalFiles(allMovieFiles); }
+      catch (err) {
         console.error('[contextMenu] Error al cambiar visibilidad del archivo externo', err);
         alert(`No se pudo actualizar la visibilidad: ${err?.message || err}`);
       }
+    });
+
+    menu.querySelectorAll('.pc-menu-toggle-version-item').forEach((item) => {
+      item.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        removeActiveMenu();
+        const index = Number(item.dataset.versionIndex);
+        const file = allMovieFiles[index];
+        if (!file) return;
+        try { await toggleExternalFiles([file]); }
+        catch (err) {
+          console.error('[contextMenu] Error al cambiar visibilidad de versión', err);
+          alert(`No se pudo actualizar la visibilidad: ${err?.message || err}`);
+        }
+      });
     });
 
     activeMenuEl = menu;

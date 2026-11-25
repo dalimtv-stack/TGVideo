@@ -338,7 +338,10 @@ export function createLibraryViews(deps) {
         if (t) card._titleData = t;
         card.onclick = () => {
           row._savedSearch = searchTerm;
-          if (t) showDetail(tg, sync, profile, t, { fromGrid: row, savedSearch: searchTerm });
+          if (t) {
+            t._isExternalContext = Boolean(row.isExternal || isExt);
+            showDetail(tg, sync, profile, t, { fromGrid: row, savedSearch: searchTerm });
+          }
         };
       });
       frag.querySelectorAll(".lib-card-poster img.poster-image").forEach(img => {

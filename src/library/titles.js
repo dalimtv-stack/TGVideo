@@ -3,7 +3,8 @@ export function isExternalTitle(t) {
     t?.origen?.tipo === "externo" ||
     t?.channel?.isExternal ||
     t?.isExternal ||
-    (typeof t?.channel?.id === "string" && t.channel.id.includes("_top_"))
+    (typeof t?.channel?.id === "string" && (t.channel.id.includes("_top_") || t.channel.id.startsWith("ext-"))) ||
+    (typeof t?.id === "string" && t.id.startsWith("ext-"))
   );
 }
 
