@@ -291,6 +291,10 @@ function formatSuggestedFileName(file, titleData) {
   return `${mName}${ext}`;
 }
 
+let activeMenuEl = null;
+let activeContextConfig = null;
+let contextMenuInitialized = false;
+
 function removeActiveMenu() {
   if (activeMenuEl) {
     activeMenuEl.remove();
