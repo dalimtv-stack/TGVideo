@@ -247,14 +247,17 @@ export function renderExternalsView({
         titles = EXT_CHANNEL_TITLES_CACHE.get(extId);
       }
       if (!titles || titles.length === 0) {
-        let cachedFiles = await kv.get(`ext_files_${extId}`).catch(() => null);
-        const lib = await kv.get(LIB_KEY).catch(() => null);
-        if (!Array.isArray(cachedFiles) || cachedFiles.length === 0) {
-          cachedFiles = lib?.cache?.[extId] || [];
+        const [cachedFiles, lib] = await Promise.all([
+          kv.get(`ext_files_${extId}`).catch(() => null),
+          kv.get(LIB_KEY).catch(() => null),
+        ]);
+        let files = cachedFiles;
+        if (!Array.isArray(files) || files.length === 0) {
+          files = lib?.cache?.[extId] || [];
         }
-        if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
+        if (Array.isArray(files) && files.length > 0) {
           const metadataMap = lib?.metadataMap || {};
-          titles = buildTitlesForExternalChannel(ch, cachedFiles, metadataMap);
+          titles = buildTitlesForExternalChannel(ch, files, metadataMap);
           EXT_CHANNEL_TITLES_CACHE.set(extId, titles);
           chItem.titles = titles;
         } else {
@@ -271,19 +274,25 @@ export function renderExternalsView({
       removeBannerMenu();
       banner.style.opacity = '0.6';
       banner.style.pointerEvents = 'none';
+      const originalBadge = banner.querySelector('.ext-badge');
+      const originalBadgeText = originalBadge ? originalBadge.textContent : '';
+      if (originalBadge) originalBadge.textContent = 'Cargando…';
 
       let channelTitles = [];
       try {
         channelTitles = await loadChannelTitles();
       } catch (err) {
         console.warn('[externalsView] Error cargando títulos del canal externo', ch.title, err);
+        alert('Error leyendo datos del canal: ' + (err.message || String(err)));
       } finally {
         banner.style.opacity = '1';
         banner.style.pointerEvents = '';
+        if (originalBadge) originalBadge.textContent = originalBadgeText;
       }
 
       if (libraryViews?.showGroupGrid) {
-        libraryViews.showGroupGrid(tg, sync, profile, {
+        try {
+          libraryViews.showGroupGrid(tg, sync, profile, {
           id: `ext-${ch.id ?? ch.channelId}`,
           title: channelName,
           items: channelTitles || [],
@@ -303,6 +312,10 @@ export function renderExternalsView({
             return newTitles;
           },
         });
+        } catch (gridErr) {
+          console.error('[externalsView] Error al mostrar cuadrícula:', gridErr);
+          alert('Error al abrir cuadrícula del canal: ' + (gridErr.message || String(gridErr)));
+        }
       }
     };
 

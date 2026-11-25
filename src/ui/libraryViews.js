@@ -1,3 +1,4 @@
+import { enrichTitles } from "../metadata/tmdb.js";
 import { createKV } from "../core/kv.js";
 import { modal } from "./settings.js";
 import { prewarmPosterCache } from "../metadata/posterCache.js";

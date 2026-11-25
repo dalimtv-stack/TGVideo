@@ -1,3 +1,4 @@
+import { Api } from 'telegram';
 // src/ui/contextMenu.js
 // Menú contextual nativo de PC (clic derecho) para archivos y fichas de vídeo:
 // - Opción de descargar archivo (con barra de progreso)
@@ -169,7 +170,42 @@ function openInTelegram(file) {
 /**
  * Modal interactivo para enviar o subir rápidamente un archivo a un canal de tgstorage.
  */
-async function showForwardModal(client, tg, file, getChannels) {
+
+/**
+ * Genera el nombre estándar sugerido para el archivo según si es película o serie.
+ * - Película: [Nombre de Película] ([año]).ext
+ * - Serie: [Nombre de la Serie] - [temporada]x[episodio].ext
+ */
+function formatSuggestedFileName(file, titleData) {
+  const origName = file.fileName || file.captionFileName || file.label || `video_${file.messageId}.mp4`;
+  const extMatch = origName.match(/\.([a-zA-Z0-9]{2,5})$/);
+  const ext = extMatch ? `.${extMatch[1]}` : '.mp4';
+  const cleanBase = origName.replace(/\.([a-zA-Z0-9]{2,5})$/, '').trim();
+
+  const isSerie = titleData?.tipo === 'serie' || file.season != null || file.episode != null;
+  const isMovie = titleData?.tipo === 'pelicula' || titleData?.tipo === 'documental';
+
+  if (isSerie) {
+    const sName = titleData?.nombre || titleData?.metadata?.name || file.section || cleanBase;
+    const season = file.season != null ? file.season : 1;
+    const episode = file.episode != null ? file.episode : 1;
+    const epStr = String(episode).padStart(2, '0');
+    return `${sName} - ${season}x${epStr}${ext}`;
+  }
+
+  if (isMovie || titleData) {
+    const mName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || cleanBase;
+    const year = titleData?.metadata?.year || titleData?.yearHint || file.yearHint;
+    if (year) {
+      return `${mName} (${year})${ext}`;
+    }
+    return `${mName}${ext}`;
+  }
+
+  return origName;
+}
+
+async function showForwardModal(client, tg, file, getChannels, titleData = null) {
   if (!client) {
     alert('Cliente de Telegram no disponible.');
     return;
@@ -195,7 +231,7 @@ async function showForwardModal(client, tg, file, getChannels) {
     return;
   }
 
-  const filename = file.fileName || file.captionFileName || file.label || `video_${file.messageId}.mp4`;
+  const defaultFilename = formatSuggestedFileName(file, titleData);
   const sizeStr = formatBytes(file.size);
 
   const modalOverlay = document.createElement('div');
@@ -216,10 +252,11 @@ async function showForwardModal(client, tg, file, getChannels) {
       </div>
 
       <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
-        <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-          📄 ${esc(filename)}
-        </div>
-        <div style="color: #94a3b8; font-size: 0.8rem;">
+        <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+          Nombre del archivo en Telegram (editable):
+        </label>
+        <input type="text" id="target-filename-input" value="${esc(defaultFilename)}" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.18); border-radius: 6px; padding: 0.55rem 0.75rem; color: #fff; font-size: 0.9rem; outline: none; box-sizing: border-box;" />
+        <div style="color: #94a3b8; font-size: 0.78rem; margin-top: 0.35rem;">
           Tamaño: ${esc(sizeStr)}
         </div>
       </div>
@@ -302,6 +339,8 @@ async function showForwardModal(client, tg, file, getChannels) {
     const targetChannel = tgStorageChannels.find(ch => String(ch.id) === String(targetChannelId));
     const targetChannelName = targetChannel?.title || targetChannel?.name || 'Canal seleccionado';
     const isFastUpload = fastCheck.checked;
+    const filenameInput = modalOverlay.querySelector('#target-filename-input');
+    const filename = filenameInput?.value?.trim() || defaultFilename;
 
     closeModal();
 
@@ -353,13 +392,15 @@ async function showForwardModal(client, tg, file, getChannels) {
       const docMedia = msg.media?.document || msg.media;
       if (!docMedia) throw new Error('El mensaje original no contiene un archivo reenviable.');
 
-      // Enviar el medio con sendFile para aplicar el caption estándar. forwardMessages
-      // conserva el caption original y no permite sustituirlo.
+      // Enviar el medio con sendFile aplicando el nuevo nombre y el caption estándar
+      const docAttrs = (docMedia.attributes || []).filter(a => a.className !== 'DocumentAttributeFilename');
+      docAttrs.push(new Api.DocumentAttributeFilename({ fileName: filename }));
+
       await client.sendFile(targetPeer, {
         file: docMedia,
         caption: standardCaption,
         forceDocument: false,
-        attributes: docMedia.attributes || [],
+        attributes: docAttrs,
       });
 
       setProgressBar(bar, {
@@ -420,6 +461,7 @@ export function initContextMenu(config) {
     if (!epEl && !cardEl && !adminRow) return;
 
     let targetFile = null;
+    let targetTitle = null;
     let titleName = '';
     const config = activeContextConfig || {};
     const internalTitles = (typeof config.getTitles === 'function' ? config.getTitles() : []) || [];
@@ -432,6 +474,7 @@ export function initContextMenu(config) {
         const found = t.archivos?.find(f => f.key === key);
         if (found) {
           targetFile = found;
+          targetTitle = t;
           titleName = t.nombre;
           break;
         }
@@ -444,6 +487,7 @@ export function initContextMenu(config) {
           const found = dt.archivos?.find(f => f.key === key || String(f.messageId) === String(epEl.dataset.messageId));
           if (found) {
             targetFile = found;
+            targetTitle = dt;
             titleName = dt.nombre;
           }
         }
@@ -454,6 +498,7 @@ export function initContextMenu(config) {
       if (t && t.archivos && t.archivos.length > 0) {
         // En tarjetas tomamos el primer archivo (o película principal)
         targetFile = t.archivos[0];
+        targetTitle = t;
         titleName = t.nombre;
       }
     } else if (adminRow) {
@@ -464,6 +509,7 @@ export function initContextMenu(config) {
           const found = t.archivos?.find(f => f.key === key);
           if (found) {
             targetFile = found;
+            targetTitle = t;
             titleName = t.nombre;
             break;
           }
@@ -545,7 +591,7 @@ export function initContextMenu(config) {
       const currentConfig = activeContextConfig || {};
       const currentTg = currentConfig.tg;
       const currentClient = currentConfig.client || currentTg?.getClient?.();
-      showForwardModal(currentClient, currentTg, targetFile, currentConfig.getChannels);
+      showForwardModal(currentClient, currentTg, targetFile, currentConfig.getChannels, targetTitle);
     });
 
     menu.querySelector('#pc-menu-download')?.addEventListener('click', (ev) => {
