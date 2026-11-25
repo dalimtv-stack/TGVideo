@@ -243,25 +243,30 @@ export function renderExternalsView({
     const channelName = ch.groupName || ch.title || ch.name || 'Canal externo';
 
     const loadChannelTitles = async () => {
+      // Siempre cargar los últimos overrides sincronizados/locales
+      await loadOverrides(sync).catch(() => {});
+
       let titles = chItem.titles;
+      const rawExtId = String(extId).replace(/^ext-/, "");
       if (!titles || titles.length === 0) {
-        titles = EXT_CHANNEL_TITLES_CACHE.get(extId);
+        titles = EXT_CHANNEL_TITLES_CACHE.get(extId) || EXT_CHANNEL_TITLES_CACHE.get(rawExtId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${rawExtId}`);
       }
       if (!titles || titles.length === 0) {
-        // Asegurar que overrides locales y sincronizados estén cargados antes de construir títulos
-        await loadOverrides(sync).catch(() => {});
-        const [cachedFiles, lib] = await Promise.all([
+        const [f1, f2, f3, lib] = await Promise.all([
           kv.get(`ext_files_${extId}`).catch(() => null),
+          kv.get(`ext_files_${rawExtId}`).catch(() => null),
+          kv.get(`ext_files_ext-${rawExtId}`).catch(() => null),
           kv.get(LIB_KEY).catch(() => null),
         ]);
-        let files = cachedFiles;
+        let files = (Array.isArray(f1) && f1.length > 0) ? f1 : ((Array.isArray(f2) && f2.length > 0) ? f2 : f3);
         if (!Array.isArray(files) || files.length === 0) {
-          files = lib?.cache?.[extId] || [];
+          files = lib?.cache?.[extId] || lib?.cache?.[rawExtId] || lib?.cache?.[`ext-${rawExtId}`] || [];
         }
         if (Array.isArray(files) && files.length > 0) {
           const metadataMap = lib?.metadataMap || {};
           titles = buildTitlesForExternalChannel(ch, files, metadataMap);
           EXT_CHANNEL_TITLES_CACHE.set(extId, titles);
+          EXT_CHANNEL_TITLES_CACHE.set(rawExtId, titles);
           chItem.titles = titles;
         } else {
           titles = [];

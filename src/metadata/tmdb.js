@@ -99,27 +99,44 @@ export function extractTitlesFromCaption(caption = "") {
   if (!text.trim()) return [];
   // Si la palabra Sinopsis/Synopsis está dentro del texto (incluso en la misma línea), cortamos a partir de ella
   const cleanText = text.split(/\b(?:sinopsis|synopsis|argumento|resumen)\b/i)[0];
-  const skipLine = /^(sinopsis|synopsis|nombre de archivo|archivo|tmdb|imdb|puntuaci[oó]n|rating|secci[oó]n|g[eé]nero|duraci[oó]n|calidad|idioma|audio|subt[ií]tulos)\b/i;
+  const skipLine = /^(sinopsis|synopsis|nombre de archivo|archivo|tmdb|imdb|puntuaci[oó]n|rating|secci[oó]n|g[eé]nero|duraci[oó]n|calidad|idioma|audio|subt[ií]tulos|resoluci[oó]n|codec|peso|tamano|tamaño|formato|temporada|episodio)\b/i;
+  const promoPattern = /(@\w+|https?:\/\/|t\.me\/|telegram\.me\/|\b(unete|[uú]nete|canal|grupo|vip|password|contrase[nñ]a|aporte|descarga|s[ií]guenos|link|enlace|compartido|colabora|donaciones|servidor)\b)/i;
+
   const lines = cleanText.split("\n").map(l => l.replace(/[*_`~]+/g, "").replace(/^[\s\p{Extended_Pictographic}🎬📽️🎞️▶️•·\-–—]+/u, "").trim()).filter(Boolean);
   const out = [];
   const push = (title, year) => {
     const t = String(title || "").replace(/[\s.:;,|\-–—]+$/, "").replace(/^[\s.:;,|\-–—]+/, "").replace(/\s+/g, " ").trim();
     if (t.length < 2 || t.length > 120) return;
+    if (promoPattern.test(t)) return; // Bloquear spam/promociones como nombres de películas
     if (!out.some(o => o.title.toLowerCase() === t.toLowerCase() && o.year === (year || null))) out.push({ title: t, year: year || null });
   };
+
+  // 1. Priorizar campos explícitos (ej: "Título: Inception (2010)" o "Nombre de archivo: Gladiator.mkv")
+  for (const line of lines) {
+    const mExplicit = line.match(/^(?:t[ií]tulo|pel[ií]cula|movie|nombre\s+de\s+archivo)\s*[:\-]\s*(.+)$/i);
+    if (mExplicit) {
+      const cand = mExplicit[1].trim();
+      const parsed = extractTitleAndYear(cand);
+      push(parsed.title, parsed.year);
+    }
+  }
+
+  // 2. Líneas generales evitando publicidad
   for (const line of lines.slice(0, 4)) {
-    if (/^(sinopsis|synopsis|argumento|resumen)\b/i.test(line)) break; // lo que sigue es la sinopsis
-    if (skipLine.test(line)) continue;
+    if (/^(sinopsis|synopsis|argumento|resumen)\b/i.test(line)) break;
+    if (skipLine.test(line) || promoPattern.test(line)) continue;
     // 1) "Título (1976) ..." o "Título [1976] ..."
     const m = line.match(/^(.+?)\s*[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/);
     if (m) { push(m[1], m[2]); continue; }
     // 2) "Título - 1976 ..." / "Título 1976 ..."
     const m2 = line.match(/^(.+?)\s*[-–—]?\s+((?:19\d{2}|20[0-3]\d))\b/);
-    if (m2) push(m2[1], m2[2]);
-    // 3) Primer segmento antes de separadores típicos
+    if (m2) { push(m2[1], m2[2]); continue; }
+    // 3) Solo si contiene año o no es puramente palabras técnicas
     const seg = line.split(/\s+\|\s+|\.\s+|\s+[-–—]\s+/)[0];
     const parsed = extractTitleAndYear(seg);
-    push(parsed.title, parsed.year);
+    if (parsed.year || !/\b(1080p|720p|4k|dual|latino|castellano|dvdrip|x264|x265|hevc)\b/i.test(parsed.title)) {
+      push(parsed.title, parsed.year);
+    }
   }
   return out.slice(0, 4);
 }

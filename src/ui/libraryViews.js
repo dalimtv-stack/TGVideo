@@ -78,7 +78,7 @@ export function createLibraryViews(deps) {
             const libObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
             libObj.metadataMap = libObj.metadataMap || {};
             for (const t of pendingExt) {
-              if (t.metadata) {
+              if (t.metadata && !getOverride(t.id) && !getOverride(String(t.id).replace(/^ext-/, ""))) {
                 libObj.metadataMap[t.id] = {
                   id: t.metadata.id,
                   name: t.metadata.name || t.metadata.title,

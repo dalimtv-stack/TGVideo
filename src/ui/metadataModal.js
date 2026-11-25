@@ -10,6 +10,7 @@ import { getFanartKey } from '../settings/global.js';
 import { attachSpatialNav } from './spatialNav.js';
 import { createKV } from '../core/kv.js';
 import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
+import { setOverride } from '../metadata/overrides.js';
 
 const TYPE_LABELS = { movie: 'Película', tv: 'Serie', collection: 'Saga / Colección' };
 
@@ -227,54 +228,95 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
           // Persistencia inmediata para canales externos (IndexedDB y caché en memoria)
           try {
             const kv = createKV();
-            const virtualId = String(title.channel?.id || title.channel?.channelId || title.origen?.channelId || '').trim();
-            if (virtualId) {
-              // 1. Actualizar ext_files_{virtualId} en IndexedDB
-              const cachedFiles = (await kv.get(`ext_files_${virtualId}`).catch(() => [])) || [];
-              if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
-                const targetMsgIds = new Set((title.archivos || []).map(f => String(f.messageId)));
-                let modified = false;
-                for (const f of cachedFiles) {
-                  if (targetMsgIds.has(String(f.messageId))) {
-                    f.metadata = selected;
-                    f.tmdbId = selected.id;
-                    modified = true;
+            const virtualId = String(title.channel?.id || title.channel?.channelId || title.origen?.channelId || "").trim();
+            const rawChannelId = virtualId.replace(/^ext-/, "");
+            const extChannelId = rawChannelId ? `ext-${rawChannelId}` : "";
+
+            // Guardar overrides con sync para el ID del título y variantes
+            const titleIdStr = String(title.id || "");
+            const titleIdRaw = titleIdStr.replace(/^ext-/, "");
+            const titleIdExt = titleIdRaw ? `ext-${titleIdRaw}` : "";
+            const keysToOverride = new Set([titleIdStr, titleIdRaw, titleIdExt].filter(Boolean));
+
+            (title.archivos || []).forEach(f => {
+              if (f.key) keysToOverride.add(String(f.key));
+              if (f.messageId) {
+                if (virtualId) keysToOverride.add(`${virtualId}:${f.messageId}`);
+                if (rawChannelId) keysToOverride.add(`${rawChannelId}:${f.messageId}`);
+                if (extChannelId) keysToOverride.add(`${extChannelId}:${f.messageId}`);
+              }
+            });
+
+            for (const k of keysToOverride) {
+              await setOverride(k, selected, sync).catch(() => {});
+              await kv.set(`manual_tmdb:${k}`, selected).catch(() => {});
+            }
+
+            if (virtualId || rawChannelId) {
+              // 1. Actualizar ext_files_{id} en IndexedDB para todas las variantes de ID
+              const extKeys = new Set([`ext_files_${virtualId}`, `ext_files_${rawChannelId}`, `ext_files_${extChannelId}`].filter(k => k !== "ext_files_"));
+              const targetMsgIds = new Set((title.archivos || []).map(f => String(f.messageId)));
+
+              for (const extKey of extKeys) {
+                const cachedFiles = (await kv.get(extKey).catch(() => [])) || [];
+                if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
+                  let modified = false;
+                  for (const f of cachedFiles) {
+                    if (targetMsgIds.has(String(f.messageId))) {
+                      f.metadata = selected;
+                      f.tmdbId = selected.id;
+                      modified = true;
+                    }
                   }
-                }
-                if (modified) {
-                  await kv.set(`ext_files_${virtualId}`, cachedFiles).catch(() => {});
+                  if (modified) {
+                    await kv.set(extKey, cachedFiles).catch(() => {});
+                  }
                 }
               }
 
-              // 2. Actualizar metadataMap en library_v2
-              const libObj = (await kv.get('library_v2').catch(() => null)) || {};
+              // 2. Actualizar metadataMap y cache en library_v2
+              const libObj = (await kv.get("library_v2").catch(() => null)) || {};
               libObj.metadataMap = libObj.metadataMap || {};
-              libObj.metadataMap[String(title.id)] = selected;
               libObj.metadataMap[`tmdb_${selected.id}`] = selected;
-              (title.archivos || []).forEach(f => {
-                if (f.key) libObj.metadataMap[String(f.key)] = selected;
-                if (f.messageId) libObj.metadataMap[`${virtualId}:${f.messageId}`] = selected;
-              });
-              await kv.set('library_v2', libObj).catch(() => {});
+              for (const k of keysToOverride) {
+                libObj.metadataMap[k] = selected;
+              }
+
+              // También actualizar dentro de libObj.cache si existe
+              if (libObj.cache) {
+                for (const cKey of [virtualId, rawChannelId, extChannelId].filter(Boolean)) {
+                  if (Array.isArray(libObj.cache[cKey])) {
+                    for (const f of libObj.cache[cKey]) {
+                      if (targetMsgIds.has(String(f.messageId))) {
+                        f.metadata = selected;
+                        f.tmdbId = selected.id;
+                      }
+                    }
+                  }
+                }
+              }
+              await kv.set("library_v2", libObj).catch(() => {});
 
               // 3. Actualizar caché de títulos del canal externo en memoria
-              const cachedTitles = EXT_CHANNEL_TITLES_CACHE?.get?.(virtualId);
-              if (Array.isArray(cachedTitles)) {
-                const ct = cachedTitles.find(x => String(x.id) === String(title.id));
-                if (ct) {
-                  ct.metadata = selected;
-                  ct.tmdbId = selected.id;
-                  ct.nombre = chosenName;
-                  ct.poster = selected.poster || ct.poster;
-                  ct.backdrop = selected.background || selected.backdrop || ct.backdrop;
-                  if (ct.archivos) {
-                    ct.archivos.forEach(f => { f.metadata = selected; f.tmdbId = selected.id; });
+              for (const cKey of [virtualId, rawChannelId, extChannelId].filter(Boolean)) {
+                const cachedTitles = EXT_CHANNEL_TITLES_CACHE?.get?.(cKey);
+                if (Array.isArray(cachedTitles)) {
+                  const ct = cachedTitles.find(x => String(x.id) === titleIdStr || String(x.id) === titleIdRaw || String(x.id) === titleIdExt);
+                  if (ct) {
+                    ct.metadata = selected;
+                    ct.tmdbId = selected.id;
+                    ct.nombre = chosenName;
+                    ct.poster = selected.poster || ct.poster;
+                    ct.backdrop = selected.background || selected.backdrop || ct.backdrop;
+                    if (ct.archivos) {
+                      ct.archivos.forEach(f => { f.metadata = selected; f.tmdbId = selected.id; });
+                    }
                   }
                 }
               }
             }
           } catch (e) {
-            console.warn('[metadataModal] Error persistiendo metadatos externos:', e);
+            console.warn("[metadataModal] Error persistiendo metadatos externos:", e);
           }
 
           // Imágenes de la ficha.

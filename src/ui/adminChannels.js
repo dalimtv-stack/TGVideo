@@ -27,15 +27,40 @@ function esc(str) {
  * a partir de un registro de canal externo y su lista de archivos de vídeo detectados.
  */
 function resolveExternalMetadata(id, tmdbId, files, virtualId, metadataMap = {}) {
-  const fileWithMeta = files.find(f => f.metadata) || files[0];
-  const saved = metadataMap[String(id)] ||
+  const rawVirtualId = String(virtualId || "").replace(/^ext-/, "");
+  const extVirtualId = rawVirtualId ? `ext-${rawVirtualId}` : "";
+  const firstMsgId = files[0]?.messageId;
+
+  // 1. PRIORIDAD MÁXIMA: Overrides explícitos manuales del usuario (local y sincronizado)
+  const idStr = String(id || "");
+  const idRaw = idStr.replace(/^ext-/, "");
+  const idExt = idRaw ? `ext-${idRaw}` : "";
+
+  const override = getOverride(idStr) ||
+    (idRaw ? getOverride(idRaw) : null) ||
+    (idExt ? getOverride(idExt) : null) ||
+    (firstMsgId && virtualId ? getOverride(`${virtualId}:${firstMsgId}`) : null) ||
+    (firstMsgId && rawVirtualId ? getOverride(`${rawVirtualId}:${firstMsgId}`) : null) ||
+    (firstMsgId && extVirtualId ? getOverride(`${extVirtualId}:${firstMsgId}`) : null) ||
+    files.map(f => getOverride(f.key) || (f.messageId && virtualId ? getOverride(`${virtualId}:${f.messageId}`) : null) || (f.messageId && rawVirtualId ? getOverride(`${rawVirtualId}:${f.messageId}`) : null)).find(Boolean) ||
+    (tmdbId ? getOverrideByTmdbId(tmdbId) : null);
+
+  if (override) return override;
+
+  // 2. Metadatos manuales guardados en metadataMap
+  const saved = metadataMap[idStr] ||
+    (idRaw ? metadataMap[idRaw] : null) ||
+    (idExt ? metadataMap[idExt] : null) ||
     (tmdbId ? (metadataMap[`tmdb_${tmdbId}`] || metadataMap[String(tmdbId)]) : null) ||
-    files.map(f => metadataMap[f.key] || metadataMap[`${virtualId}:${f.messageId}`]).find(Boolean) ||
-    fileWithMeta?.metadata ||
-    getOverride(String(id)) ||
-    (tmdbId ? getOverrideByTmdbId(tmdbId) : null) ||
-    files.map(f => getOverride(f.key) || getOverride(`${virtualId}:${f.messageId}`)).find(Boolean);
-  return saved || null;
+    (firstMsgId && virtualId ? metadataMap[`${virtualId}:${firstMsgId}`] : null) ||
+    (firstMsgId && rawVirtualId ? metadataMap[`${rawVirtualId}:${firstMsgId}`] : null) ||
+    files.map(f => metadataMap[f.key] || (f.messageId && virtualId ? metadataMap[`${virtualId}:${f.messageId}`] : null) || (f.messageId && rawVirtualId ? metadataMap[`${rawVirtualId}:${f.messageId}`] : null)).find(Boolean);
+
+  if (saved) return saved;
+
+  // 3. Fallback: Metadatos previos del propio archivo (si vinieron de escaneo válido)
+  const fileWithMeta = files.find(f => f.metadata) || files[0];
+  return fileWithMeta?.metadata || null;
 }
 
 /**
@@ -52,16 +77,25 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
     const movieMap = new Map();
     for (const f of detectedFiles) {
       const targetFileName = f.captionFileName || f.fileName || f.label;
-      const captionCandidate = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
-      const parsed = captionCandidate || extractTitleAndYear(targetFileName);
+      const fileParsed = extractTitleAndYear(targetFileName);
+      const isGeneric = /^(video|file|document|input|stream)?_?\d+(\.[a-zA-Z0-9]+)?$/i.test(String(targetFileName || "").trim());
+
+      let parsed = null;
+      if (!isGeneric && fileParsed.title) {
+        parsed = fileParsed;
+      } else {
+        const captionCand = extractTitlesFromCaption(f.rawCaption || f.caption || "")[0];
+        parsed = captionCand || fileParsed;
+      }
       const baseName = parsed.title || f.label;
-      const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${parsed.year || ''}`;
+      const finalYear = parsed.year || fileParsed.year || null;
+      const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${finalYear || ""}`;
 
       if (!movieMap.has(key)) {
         movieMap.set(key, {
           id: `${virtualId}:${f.messageId}`,
           nombre: baseName,
-          yearHint: parsed.year || null,
+          yearHint: finalYear,
           files: [f],
           tmdbId: f.tmdbId || null,
           imdbId: f.imdbId || null,
@@ -70,6 +104,7 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
         const grp = movieMap.get(key);
         grp.files.push(f);
         if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+        if (!grp.yearHint && finalYear) grp.yearHint = finalYear;
       }
     }
 
@@ -99,15 +134,24 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
     const docMap = new Map();
     for (const f of detectedFiles) {
       const targetFileName = f.captionFileName || f.fileName || f.label;
-      const captionCandidate = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
-      const parsed = captionCandidate || extractTitleAndYear(targetFileName);
+      const fileParsed = extractTitleAndYear(targetFileName);
+      const isGeneric = /^(video|file|document|input|stream)?_?\d+(\.[a-zA-Z0-9]+)?$/i.test(String(targetFileName || "").trim());
+
+      let parsed = null;
+      if (!isGeneric && fileParsed.title) {
+        parsed = fileParsed;
+      } else {
+        const captionCand = extractTitlesFromCaption(f.rawCaption || f.caption || "")[0];
+        parsed = captionCand || fileParsed;
+      }
       const baseName = parsed.title || f.label;
-      const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${parsed.year || ''}`;
+      const finalYear = parsed.year || fileParsed.year || null;
+      const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${finalYear || ""}`;
       if (!docMap.has(key)) {
         docMap.set(key, {
           id: `${virtualId}:${f.messageId}`,
           nombre: baseName,
-          yearHint: parsed.year || null,
+          yearHint: finalYear,
           files: [f],
           tmdbId: f.tmdbId || null,
           imdbId: f.imdbId || null,
@@ -116,6 +160,7 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
         const grp = docMap.get(key);
         grp.files.push(f);
         if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+        if (!grp.yearHint && finalYear) grp.yearHint = finalYear;
       }
     }
     for (const grp of docMap.values()) {
@@ -259,7 +304,14 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
       const addedIdsSet = new Set(extSaved.map(x => String(x.id)));
 
       const dialogs = [];
-      for await (const d of client.iterDialogs({ limit: 120 })) {
+      const seenIds = new Set();
+
+      const processDialog = async (d, isArchived = false) => {
+        if (!d) return;
+        const idStr = String(d.id);
+        if (seenIds.has(idStr)) return;
+        seenIds.add(idStr);
+
         if (d.isChannel || d.isGroup) {
           const isForum = Boolean(d.entity?.forum);
           let topics = [];
@@ -283,15 +335,43 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
           }
 
           dialogs.push({
-            id: String(d.id),
+            id: idStr,
             title: d.title || `Chat ${d.id}`,
             entity: d.entity,
             isChannel: Boolean(d.isChannel),
             isGroup: Boolean(d.isGroup),
             isForum,
+            isArchived,
             topics,
           });
         }
+      };
+
+      // 1. Diálogos activos (sin límite estrecho de 120)
+      try {
+        for await (const d of client.iterDialogs({ limit: 500 })) {
+          await processDialog(d, false);
+        }
+      } catch (err) {
+        console.warn('[adminChannels] Error leyendo diálogos activos:', err);
+      }
+
+      // 2. Diálogos archivados en Telegram (archived: true)
+      try {
+        for await (const d of client.iterDialogs({ archived: true, limit: 500 })) {
+          await processDialog(d, true);
+        }
+      } catch (err) {
+        console.warn('[adminChannels] Error leyendo archivados (archived: true):', err);
+      }
+
+      // 3. Diálogos en carpetas archivadas (folder: 1)
+      try {
+        for await (const d of client.iterDialogs({ folder: 1, limit: 500 })) {
+          await processDialog(d, true);
+        }
+      } catch (err) {
+        console.warn('[adminChannels] Error leyendo folder 1:', err);
       }
 
       if (!dialogs.length) {
@@ -303,6 +383,10 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
 
       const renderDialogsTree = () => {
         resultContainer.innerHTML = `
+          <div style="margin-bottom:1rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
+            <input type="text" id="filter-channels-input" placeholder="🔍 Filtrar canales o grupos por nombre o ID…" style="flex:1 1 300px;background:#0f172a;border:1px solid rgba(255,255,255,0.2);border-radius:6px;padding:0.55rem 0.8rem;color:#fff;font-size:0.88rem;outline:none;" />
+            <span style="font-size:0.82rem;color:#94a3b8;" id="filter-channels-count">${dialogs.length} disponibles</span>
+          </div>
           <div class="admin-topic-tree">
             ${dialogs.map((d, dIdx) => {
               const hasTopics = d.isForum && d.topics.length > 0;
@@ -321,6 +405,7 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
                             ? `<span class="admin-badge admin-badge-channel">📢 Canal</span>`
                             : `<span class="admin-badge admin-badge-group">👥 Grupo</span>`
                         }
+                        ${d.isArchived ? `<span class="admin-badge" style="background:#334155;color:#cbd5e1;border:1px solid rgba(255,255,255,0.2);">📁 Archivado</span>` : ''}
                         ${channelAdded ? `<span class="admin-badge" style="background:#065f46;color:#34d399;border:1px solid #10b981;">✓ En biblioteca</span>` : ''}
                       </div>
                       <small style="color:#888;">ID: ${esc(d.id)}</small>
@@ -477,6 +562,24 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
             });
           });
         });
+
+        const filterInput = resultContainer.querySelector('#filter-channels-input');
+        const filterCount = resultContainer.querySelector('#filter-channels-count');
+        if (filterInput) {
+          filterInput.addEventListener('input', () => {
+            const query = filterInput.value.toLowerCase().trim();
+            let visibleCount = 0;
+            resultContainer.querySelectorAll('.admin-channel-item').forEach(item => {
+              const text = item.textContent.toLowerCase();
+              const matches = !query || text.includes(query);
+              item.style.display = matches ? 'block' : 'none';
+              if (matches) visibleCount++;
+            });
+            if (filterCount) {
+              filterCount.textContent = query ? `${visibleCount} coincidentes` : `${dialogs.length} disponibles`;
+            }
+          });
+        }
       };
 
       renderDialogsTree();
