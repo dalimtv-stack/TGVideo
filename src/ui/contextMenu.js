@@ -13,6 +13,8 @@ import { isExternalTitle } from '../library/titles.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
 import { extractTitleAndYear, fetchTmdbFullDetails } from '../metadata/tmdb.js';
 import { showMetadataModal } from './metadataModal.js';
+import { createKV } from '../core/kv.js';
+import { removeOverrides } from '../metadata/overrides.js';
 
 function esc(value) {
   return String(value ?? '')
@@ -1092,6 +1094,10 @@ export function initContextMenu(config) {
         <span style="font-size: 1.1rem; color: #c084fc;">✨</span>
         <span>Identificar / Corregir en TMDB</span>
       </div>
+      <div class="pc-menu-item" id="pc-menu-clear-meta" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #fca5a5;">
+        <span style="font-size: 1.1rem;">🗑️</span>
+        <span>Borrar identificación guardada</span>
+      </div>
       <div class="pc-menu-item" id="pc-menu-download" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem;">⬇️</span>
         <span>Descargar archivo</span>
@@ -1194,6 +1200,146 @@ export function initContextMenu(config) {
         profile: currentProfile,
         sync: currentSync,
       });
+    });
+
+    menu.querySelector('#pc-menu-clear-meta')?.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      removeActiveMenu();
+
+      const currentConfig = activeContextConfig || {};
+      const currentTg = currentConfig.tg;
+      const currentSync = currentConfig.sync || window.sync;
+      const kv = createKV();
+
+      const titleDisplayName = targetTitle?.nombre || displayName;
+      if (!confirm(`¿Borrar la identificación guardada de "${titleDisplayName}" tanto de la caché local como del archivo JSON de Telegram?`)) {
+        return;
+      }
+
+      try {
+        const titleId = String(targetTitle?.id || '');
+        const channelId = String(targetTitle?.channel?.id || targetFile?.channelId || '');
+        const rawChannelId = channelId.replace(/^ext-/, '');
+        const extChannelId = rawChannelId ? `ext-${rawChannelId}` : '';
+
+        const keysToDelete = new Set([
+          titleId,
+          titleId.replace(/^ext-/, ''),
+          channelId,
+          rawChannelId,
+          extChannelId,
+        ].filter(Boolean));
+
+        const targetFiles = (targetTitle?.archivos && targetTitle.archivos.length > 0) ? targetTitle.archivos : [targetFile];
+
+        for (const f of targetFiles) {
+          if (f.key) keysToDelete.add(String(f.key));
+          if (f.messageId) {
+            if (channelId) keysToDelete.add(`${channelId}:${f.messageId}`);
+            if (rawChannelId) keysToDelete.add(`${rawChannelId}:${f.messageId}`);
+            if (extChannelId) keysToDelete.add(`${extChannelId}:${f.messageId}`);
+            if (titleId) keysToDelete.add(`${titleId}:${f.messageId}`);
+          }
+        }
+
+        // 1. Borrar de overrides sincronizados (memoria, IndexedDB y push inmediato a Telegram JSON)
+        await removeOverrides(Array.from(keysToDelete), currentSync);
+
+        // 2. Borrar de manual_tmdb:* en IndexedDB
+        for (const k of keysToDelete) {
+          await kv.del(`manual_tmdb:${k}`).catch(() => {});
+        }
+
+        // 3. Borrar de library_v2 metadataMap en IndexedDB
+        const lib = await kv.get('library_v2').catch(() => null);
+        if (lib?.metadataMap) {
+          for (const k of keysToDelete) {
+            delete lib.metadataMap[k];
+          }
+          await kv.set('library_v2', lib).catch(() => {});
+        }
+
+        // 4. Borrar de la caché de TMDB si hay tmdbId o query
+        if (targetTitle?.tmdbId) {
+          await kv.del(`tmdb_v2:tv:${targetTitle.tmdbId}`).catch(() => {});
+          await kv.del(`tmdb_v2:movie:${targetTitle.tmdbId}`).catch(() => {});
+        }
+        if (targetTitle?.nombre) {
+          const parsed = extractTitleAndYear(targetTitle.nombre);
+          const q = (parsed.title || '').toLowerCase();
+          const y = targetTitle.yearHint || parsed.year || '';
+          if (q) {
+            await kv.del(`tmdb_v2:tv:${q}:${y}`).catch(() => {});
+            await kv.del(`tmdb_v2:movie:${q}:${y}`).catch(() => {});
+            await kv.del(`tmdb_v2:tv:${q}:`).catch(() => {});
+            await kv.del(`tmdb_v2:movie:${q}:`).catch(() => {});
+          }
+        }
+
+        // 5. Limpiar en memoria el título y sus archivos
+        if (targetTitle) {
+          targetTitle.metadata = null;
+          targetTitle.tmdbId = null;
+          targetTitle._origImages = {};
+          if (targetTitle.channel?.name) {
+            targetTitle.nombre = targetTitle.channel.name;
+          }
+        }
+
+        for (const f of targetFiles) {
+          f.metadata = null;
+          f.tmdbId = null;
+        }
+
+        // 6. Si es canal externo, limpiar también ext_files_{id} en IndexedDB
+        if (channelId || rawChannelId) {
+          const extKeys = new Set([`ext_files_${channelId}`, `ext_files_${rawChannelId}`, `ext_files_${extChannelId}`].filter(Boolean));
+          const targetMsgIds = new Set(targetFiles.map(f => String(f.messageId)));
+          for (const extKey of extKeys) {
+            const cachedList = await kv.get(extKey).catch(() => null);
+            if (Array.isArray(cachedList) && cachedList.length > 0) {
+              let changed = false;
+              for (const f of cachedList) {
+                if (targetMsgIds.has(String(f.messageId))) {
+                  f.metadata = null;
+                  f.tmdbId = null;
+                  changed = true;
+                }
+              }
+              if (changed) {
+                await kv.set(extKey, cachedList).catch(() => {});
+              }
+            }
+          }
+        }
+
+        // 7. Actualizar la tarjeta visual en el DOM
+        const cardEl = document.querySelector(`.lib-card[data-title="${esc(targetTitle?.id)}"]`);
+        if (cardEl) {
+          cardEl._titleData = targetTitle;
+          const nameEl = cardEl.querySelector('.lib-card-name');
+          if (nameEl) nameEl.textContent = targetTitle?.nombre || displayName;
+          const posterEl = cardEl.querySelector('.lib-card-poster');
+          if (posterEl) {
+            posterEl.classList.remove('has-poster');
+            const img = posterEl.querySelector('img.poster-image');
+            if (img) img.remove();
+          }
+        }
+
+        // 8. Disparar eventos globales para refrescar vistas
+        window.dispatchEvent(new CustomEvent('tgvideo:external-hidden-changed', {
+          detail: { channelId, messageId: targetFile?.messageId, titleId: targetTitle?.id },
+        }));
+        window.dispatchEvent(new CustomEvent('tgvideo:metadata-cleared', {
+          detail: { titleId: targetTitle?.id, channelId },
+        }));
+
+        alert('Identificación guardada eliminada con éxito de la caché local y de Telegram.');
+      } catch (err) {
+        console.error('[contextMenu] Error borrando identificación', err);
+        alert(`Error al borrar identificación: ${err?.message || err}`);
+      }
     });
 
     menu.querySelector('#pc-menu-download')?.addEventListener('click', (ev) => {

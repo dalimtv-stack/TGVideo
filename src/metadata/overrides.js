@@ -75,6 +75,26 @@ export async function removeOverride(key, sync) {
   schedulePush();
 }
 
+/** Elimina una lista de claves de overrides y sincroniza de inmediato a Telegram. */
+export async function removeOverrides(keys = [], sync) {
+  if (sync) syncRef = sync;
+  let changed = false;
+  for (const k of keys) {
+    if (k != null && state.overrides[String(k)]) {
+      delete state.overrides[String(k)];
+      changed = true;
+    }
+  }
+  if (changed) {
+    state.updated_at = Date.now();
+    await kv.set(KV_KEY, state).catch(() => {});
+    if (syncRef?.pushMetadataOverrides) {
+      clearTimeout(pushTimer);
+      await syncRef.pushMetadataOverrides(state).catch(e => console.warn('[overrides] push falló', e));
+    }
+  }
+}
+
 /** Elimina overrides de títulos que ya no están en la videoteca. */
 export async function pruneOverrides(validKeys = [], sync) {
   if (sync) syncRef = sync;
