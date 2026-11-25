@@ -3,12 +3,13 @@ import { Api } from 'telegram';
 // Menú contextual nativo de PC (clic derecho) para archivos y fichas de vídeo:
 // - Opción de descargar archivo (con barra de progreso)
 // - Opción de mostrar y abrir en Telegram (enlace directo al mensaje)
-// - Opción de reenviar o subida rápida a canal tgstorage
+// - Opción de reenviar o subida rápida a canal tgstorage con caption enriquecido y nombre editable
 
 import { loadLibrary } from '../library/channels.js';
 import { parseCaption, buildStandardCaption } from '../library/parse.js';
 import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
+import { extractTitleAndYear, fetchTmdbFullDetails } from '../metadata/tmdb.js';
 
 function esc(value) {
   return String(value ?? '')
@@ -25,7 +26,6 @@ function formatBytes(bytes) {
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
-
 
 /**
  * Resuelve de forma robusta la entidad InputPeer de un canal o grupo de Telegram.
@@ -146,7 +146,7 @@ async function triggerFileDownload(client, tg, file) {
 }
 
 /**
- * Abre el mensaje correspondiente en Telegram Web / Desktop vía enlace t.me/c/...
+ * Abre el mensaje correspondiente en Telegram Web / Desktop vía enlace tg://
  */
 function openInTelegram(file) {
   const channelId = String(file.channelId || file.channel?.id || '').split('_top_')[0];
@@ -168,13 +168,44 @@ function openInTelegram(file) {
 }
 
 /**
- * Modal interactivo para enviar o subir rápidamente un archivo a un canal de tgstorage.
+ * Extrae el año de los metadatos TMDB o del archivo con múltiples estrategias.
  */
+function extractYear(titleData, file) {
+  if (titleData?.metadata?.year) return String(titleData.metadata.year);
+  if (titleData?.metadata?.date) {
+    const m = String(titleData.metadata.date).match(/((?:19|20)\d{2})/);
+    if (m) return m[1];
+  }
+  if (titleData?.metadata?.release_date) {
+    const m = String(titleData.metadata.release_date).match(/((?:19|20)\d{2})/);
+    if (m) return m[1];
+  }
+  if (titleData?.yearHint) return String(titleData.yearHint);
+  if (file?.yearHint) return String(file.yearHint);
+  const cand = [file?.captionFileName, file?.fileName, file?.rawCaption, titleData?.nombre].filter(Boolean).join(' ');
+  const m = cand.match(/((?:19|20)\d{2})/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Helper para detectar temporada y episodio de un string de forma segura.
+ */
+function parseEpisodeHelper(name = '') {
+  let m = name.match(/[ST](\d{1,2})[\s._-]*E(\d{1,3})/i);
+  if (m) return { season: +m[1], episode: +m[2] };
+  m = name.match(/(\d{1,2})\s*x\s*(\d{1,3})/i);
+  if (m) return { season: +m[1], episode: +m[2] };
+  m = name.match(/T(?:emp(?:orada)?)?[\s._-]*(\d{1,2})[\s._-]+(?:ep|cap(?:[ií]tulo)?)[\s._-]*(\d{1,3})/i);
+  if (m) return { season: +m[1], episode: +m[2] };
+  m = name.match(/(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*(\d{1,3})/i);
+  if (m) return { season: 1, episode: +m[1] };
+  return { season: 0, episode: 0 };
+}
 
 /**
  * Genera el nombre estándar sugerido para el archivo según si es película o serie.
  * - Película: [Nombre de Película] ([año]).ext
- * - Serie: [Nombre de la Serie] - [temporada]x[episodio].ext
+ * - Serie: [Nombre de la Serie] - [temporada]x[número de episodio].ext
  */
 function formatSuggestedFileName(file, titleData) {
   const origName = file.fileName || file.captionFileName || file.label || `video_${file.messageId}.mp4`;
@@ -182,29 +213,43 @@ function formatSuggestedFileName(file, titleData) {
   const ext = extMatch ? `.${extMatch[1]}` : '.mp4';
   const cleanBase = origName.replace(/\.([a-zA-Z0-9]{2,5})$/, '').trim();
 
-  const isSerie = titleData?.tipo === 'serie' || file.season != null || file.episode != null;
-  const isMovie = titleData?.tipo === 'pelicula' || titleData?.tipo === 'documental';
+  const isMovieExplicit = titleData?.tipo === 'pelicula' || titleData?.tipo === 'documental';
+  const isSerieExplicit = titleData?.tipo === 'serie';
+
+  const fileSeason = Number(file.season) || 0;
+  const fileEpisode = Number(file.episode) || 0;
+  const parsedEp = parseEpisodeHelper(origName);
+  const hasEp = (fileSeason > 0 || fileEpisode > 0) || (parsedEp.season > 0 || parsedEp.episode > 0);
+
+  const isSerie = isSerieExplicit || (!isMovieExplicit && hasEp);
 
   if (isSerie) {
-    const sName = titleData?.nombre || titleData?.metadata?.name || file.section || cleanBase;
-    const season = file.season != null ? file.season : 1;
-    const episode = file.episode != null ? file.episode : 1;
+    const sName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || file.section || cleanBase;
+    const season = fileSeason > 0 ? fileSeason : (parsedEp.season > 0 ? parsedEp.season : 1);
+    const episode = fileEpisode > 0 ? fileEpisode : (parsedEp.episode > 0 ? parsedEp.episode : 1);
     const epStr = String(episode).padStart(2, '0');
     return `${sName} - ${season}x${epStr}${ext}`;
   }
 
-  if (isMovie || titleData) {
-    const mName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || cleanBase;
-    const year = titleData?.metadata?.year || titleData?.yearHint || file.yearHint;
-    if (year) {
-      return `${mName} (${year})${ext}`;
-    }
-    return `${mName}${ext}`;
+  // Película o documental
+  let mName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre;
+  let year = extractYear(titleData, file);
+
+  if (!mName) {
+    mName = cleanBase.replace(/\s*AÑO\s*\d{4}/i, '').replace(/((?:19|20)\d{2})/g, '').trim();
+  } else if (year) {
+    mName = mName.replace(new RegExp(`\s*\(?\[?${year}\)?\]?\s*$`, 'i'), '').trim();
   }
 
-  return origName;
+  if (year) {
+    return `${mName} (${year})${ext}`;
+  }
+  return `${mName}${ext}`;
 }
 
+/**
+ * Modal interactivo para enviar o subir rápidamente un archivo a un canal de tgstorage.
+ */
 async function showForwardModal(client, tg, file, getChannels, titleData = null) {
   if (!client) {
     alert('Cliente de Telegram no disponible.');
@@ -243,7 +288,7 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
   `;
 
   modalOverlay.innerHTML = `
-    <div style="background: #181c24; border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; max-width: 520px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); color: #fff; padding: 1.5rem; font-family: inherit;">
+    <div style="background: #181c24; border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; max-width: 540px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); color: #fff; padding: 1.5rem; font-family: inherit;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.8rem;">
         <h3 style="margin: 0; font-size: 1.2rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
           <span>⚡</span> Enviar archivo a canal tgstorage
@@ -251,13 +296,14 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
         <button id="modal-close-btn" style="background: transparent; border: none; color: #94a3b8; font-size: 1.4rem; cursor: pointer; padding: 0.2rem 0.5rem; border-radius: 4px;">×</button>
       </div>
 
-      <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
-        <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.35rem;">
+      <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
+        <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
           Nombre del archivo en Telegram (editable):
         </label>
-        <input type="text" id="target-filename-input" value="${esc(defaultFilename)}" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.18); border-radius: 6px; padding: 0.55rem 0.75rem; color: #fff; font-size: 0.9rem; outline: none; box-sizing: border-box;" />
-        <div style="color: #94a3b8; font-size: 0.78rem; margin-top: 0.35rem;">
-          Tamaño: ${esc(sizeStr)}
+        <input type="text" id="target-filename-input" value="${esc(defaultFilename)}" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px; padding: 0.6rem 0.75rem; color: #fff; font-size: 0.92rem; outline: none; box-sizing: border-box;" />
+        <div style="display: flex; justify-content: space-between; align-items: center; color: #94a3b8; font-size: 0.78rem; margin-top: 0.45rem;">
+          <span>Tamaño: <strong>${esc(sizeStr)}</strong></span>
+          <span style="color: #38bdf8;">Se incluirá en el caption oficial de tgstorage</span>
         </div>
       </div>
 
@@ -277,13 +323,14 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
         </select>
       </div>
 
-      <div style="background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.2); border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 1.5rem;">
+      <div style="background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.22); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.5rem;">
         <label style="display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; font-size: 0.88rem; color: #e0f2fe;">
-          <input type="checkbox" id="fast-upload-check" checked style="margin-top: 0.2rem; cursor: pointer;" />
+          <input type="checkbox" id="fast-upload-check" checked style="margin-top: 0.25rem; cursor: pointer;" />
           <div>
-            <strong>⚡ Subida rápida (sin marca de 'Reenviado de')</strong>
-            <div style="color: #94a3b8; font-size: 0.78rem; margin-top: 0.2rem; line-height: 1.35;">
-              Usa el documento ya almacenado en Telegram mediante SendMedia. El archivo se publica como un post original del bot/canal al instante en la nube, sin descargar a tu PC ni consumir ancho de banda.
+            <strong>⚡ Subida rápida en la nube (Recomendada)</strong>
+            <div style="color: #94a3b8; font-size: 0.78rem; margin-top: 0.25rem; line-height: 1.4;">
+              Instantánea y sin descargar al PC. Publica el archivo en el canal destino con el nuevo nombre y todos los metadatos TMDB en el caption oficial de tgstorage.
+              <br><span style="color: #64748b;">(Si desmarcas esta casilla, se descargará a memoria y resubirá completamente para cambiar también el nombre interno en Telegram Desktop/Mobile).</span>
             </div>
           </div>
         </label>
@@ -345,12 +392,12 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
     closeModal();
 
     const bar = ensureProgressBar();
-    const taskId = startUploadTask(`${isFastUpload ? '⚡ Subida rápida' : '📤 Envío con caption app'}: ${filename}`, `Conectando con canal destino "${targetChannelName}"…`, 20);
+    const taskId = startUploadTask(`${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`, `Conectando con canal destino "${targetChannelName}"…`, 15);
     setProgressBar(bar, {
       id: taskId,
-      title: `${isFastUpload ? '⚡ Subida rápida' : '📤 Envío con caption app'}: ${filename}`,
+      title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
       status: `Conectando con canal destino "${targetChannelName}"…`,
-      percent: 20,
+      percent: 15,
     });
 
     try {
@@ -364,48 +411,117 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
 
       setProgressBar(bar, {
         id: taskId,
-        title: `${isFastUpload ? '⚡ Subida rápida' : '📤 Envío con caption app'}: ${filename}`,
-        status: `Transmitiendo metadatos a "${targetChannelName}"…`,
-        percent: 60,
+        title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
+        status: 'Obteniendo metadatos completos TMDB para el caption…',
+        percent: 30,
       });
 
-      // Construir caption estándar de la app para que el archivo quede perfectamente identificado
-      let standardCaption = '';
-      try {
-        const cap = parseCaption(file.rawCaption || msg.message || '');
-        standardCaption = buildStandardCaption({
-          fileName: file.fileName || file.captionFileName || file.label,
-          section: targetChannel?.section || targetChannel?.group || file.section || '',
-          tmdbId: file.metadata?.id || file.tmdbId || cap.tmdbId || '',
-          imdbId: file.metadata?.imdb_id || file.imdbId || cap.imdbId || '',
-          director: file.metadata?.director || cap.director || '',
-          writer: file.metadata?.writer || cap.writer || '',
-          cast: file.metadata?.cast || cap.cast || '',
-          rating: file.metadata?.rating || file.metadata?.vote_average || cap.rating || '',
-          ageRating: file.metadata?.ageRating || cap.ageRating || '',
-          synopsis: file.metadata?.overview || file.metadata?.synopsis || file.synopsis || cap.synopsis || '',
-        });
-      } catch (_) {
-        standardCaption = file.rawCaption || msg.message || file.caption || file.label || '';
+      // 1. Resolver el título y sus metadatos TMDB completos
+      let effectiveTitle = titleData;
+      if (!effectiveTitle && file) {
+        const internalTitles = (typeof getChannels === 'function' ? (activeContextConfig?.getTitles?.() || []) : []) || [];
+        const externalTitlesList = Array.from(EXT_CHANNEL_TITLES_CACHE?.values?.() || []).flat();
+        const allTitles = [...internalTitles, ...externalTitlesList];
+        effectiveTitle = allTitles.find(t => t.archivos?.some(f => f.key === file.key || String(f.messageId) === String(file.messageId)));
       }
 
-      const docMedia = msg.media?.document || msg.media;
-      if (!docMedia) throw new Error('El mensaje original no contiene un archivo reenviable.');
+      let meta = effectiveTitle?.metadata || file.metadata || null;
+      let effectiveTmdbId = meta?.id || effectiveTitle?.tmdbId || file.tmdbId;
 
-      // Enviar el medio con sendFile aplicando el nuevo nombre y el caption estándar
-      const docAttrs = (docMedia.attributes || []).filter(a => a.className !== 'DocumentAttributeFilename');
-      docAttrs.push(new Api.DocumentAttributeFilename({ fileName: filename }));
+      // Si tenemos ID de TMDB pero faltan detalles clave como director o casting, obtener detalles completos
+      if (effectiveTmdbId && (!meta?.director || !meta?.cast)) {
+        try {
+          const isTv = effectiveTitle?.tipo === 'serie';
+          const full = await fetchTmdbFullDetails(isTv ? 'tv' : 'movie', effectiveTmdbId);
+          if (full && Object.keys(full).length > 0) {
+            meta = { ...(meta || {}), ...full };
+            if (effectiveTitle) effectiveTitle.metadata = meta;
+          }
+        } catch (err) {
+          console.warn('[contextMenu] No se pudieron cargar detalles adicionales de TMDB', err);
+        }
+      }
 
-      await client.sendFile(targetPeer, {
-        file: docMedia,
-        caption: standardCaption,
-        forceDocument: false,
-        attributes: docAttrs,
+      // 2. Construir el caption estándar oficial de tgstorage
+      const cap = parseCaption(file.rawCaption || msg.message || '');
+      const standardCaption = buildStandardCaption({
+        fileName: filename,
+        section: targetChannel?.section || targetChannel?.group || file.section || effectiveTitle?.origen?.seccion || '',
+        tmdbId: meta?.id || effectiveTmdbId || cap.tmdbId || '',
+        imdbId: meta?.imdbId || meta?.imdb_id || effectiveTitle?.imdbId || cap.imdbId || '',
+        director: meta?.director || cap.director || '',
+        writer: meta?.writer || cap.writer || '',
+        cast: meta?.cast || cap.cast || '',
+        rating: meta?.rating || meta?.vote_average || cap.rating || '',
+        ageRating: meta?.ageRating || cap.ageRating || '',
+        synopsis: meta?.overview || meta?.synopsis || file.synopsis || cap.synopsis || '',
       });
 
       setProgressBar(bar, {
         id: taskId,
-        title: `${isFastUpload ? '⚡ Subida rápida completada' : '📤 Envío completado'}: ${filename}`,
+        title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
+        status: `Enviando a "${targetChannelName}"…`,
+        percent: 60,
+      });
+
+      if (isFastUpload) {
+        const docMedia = msg.media?.document || msg.media;
+        if (!docMedia) throw new Error('El mensaje original no contiene un archivo reenviable.');
+
+        await client.sendFile(targetPeer, {
+          file: docMedia,
+          caption: standardCaption,
+          forceDocument: false,
+        });
+      } else {
+        // Resubida completa: descarga a memoria y sube como nuevo documento con DocumentAttributeFilename
+        setProgressBar(bar, {
+          id: taskId,
+          title: `🔄 Resubiendo: ${filename}`,
+          status: `Descargando original (${formatBytes(file.size)})…`,
+          percent: 35,
+        });
+
+        const bytes = await client.downloadMedia(msg.media, {
+          progressCallback: (done, total) => {
+            const tot = total || file.size || 1;
+            const pct = Math.min(45, Math.round((done / tot) * 45));
+            setProgressBar(bar, {
+              id: taskId,
+              title: `🔄 Resubiendo: ${filename}`,
+              status: `Descargando ${formatBytes(done)} / ${formatBytes(tot)}…`,
+              percent: pct,
+            });
+          }
+        });
+
+        const mimeType = msg.document?.mimeType || (filename.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream');
+        const blob = new Blob([bytes], { type: mimeType });
+        const upload = await client.uploadFile({
+          file: new File([blob], filename, { type: blob.type }),
+          workers: 3,
+          onProgress: (progress) => {
+            const pct = 45 + Math.round(progress * 50);
+            setProgressBar(bar, {
+              id: taskId,
+              title: `🔄 Resubiendo: ${filename}`,
+              status: `Subiendo a "${targetChannelName}" (${Math.round(progress * 100)}%)…`,
+              percent: pct,
+            });
+          }
+        });
+
+        await client.sendFile(targetPeer, {
+          file: upload,
+          caption: standardCaption,
+          forceDocument: !filename.toLowerCase().endsWith('.mp4'),
+          attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
+        });
+      }
+
+      setProgressBar(bar, {
+        id: taskId,
+        title: `${isFastUpload ? '⚡ Subida rápida completada' : '🔄 Resubida completada'}: ${filename}`,
         status: `Añadido a "${targetChannelName}" con éxito`,
         percent: 100,
         done: true,
@@ -457,8 +573,9 @@ export function initContextMenu(config) {
     const epEl = e.target.closest('.ep');
     const cardEl = e.target.closest('.lib-card');
     const adminRow = e.target.closest('.admin-video-row');
+    const detailEl = e.target.closest('.detail');
 
-    if (!epEl && !cardEl && !adminRow) return;
+    if (!epEl && !cardEl && !adminRow && !detailEl) return;
 
     let targetFile = null;
     let targetTitle = null;
@@ -480,9 +597,9 @@ export function initContextMenu(config) {
         }
       }
       if (!targetFile) {
-        const detailEl = document.querySelector('.detail');
-        const detailTitleId = detailEl?.dataset?.title;
-        const dt = allTitles.find(x => String(x.id) === String(detailTitleId)) || detailEl?._titleData;
+        const dEl = document.querySelector('.detail');
+        const detailTitleId = dEl?.dataset?.title;
+        const dt = allTitles.find(x => String(x.id) === String(detailTitleId)) || dEl?._titleData;
         if (dt) {
           const found = dt.archivos?.find(f => f.key === key || String(f.messageId) === String(epEl.dataset.messageId));
           if (found) {
@@ -514,6 +631,14 @@ export function initContextMenu(config) {
             break;
           }
         }
+      }
+    } else if (detailEl) {
+      const detailTitleId = detailEl?.dataset?.title;
+      const dt = allTitles.find(x => String(x.id) === String(detailTitleId)) || detailEl?._titleData;
+      if (dt && dt.archivos && dt.archivos.length > 0) {
+        targetFile = dt.archivos[0];
+        targetTitle = dt;
+        titleName = dt.nombre;
       }
     }
 
