@@ -59,6 +59,10 @@ function sortFiles(files, tipo) {
 function makeTitle({ id, ch, name, origen, seccion, files }) {
   const tipo = ch.category === 'Películas' ? 'pelicula' : ch.category === 'Series' ? 'serie' : ch.category === 'Deportes' ? 'deporte' : ch.category === 'Música' ? 'musica' : 'serie';
   sortFiles(files, tipo);
+  const parsedName = extractTitleAndYear(name);
+  const fileYear = files.map(f => f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year).find(Boolean) || null;
+  const yearHint = parsedName.year || fileYear || null;
+
   return {
     id: String(id), tipo, grupo: ch.group, nombre: name,
     origen: { tipo: origen, channelId: String(ch.id), seccion: seccion || null },
@@ -66,6 +70,7 @@ function makeTitle({ id, ch, name, origen, seccion, files }) {
     ultimoMensajeFecha: files.reduce((m, f) => Math.max(m, f.date), 0),
     tmdbId: files.find(f => f.tmdbId)?.tmdbId || null,
     imdbId: files.find(f => f.imdbId)?.imdbId || null,
+    yearHint,
   };
 }
 
@@ -162,7 +167,8 @@ export function groupTitles(items = []) {
       const sName = String(it.parentTitle?.nombre || (it.isLooseFile ? seriesNameFromFile(rawName) : null) || it.nombre || 'Serie').trim();
       const rawTmdb = it.tmdbId || it.metadata?.id || firstFile?.tmdbId || firstFile?.metadata?.id;
       const cleanName = normalizeMovieKey(sName).replace(/(?:19|20)\d{2}/g, '');
-      const yearSource = it.metadata?.first_air_date || it.metadata?.date || it.yearHint || firstFile?.yearHint || '';
+      const parsedYear = extractTitleAndYear(sName).year || extractTitleAndYear(it.nombre).year || extractTitleAndYear(it.channel?.name || '').year;
+      const yearSource = it.metadata?.first_air_date || it.metadata?.date || it.yearHint || firstFile?.yearHint || parsedYear || '';
       const yearMatch = String(yearSource).match(/(?:19|20)\d{2}/);
       const seriesYear = yearMatch ? yearMatch[0] : '';
 
@@ -171,7 +177,14 @@ export function groupTitles(items = []) {
         const baseKey = rawTmdb ? `tmdb:${rawTmdb}` : (cleanName ? `${cleanName}:${seriesYear}` : String(it.id));
         key = `${it.channel?.id || ''}:${baseKey}`;
       } else {
-        key = rawTmdb ? `serie_tmdb_${rawTmdb}` : `serie_${cleanName ? `${cleanName}:${seriesYear}` : String(it.id)}`;
+        if (rawTmdb) {
+          key = `serie_tmdb_${rawTmdb}`;
+        } else if (it.origen?.tipo === 'dedicado' || (!it.isLooseFile && it.channel?.id)) {
+          // Canales dedicados de tgstorage: cada canal es una serie propia, no fusionar canales distintos de diferentes años
+          key = `serie_ch_${it.channel?.id || it.id}_${cleanName}:${seriesYear}`;
+        } else {
+          key = `serie_${cleanName ? `${cleanName}:${seriesYear}` : String(it.id)}`;
+        }
       }
 
       if (!seriesMap.has(key)) {
@@ -603,32 +616,83 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
         });
       }
     } else if (ch.macro) {
-      const isSeries = ch.category === 'Series';
-      const keyed = files.map(f => {
-        if (f.section) {
-          let s = String(f.section).trim();
-          if (isSeries) {
-            s = s.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '').replace(/\s*[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$/, '').trim();
+      if (ch.category === 'Series') {
+        // En canales macro de Series (ej. Clásicas::Series::tgstorage), el canal agrupa múltiples series distintas.
+        // La "Sección:" del caption (ej. "Sección: Clásicas") es el grupo/categoría del canal, NO el nombre de la serie.
+        // Agrupamos cada serie por su TMDB ID o por el nombre individual extraído del archivo.
+        const seriesTmdbMap = new Map();
+        const seriesNameMap = new Map();
+
+        for (const f of files) {
+          const sName = seriesNameFromFile(f.captionFileName || f.fileName) || (f.section && !/^(cl[aá]sicas|series|general|sin secci[oó]n)$/i.test(f.section) && f.section !== ch.group ? f.section : null) || ch.name || 'Serie';
+          const cleanBase = normalizeMovieKey(sName).replace(/(?:19|20)\d{2}/g, '');
+          const fileYear = f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year || null;
+          const fileTmdb = f.tmdbId ? String(f.tmdbId).trim() : null;
+
+          let grp = null;
+          if (fileTmdb && seriesTmdbMap.has(fileTmdb)) {
+            grp = seriesTmdbMap.get(fileTmdb);
+          } else if (cleanBase && seriesNameMap.has(cleanBase)) {
+            grp = seriesNameMap.get(cleanBase);
           }
-          return { ...f, section: s || '(Sin sección)' };
+
+          if (!grp) {
+            grp = {
+              id: `${ch.id}#${sName}`,
+              name: sName,
+              yearHint: fileYear,
+              files: [f],
+              tmdbId: fileTmdb,
+              imdbId: f.imdbId || null,
+            };
+            if (fileTmdb) seriesTmdbMap.set(fileTmdb, grp);
+            if (cleanBase) seriesNameMap.set(cleanBase, grp);
+          } else {
+            grp.files.push(f);
+            if (!grp.tmdbId && fileTmdb) {
+              grp.tmdbId = fileTmdb;
+              seriesTmdbMap.set(fileTmdb, grp);
+            }
+            if (!grp.imdbId && f.imdbId) grp.imdbId = f.imdbId;
+            if (!grp.yearHint && fileYear) grp.yearHint = fileYear;
+            if (sName.length > grp.name.length && grp.name === 'Serie') grp.name = sName;
+          }
         }
-        if (isSeries) {
-          const s = seriesNameFromFile(f.captionFileName || f.fileName);
-          return { ...f, section: s.trim() };
-        }
-        const capCand = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
-        const parsedFile = extractTitleAndYear(f.captionFileName || f.fileName || f.label);
-        const secName = capCand?.title || parsedFile.title || movieName(f);
-        return { ...f, section: (secName ? secName.trim() : '(Sin sección)'), yearHint: capCand?.year || parsedFile.year };
-      });
-      for (const [sec, fs] of splitBySection(keyed)) {
-        if (fs && fs.length > 0) {
-          const parsedSec = extractTitleAndYear(sec);
-          const fileYear = fs.map(f => f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year).find(Boolean) || null;
-          const titleYearHint = parsedSec.year || fileYear;
-          const t = makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs });
-          if (titleYearHint) t.yearHint = titleYearHint;
+
+        const uniqueGroups = new Set([...seriesTmdbMap.values(), ...seriesNameMap.values()]);
+        for (const grp of uniqueGroups) {
+          const t = makeTitle({
+            id: grp.id,
+            ch,
+            name: grp.name,
+            origen: 'macro',
+            seccion: grp.name,
+            files: grp.files,
+          });
+          if (grp.yearHint) t.yearHint = grp.yearHint;
+          if (grp.tmdbId) t.tmdbId = grp.tmdbId;
+          if (grp.imdbId) t.imdbId = grp.imdbId;
           titles.push(t);
+        }
+      } else {
+        const keyed = files.map(f => {
+          if (f.section) {
+            return { ...f, section: String(f.section).trim() || '(Sin sección)' };
+          }
+          const capCand = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
+          const parsedFile = extractTitleAndYear(f.captionFileName || f.fileName || f.label);
+          const secName = capCand?.title || parsedFile.title || movieName(f);
+          return { ...f, section: (secName ? secName.trim() : '(Sin sección)'), yearHint: capCand?.year || parsedFile.year };
+        });
+        for (const [sec, fs] of splitBySection(keyed)) {
+          if (fs && fs.length > 0) {
+            const parsedSec = extractTitleAndYear(sec);
+            const fileYear = fs.map(f => f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year).find(Boolean) || null;
+            const titleYearHint = parsedSec.year || fileYear;
+            const t = makeTitle({ id: `${ch.id}#${sec}`, ch, name: sec, origen: 'macro', seccion: sec, files: fs });
+            if (titleYearHint) t.yearHint = titleYearHint;
+            titles.push(t);
+          }
         }
       }
     } else {

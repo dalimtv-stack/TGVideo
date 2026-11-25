@@ -675,9 +675,13 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
           if (!msg || !msg.media) continue;
 
           const cap = parseCaption(curFile.rawCaption || msg.message || '');
+          const isEpSeries = effectiveTitle?.tipo === 'serie' || isSerie;
+          const targetSection = isEpSeries
+            ? (sBaseName || seriesBaseName || targetChannel?.group || '')
+            : (targetChannel?.section || targetChannel?.group || curFile.section || effectiveTitle?.origen?.seccion || '');
           const epCaption = buildStandardCaption({
             fileName: curFilename,
-            section: targetChannel?.section || targetChannel?.group || curFile.section || effectiveTitle?.origen?.seccion || '',
+            section: targetSection,
             tmdbId: meta?.id || effectiveTmdbId || cap.tmdbId || '',
             imdbId: meta?.imdbId || meta?.imdb_id || effectiveTitle?.imdbId || cap.imdbId || '',
             director: meta?.director || cap.director || '',
@@ -794,9 +798,13 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
         });
 
         const cap = parseCaption(curTargetFile.rawCaption || msg.message || '');
+        const isSingleSeries = isSerie || effectiveTitle?.tipo === 'serie';
+        const singleSection = isSingleSeries
+          ? (seriesBaseName || targetChannel?.group || '')
+          : (targetChannel?.section || targetChannel?.group || file.section || effectiveTitle?.origen?.seccion || '');
         const standardCaption = buildStandardCaption({
           fileName: filename,
-          section: targetChannel?.section || targetChannel?.group || file.section || effectiveTitle?.origen?.seccion || '',
+          section: singleSection,
           tmdbId: meta?.id || effectiveTmdbId || cap.tmdbId || '',
           imdbId: meta?.imdbId || meta?.imdb_id || effectiveTitle?.imdbId || cap.imdbId || '',
           director: meta?.director || cap.director || '',
