@@ -4,7 +4,7 @@ import { Api } from 'telegram';
 import { clearExternalChannelCache } from './externalTitlesCache.js';
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
 import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../metadata/tmdb.js';
-import { seriesNameFromFile } from '../library/titles.js';
+import { seriesNameFromFile, normalizeMovieKey } from '../library/titles.js';
 import { formatBytes } from '../core/utils.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { createKV } from '../core/kv.js';
@@ -185,28 +185,48 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
       generatedTitles.push(titleObj);
     }
   } else if (category === 'Series') {
-    const seriesMap = new Map();
+    const seriesTmdbMap = new Map();
+    const seriesNameMap = new Map();
+
     for (const f of detectedFiles) {
-      const sName = seriesNameFromFile(f.captionFileName || f.fileName) || groupName;
-      const key = sName.toLowerCase().trim();
-      if (!seriesMap.has(key)) {
-        seriesMap.set(key, {
+      const fMeta = resolveExternalMetadata(null, f.tmdbId, [f], virtualId, metadataMap);
+      const fileTmdbId = fMeta?.id || f.tmdbId || null;
+      const sName = fMeta?.name || fMeta?.title || seriesNameFromFile(f.captionFileName || f.fileName) || groupName;
+      const cleanBase = normalizeMovieKey(sName).replace(/(?:19|20)\d{2}/g, '');
+
+      let grp = null;
+      if (fileTmdbId && seriesTmdbMap.has(String(fileTmdbId))) {
+        grp = seriesTmdbMap.get(String(fileTmdbId));
+      } else if (cleanBase && seriesNameMap.has(cleanBase)) {
+        grp = seriesNameMap.get(cleanBase);
+      }
+
+      if (!grp) {
+        grp = {
           id: `${virtualId}#${sName}`,
           nombre: sName,
           files: [f],
-          tmdbId: f.tmdbId || null,
-          imdbId: f.imdbId || null,
-        });
+          tmdbId: fileTmdbId,
+          imdbId: fMeta?.imdbId || f.imdbId || null,
+          metadata: fMeta || null,
+        };
+        if (fileTmdbId) seriesTmdbMap.set(String(fileTmdbId), grp);
+        if (cleanBase) seriesNameMap.set(cleanBase, grp);
       } else {
-        const grp = seriesMap.get(key);
         grp.files.push(f);
-        if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+        if (!grp.tmdbId && fileTmdbId) {
+          grp.tmdbId = fileTmdbId;
+          seriesTmdbMap.set(String(fileTmdbId), grp);
+        }
+        if (!grp.metadata && fMeta) grp.metadata = fMeta;
+        if (fMeta?.name && grp.nombre === groupName) grp.nombre = fMeta.name;
       }
     }
 
-    for (const grp of seriesMap.values()) {
-      grp.files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
-      const savedMeta = resolveExternalMetadata(grp.id, grp.tmdbId, grp.files, virtualId, metadataMap);
+    const uniqueGroups = new Set([...seriesTmdbMap.values(), ...seriesNameMap.values()]);
+    for (const grp of uniqueGroups) {
+      grp.files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
+      const savedMeta = grp.metadata || resolveExternalMetadata(grp.id, grp.tmdbId, grp.files, virtualId, metadataMap);
       const titleObj = {
         id: String(grp.id),
         tipo: 'serie',

@@ -95,7 +95,7 @@ function movieName(file) {
     .replace(/\s+/g, ' ').trim();
 }
 
-function normalizeMovieKey(str) {
+export function normalizeMovieKey(str) {
   return String(str || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')

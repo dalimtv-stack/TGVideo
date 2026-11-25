@@ -6,7 +6,8 @@ import { Api } from 'telegram';
 // - Opción de reenviar o subida rápida a canal tgstorage con caption enriquecido y nombre editable
 
 import { loadLibrary } from '../library/channels.js';
-import { parseCaption, buildStandardCaption } from '../library/parse.js';
+import { parseCaption, buildStandardCaption, parseEpisode, prettyEpisodeName } from '../library/parse.js';
+import { normalizeMovieKey } from '../library/titles.js';
 import { EXT_CHANNEL_TITLES_CACHE, hideExternalFiles, unhideExternalFiles, isExternalFileHiddenSync } from './externalTitlesCache.js';
 import { isExternalTitle } from '../library/titles.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
@@ -292,14 +293,86 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
   }
 
   const isSerie = isSeriesTitle(titleData, file);
-  const allFiles = isSerie && Array.isArray(titleData?.archivos) && titleData.archivos.length > 1
-    ? titleData.archivos
+  let allFiles = isSerie && Array.isArray(titleData?.archivos) && titleData.archivos.length > 0
+    ? [...titleData.archivos]
     : [file];
+
+  // Consolidar con episodios de la misma serie en el canal si estuvieran en fichas separadas
+  const curTmdb = titleData?.tmdbId || titleData?.metadata?.id || file.tmdbId;
+  const curChId = titleData?.channel?.id || file.channelId || titleData?.origen?.channelId;
+  if (isSerie && (curTmdb || titleData?.nombre)) {
+    const sNameNorm = normalizeMovieKey(titleData.metadata?.name || titleData.metadata?.title || titleData.nombre).replace(/(?:19|20)\d{2}/g, '');
+    const pool = [];
+    if (typeof getChannels === 'function' && activeContextConfig?.getTitles) {
+      try { pool.push(...(activeContextConfig.getTitles() || [])); } catch (_) {}
+    }
+    if (typeof EXT_CHANNEL_TITLES_CACHE !== 'undefined' && EXT_CHANNEL_TITLES_CACHE?.values) {
+      try {
+        for (const list of EXT_CHANNEL_TITLES_CACHE.values()) {
+          if (Array.isArray(list)) pool.push(...list);
+        }
+      } catch (_) {}
+    }
+
+    const siblings = pool.filter(t => {
+      if (t === titleData) return false;
+      const matchCh = String(t.channel?.id || t.origen?.channelId || '') === String(curChId || '');
+      if (!matchCh) return false;
+      if (curTmdb && String(t.tmdbId || t.metadata?.id) === String(curTmdb)) return true;
+      const tNorm = normalizeMovieKey(t.metadata?.name || t.metadata?.title || t.nombre).replace(/(?:19|20)\d{2}/g, '');
+      return sNameNorm && tNorm === sNameNorm;
+    });
+
+    const existingKeys = new Set(allFiles.map(f => f.key || `${f.channelId || f.channel?.id}:${f.messageId}`));
+    for (const sib of siblings) {
+      for (const sf of (sib.archivos || [])) {
+        const sfKey = sf.key || `${sf.channelId || sf.channel?.id}:${sf.messageId}`;
+        if (!existingKeys.has(sfKey)) {
+          allFiles.push(sf);
+          existingKeys.add(sfKey);
+        }
+      }
+    }
+  }
+
+  // Ordenar episodios
+  allFiles.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
+
+  // Agrupar temporadas
+  const seasonsMap = new Map();
+  for (const f of allFiles) {
+    let s = Number(f.season);
+    if (!Number.isFinite(s) || s <= 0) {
+      const parsed = parseEpisode(f.captionFileName || f.fileName || '');
+      s = parsed.season || 1;
+      f.season = s;
+      if (!f.episode) f.episode = parsed.episode || 1;
+    }
+    if (!seasonsMap.has(s)) seasonsMap.set(s, []);
+    seasonsMap.get(s).push(f);
+  }
+  const seasonNumbers = Array.from(seasonsMap.keys()).sort((a, b) => a - b);
+
   const isMultiFile = isSerie && allFiles.length > 1;
-  const defaultFilename = formatSuggestedFileName(file, titleData);
   const seriesBaseName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || 'Serie';
+  const defaultFilename = formatSuggestedFileName(file, titleData);
   const sizeStr = formatBytes(file.size);
   const totalSeriesSize = allFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0);
+
+  const seasonOptionsHtml = seasonNumbers.map(sNum => {
+    const sFiles = seasonsMap.get(sNum);
+    const sSize = sFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0);
+    return `<option value="${sNum}">Temporada ${sNum} (${sFiles.length} episodios · ${formatBytes(sSize)})</option>`;
+  }).join('');
+
+  const episodeOptionsHtml = allFiles.map((f, idx) => {
+    const fKey = f.key || `${f.channelId || f.channel?.id}:${f.messageId}` || `ep_${idx}`;
+    const s = f.season || 1;
+    const epNum = f.episode || (idx + 1);
+    const epTitle = prettyEpisodeName(f.captionFileName || f.fileName, seriesBaseName) || f.fileName;
+    const isSelected = (file && (f.messageId === file.messageId || f.key === file.key)) || idx === 0;
+    return `<option value="${esc(fKey)}" ${isSelected ? 'selected' : ''}>T${s}E${String(epNum).padStart(2, '0')} - ${esc(epTitle)} (${formatBytes(f.size)})</option>`;
+  }).join('');
 
   const modalOverlay = document.createElement('div');
   modalOverlay.className = 'modal-overlay';
@@ -319,19 +392,37 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
       </div>
 
       ${isMultiFile ? `
-        <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
-          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.5rem;">
-            Modo de envío a tgstorage:
+        <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.55rem;">
+            ¿Qué deseas enviar a tgstorage?
           </label>
-          <div style="display: flex; gap: 1.2rem;">
-            <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; font-size: 0.88rem; color: #fff;">
+          <div style="display: flex; flex-direction: column; gap: 0.65rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem; color: #fff;">
               <input type="radio" name="send-scope" id="scope-all" value="all" checked style="cursor: pointer; accent-color: var(--theme-accent, #e50914);" />
-              <strong>Enviar serie completa (${allFiles.length} episodios)</strong>
+              <strong>Enviar serie entera (${allFiles.length} episodios · ${esc(formatBytes(totalSeriesSize))})</strong>
             </label>
-            <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; font-size: 0.88rem; color: #94a3b8;">
+
+            ${seasonNumbers.length > 0 ? `
+              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem; color: #cbd5e1;">
+                <input type="radio" name="send-scope" id="scope-season" value="season" style="cursor: pointer; accent-color: var(--theme-accent, #e50914);" />
+                <span>Enviar una temporada en concreto</span>
+              </label>
+              <div id="season-selector-container" style="display: none; margin-left: 1.6rem; margin-top: 0.2rem;">
+                <select id="target-season-select" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px; padding: 0.5rem 0.75rem; color: #fff; font-size: 0.88rem; outline: none; box-sizing: border-box;">
+                  ${seasonOptionsHtml}
+                </select>
+              </div>
+            ` : ''}
+
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem; color: #cbd5e1;">
               <input type="radio" name="send-scope" id="scope-single" value="single" style="cursor: pointer; accent-color: var(--theme-accent, #e50914);" />
-              <span>Solo este episodio</span>
+              <span>Enviar solo un episodio</span>
             </label>
+            <div id="episode-selector-container" style="display: none; margin-left: 1.6rem; margin-top: 0.2rem;">
+              <select id="target-episode-select" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px; padding: 0.5rem 0.75rem; color: #fff; font-size: 0.88rem; outline: none; box-sizing: border-box;">
+                ${episodeOptionsHtml}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -341,7 +432,7 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
           </label>
           <input type="text" id="target-seriesname-input" value="${esc(seriesBaseName)}" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px; padding: 0.6rem 0.75rem; color: #fff; font-size: 0.92rem; outline: none; box-sizing: border-box;" />
           <div style="display: flex; justify-content: space-between; align-items: center; color: #94a3b8; font-size: 0.78rem; margin-top: 0.45rem;">
-            <span>Total: <strong>${allFiles.length} episodios (${esc(formatBytes(totalSeriesSize))})</strong></span>
+            <span id="series-stats-label">Total: <strong>${allFiles.length} episodios (${esc(formatBytes(totalSeriesSize))})</strong></span>
             <span style="color: #38bdf8;">Formato: "[Serie] - 1x01.mp4", "1x02.mp4"...</span>
           </div>
         </div>
@@ -412,26 +503,59 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
   const fastCheck = modalOverlay.querySelector('#fast-upload-check');
   const sendBtn = modalOverlay.querySelector('#modal-send-btn');
   const scopeAllRadio = modalOverlay.querySelector('#scope-all');
+  const scopeSeasonRadio = modalOverlay.querySelector('#scope-season');
   const scopeSingleRadio = modalOverlay.querySelector('#scope-single');
+  const seasonSelectorContainer = modalOverlay.querySelector('#season-selector-container');
+  const seasonSelect = modalOverlay.querySelector('#target-season-select');
+  const episodeSelectorContainer = modalOverlay.querySelector('#episode-selector-container');
+  const episodeSelect = modalOverlay.querySelector('#target-episode-select');
   const seriesNameContainer = modalOverlay.querySelector('#series-name-container');
   const singleNameContainer = modalOverlay.querySelector('#single-name-container');
+  const seriesStatsLabel = modalOverlay.querySelector('#series-stats-label');
+  const filenameInput = modalOverlay.querySelector('#target-filename-input');
 
-  if (isMultiFile && scopeAllRadio && scopeSingleRadio) {
-    scopeAllRadio.addEventListener('change', () => {
-      if (scopeAllRadio.checked) {
-        if (seriesNameContainer) seriesNameContainer.style.display = 'block';
-        if (singleNameContainer) singleNameContainer.style.display = 'none';
-        sendBtn.innerHTML = `<span>⚡ Enviar ${allFiles.length} episodios</span>`;
-      }
-    });
-    scopeSingleRadio.addEventListener('change', () => {
-      if (scopeSingleRadio.checked) {
-        if (seriesNameContainer) seriesNameContainer.style.display = 'none';
-        if (singleNameContainer) singleNameContainer.style.display = 'block';
-        sendBtn.innerHTML = '<span>⚡ Enviar archivo ahora</span>';
-      }
-    });
-  }
+  const updateScopeView = () => {
+    if (!isMultiFile) return;
+    if (scopeAllRadio?.checked) {
+      if (seasonSelectorContainer) seasonSelectorContainer.style.display = 'none';
+      if (episodeSelectorContainer) episodeSelectorContainer.style.display = 'none';
+      if (seriesNameContainer) seriesNameContainer.style.display = 'block';
+      if (singleNameContainer) singleNameContainer.style.display = 'none';
+      if (seriesStatsLabel) seriesStatsLabel.innerHTML = `Total: <strong>${allFiles.length} episodios (${formatBytes(totalSeriesSize)})</strong>`;
+      sendBtn.innerHTML = `<span>⚡ Enviar serie entera (${allFiles.length} eps)</span>`;
+    } else if (scopeSeasonRadio?.checked) {
+      if (seasonSelectorContainer) seasonSelectorContainer.style.display = 'block';
+      if (episodeSelectorContainer) episodeSelectorContainer.style.display = 'none';
+      if (seriesNameContainer) seriesNameContainer.style.display = 'block';
+      if (singleNameContainer) singleNameContainer.style.display = 'none';
+      const sNum = Number(seasonSelect?.value || 1);
+      const sFiles = seasonsMap.get(sNum) || [];
+      const sSize = sFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0);
+      if (seriesStatsLabel) seriesStatsLabel.innerHTML = `Temporada ${sNum}: <strong>${sFiles.length} episodios (${formatBytes(sSize)})</strong>`;
+      sendBtn.innerHTML = `<span>⚡ Enviar Temporada ${sNum} (${sFiles.length} eps)</span>`;
+    } else if (scopeSingleRadio?.checked) {
+      if (seasonSelectorContainer) seasonSelectorContainer.style.display = 'none';
+      if (episodeSelectorContainer) episodeSelectorContainer.style.display = 'block';
+      if (seriesNameContainer) seriesNameContainer.style.display = 'none';
+      if (singleNameContainer) singleNameContainer.style.display = 'block';
+      const chosenKey = episodeSelect?.value;
+      const chosenFile = allFiles.find(f => (f.key || `${f.channelId || f.channel?.id}:${f.messageId}`) === chosenKey) || file;
+      if (filenameInput) filenameInput.value = formatSuggestedFileName(chosenFile, titleData);
+      sendBtn.innerHTML = '<span>⚡ Enviar episodio a tgstorage</span>';
+    }
+  };
+
+  scopeAllRadio?.addEventListener('change', updateScopeView);
+  scopeSeasonRadio?.addEventListener('change', updateScopeView);
+  scopeSingleRadio?.addEventListener('change', updateScopeView);
+  seasonSelect?.addEventListener('change', updateScopeView);
+  episodeSelect?.addEventListener('change', () => {
+    if (scopeSingleRadio?.checked) {
+      const chosenKey = episodeSelect.value;
+      const chosenFile = allFiles.find(f => (f.key || `${f.channelId || f.channel?.id}:${f.messageId}`) === chosenKey) || file;
+      if (filenameInput) filenameInput.value = formatSuggestedFileName(chosenFile, titleData);
+    }
+  });
 
   // Filtrado reactivo de canales
   searchInput.addEventListener('input', () => {
@@ -460,8 +584,30 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
     const targetChannel = tgStorageChannels.find(ch => String(ch.id) === String(targetChannelId));
     const targetChannelName = targetChannel?.title || targetChannel?.name || 'Canal seleccionado';
     const isFastUpload = fastCheck.checked;
-    const sendScopeAll = isMultiFile && scopeAllRadio && scopeAllRadio.checked;
+    const isScopeAll = isMultiFile && scopeAllRadio && scopeAllRadio.checked;
+    const isScopeSeason = isMultiFile && scopeSeasonRadio && scopeSeasonRadio.checked;
 
+    // Determinar los archivos exactos a enviar según la selección
+    let filesToSend = allFiles;
+    let uploadJobTitle = '';
+    if (isMultiFile) {
+      if (isScopeAll) {
+        filesToSend = allFiles;
+        uploadJobTitle = seriesBaseName;
+      } else if (isScopeSeason) {
+        const sNum = Number(seasonSelect?.value || 1);
+        filesToSend = seasonsMap.get(sNum) || [];
+        uploadJobTitle = `${seriesBaseName} - T${sNum}`;
+      } else {
+        const chosenKey = episodeSelect?.value;
+        const chosenFile = allFiles.find(f => (f.key || `${f.channelId || f.channel?.id}:${f.messageId}`) === chosenKey) || file;
+        filesToSend = [chosenFile];
+      }
+    } else {
+      filesToSend = [file];
+    }
+
+    const isBatchMulti = filesToSend.length > 1;
     closeModal();
 
     const bar = ensureProgressBar();
@@ -491,11 +637,11 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
       }
     }
 
-    if (sendScopeAll) {
-      // --- ENVÍO EN LOTE DE SERIE COMPLETA ---
+    if (isBatchMulti) {
+      // --- ENVÍO EN LOTE DE SERIE COMPLETA O TEMPORADA ---
       const seriesInput = modalOverlay.querySelector('#target-seriesname-input');
-      const sBaseName = seriesInput?.value?.trim() || seriesBaseName;
-      const count = allFiles.length;
+      const sBaseName = seriesInput?.value?.trim() || uploadJobTitle || seriesBaseName;
+      const count = filesToSend.length;
       const taskId = startUploadTask(`${isFastUpload ? '⚡ Subida rápida' : '🔄 Subiendo'}: ${sBaseName} (${count} eps)`, `Iniciando envío de ${count} episodios a "${targetChannelName}"…`, 5);
       setProgressBar(bar, {
         id: taskId,
@@ -508,7 +654,7 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
         const targetPeer = await resolvePeer(client, tg, targetChannel || targetChannelId);
 
         for (let i = 0; i < count; i++) {
-          const curFile = allFiles[i];
+          const curFile = filesToSend[i];
           const curFilename = formatSuggestedFileName(curFile, {
             ...effectiveTitle,
             nombre: sBaseName,
@@ -631,10 +777,11 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
       });
 
       try {
-        const sourcePeer = await resolvePeer(client, tg, file.channel || file.channelId);
+        const curTargetFile = filesToSend[0] || file;
+        const sourcePeer = await resolvePeer(client, tg, curTargetFile.channel || curTargetFile.channelId || file.channel || file.channelId);
         const targetPeer = await resolvePeer(client, tg, targetChannel || targetChannelId);
 
-        const [msg] = await client.getMessages(sourcePeer, { ids: [file.messageId] });
+        const [msg] = await client.getMessages(sourcePeer, { ids: [curTargetFile.messageId] });
         if (!msg || !msg.media) {
           throw new Error('No se pudo encontrar el mensaje original en Telegram.');
         }
@@ -646,7 +793,7 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
           percent: 45,
         });
 
-        const cap = parseCaption(file.rawCaption || msg.message || '');
+        const cap = parseCaption(curTargetFile.rawCaption || msg.message || '');
         const standardCaption = buildStandardCaption({
           fileName: filename,
           section: targetChannel?.section || targetChannel?.group || file.section || effectiveTitle?.origen?.seccion || '',

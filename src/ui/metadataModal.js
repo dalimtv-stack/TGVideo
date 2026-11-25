@@ -311,9 +311,26 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
                     if (ct.archivos) {
                       ct.archivos.forEach(f => { f.metadata = selected; f.tmdbId = selected.id; });
                     }
+
+                    // Si otro título en el mismo canal comparte ahora este mismo TMDB ID, unificarlos
+                    const sameTmdbIdx = cachedTitles.findIndex(x => x !== ct && String(x.tmdbId || x.metadata?.id) === String(selected.id));
+                    if (sameTmdbIdx !== -1) {
+                      const other = cachedTitles[sameTmdbIdx];
+                      const existingKeys = new Set((ct.archivos || []).map(f => f.key || `${f.channelId || f.channel?.id}:${f.messageId}`));
+                      for (const f of (other.archivos || [])) {
+                        const fKey = f.key || `${f.channelId || f.channel?.id}:${f.messageId}`;
+                        if (!existingKeys.has(fKey)) {
+                          ct.archivos.push(f);
+                          existingKeys.add(fKey);
+                        }
+                      }
+                      ct.archivos.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
+                      cachedTitles.splice(sameTmdbIdx, 1);
+                    }
                   }
                 }
               }
+              window.dispatchEvent(new CustomEvent('tgvideo:external-hidden-changed'));
             }
           } catch (e) {
             console.warn("[metadataModal] Error persistiendo metadatos externos:", e);
