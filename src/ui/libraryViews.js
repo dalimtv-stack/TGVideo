@@ -30,7 +30,7 @@ export function createLibraryViews(deps) {
   const LIB_KEY = 'library_v2';
   let lastOpenedTitleId = null;
 
-  function showGroupGrid(tg, sync, profile, row, { focusTitleId = null } = {}) {
+  function showGroupGrid(tg, sync, profile, row, { focusTitleId = null, initialSearch = null } = {}) {
     applyProfileScale(profile);
     const isExt = Boolean(row.isExternal || String(row.id || "").startsWith("ext-"));
     const back = () => isExt ? showHome(tg, sync, profile, { selectedSection: "externos" }) : showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
@@ -180,7 +180,7 @@ export function createLibraryViews(deps) {
       return list;
     };
 
-    let searchTerm = "";
+    let searchTerm = initialSearch != null ? initialSearch : (row._savedSearch || "");
 
     const getProcessedItems = () => {
       let filtered = isGrouped ? groupTitles(baseItems) : unbundleTitles(baseItems);
@@ -322,7 +322,8 @@ export function createLibraryViews(deps) {
         const t = items.find(x => String(x.id) === String(card.dataset.title));
         if (t) card._titleData = t;
         card.onclick = () => {
-          if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
+          row._savedSearch = searchTerm;
+          if (t) showDetail(tg, sync, profile, t, { fromGrid: row, savedSearch: searchTerm });
         };
       });
       frag.querySelectorAll(".lib-card-poster img.poster-image").forEach(img => {
@@ -382,8 +383,12 @@ export function createLibraryViews(deps) {
     const searchClear = document.getElementById("grid-search-clear");
     if (searchInput) {
       let searchTimeout = null;
+      if (searchTerm && searchClear) {
+        searchClear.style.display = "inline-block";
+      }
       searchInput.addEventListener("input", () => {
         searchTerm = searchInput.value;
+        row._savedSearch = searchTerm;
         if (searchClear) searchClear.style.display = searchTerm ? "inline-block" : "none";
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
@@ -394,6 +399,7 @@ export function createLibraryViews(deps) {
         if (e.key === "Escape") {
           searchInput.value = "";
           searchTerm = "";
+          row._savedSearch = "";
           if (searchClear) searchClear.style.display = "none";
           renderCards(getProcessedItems());
         }
@@ -404,6 +410,7 @@ export function createLibraryViews(deps) {
         if (searchInput) {
           searchInput.value = "";
           searchTerm = "";
+          row._savedSearch = "";
           searchClear.style.display = "none";
           searchInput.focus();
           renderCards(getProcessedItems());
@@ -738,7 +745,7 @@ function applyDetailMetadata(t, profile) {
   }
 }
 
-function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = null, fromGrid = null } = {}) {
+function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = null, fromGrid = null, savedSearch = null } = {}) {
   lastOpenedTitleId = t.id;
   if (t.isSaga && Array.isArray(t.archivos)) {
     const allTitles = getTitles() || [];
@@ -761,7 +768,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   }
   const back = () => {
     if (fromGrid) {
-      showGroupGrid(tg, sync, profile, fromGrid, { focusTitleId: t.id });
+      showGroupGrid(tg, sync, profile, fromGrid, { focusTitleId: t.id, initialSearch: savedSearch || fromGrid._savedSearch });
     } else {
       showHome(tg, sync, profile, { focusTitleId: t.id, focusRowId: fromRowId, focusCardIndex: fromCardIndex });
     }
@@ -880,7 +887,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       const attachFn = attachAutoCollections || (x => x);
       if (getTitles()) setTitles(attachFn(mergeMoviesByTmdb(getTitles())));
       applyDetailMetadata(t, profile);
-      showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid });
+      showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid, savedSearch });
     }, { client: tg?.getClient?.(), peerOf: tg?.peerOf, profile, sync });
   };
 
@@ -955,7 +962,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     playFile({
       client: tg.getClient(), peerOf: tg.peerOf, file: f, title: targetTitle, profile,
       resumeAt: p && !p.is_completed ? p.current_time : 0, mount: app,
-      onClose: () => showDetail(tg, sync, profile, targetTitle, { fromRowId, fromCardIndex, fromGrid }),
+      onClose: () => showDetail(tg, sync, profile, targetTitle, { fromRowId, fromCardIndex, fromGrid, savedSearch }),
       sync,
       nextFile,
       onNext: (nf) => play(nf, nextTitle),

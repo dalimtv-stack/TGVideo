@@ -33,7 +33,8 @@ function resolveExternalMetadata(id, tmdbId, files, virtualId, metadataMap = {})
     files.map(f => metadataMap[f.key] || metadataMap[`${virtualId}:${f.messageId}`]).find(Boolean) ||
     fileWithMeta?.metadata ||
     getOverride(String(id)) ||
-    (tmdbId ? getOverrideByTmdbId(tmdbId) : null);
+    (tmdbId ? getOverrideByTmdbId(tmdbId) : null) ||
+    files.map(f => getOverride(f.key) || getOverride(`${virtualId}:${f.messageId}`)).find(Boolean);
   return saved || null;
 }
 

@@ -2,6 +2,7 @@
 // Pestaña de Canales Externos: navegación por banners categorizados (Películas, Series, Deportes, Documentales, Música, Otros).
 import { createKV } from '../core/kv.js';
 import { prewarmPosterCache } from '../metadata/posterCache.js';
+import { loadOverrides } from '../metadata/overrides.js';
 import { focusFirst } from './dpad.js';
 import { buildTitlesForExternalChannel, scanSingleExternalChannel, identifyTitlesInBulk } from './adminChannels.js';
 import { EXT_CHANNEL_TITLES_CACHE, clearExternalChannelCache } from './externalTitlesCache.js';
@@ -247,6 +248,8 @@ export function renderExternalsView({
         titles = EXT_CHANNEL_TITLES_CACHE.get(extId);
       }
       if (!titles || titles.length === 0) {
+        // Asegurar que overrides locales y sincronizados estén cargados antes de construir títulos
+        await loadOverrides(sync).catch(() => {});
         const [cachedFiles, lib] = await Promise.all([
           kv.get(`ext_files_${extId}`).catch(() => null),
           kv.get(LIB_KEY).catch(() => null),

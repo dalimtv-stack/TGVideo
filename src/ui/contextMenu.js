@@ -10,6 +10,7 @@ import { parseCaption, buildStandardCaption } from '../library/parse.js';
 import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
 import { extractTitleAndYear, fetchTmdbFullDetails } from '../metadata/tmdb.js';
+import { showMetadataModal } from './metadataModal.js';
 
 function esc(value) {
   return String(value ?? '')
@@ -231,8 +232,8 @@ function formatSuggestedFileName(file, titleData) {
     return `${sName} - ${season}x${epStr}${ext}`;
   }
 
-  // Película o documental
-  let mName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre;
+  // Película o documental: priorizar título/nombre de los metadatos TMDB identificados
+  let mName = titleData?.metadata?.title || titleData?.metadata?.name || file?.metadata?.title || file?.metadata?.name || titleData?.nombre;
   let year = extractYear(titleData, file);
 
   if (!mName) {
@@ -277,8 +278,15 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
     return;
   }
 
+  const allFiles = Array.isArray(titleData?.archivos) && titleData.archivos.length > 1
+    ? titleData.archivos
+    : [file];
+  const isMultiFile = allFiles.length > 1;
+  const isSerie = titleData?.tipo === 'serie' || isMultiFile;
   const defaultFilename = formatSuggestedFileName(file, titleData);
+  const seriesBaseName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || 'Serie';
   const sizeStr = formatBytes(file.size);
+  const totalSeriesSize = allFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0);
 
   const modalOverlay = document.createElement('div');
   modalOverlay.className = 'modal-overlay';
@@ -289,15 +297,44 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
   `;
 
   modalOverlay.innerHTML = `
-    <div style="background: #181c24; border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; max-width: 540px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); color: #fff; padding: 1.5rem; font-family: inherit;">
+    <div style="background: #181c24; border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; max-width: 560px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); color: #fff; padding: 1.5rem; font-family: inherit;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.8rem;">
         <h3 style="margin: 0; font-size: 1.2rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
-          <span>⚡</span> Enviar archivo a canal tgstorage
+          <span>⚡</span> ${isMultiFile ? 'Enviar serie / episodios a canal tgstorage' : 'Enviar archivo a canal tgstorage'}
         </h3>
         <button id="modal-close-btn" style="background: transparent; border: none; color: #94a3b8; font-size: 1.4rem; cursor: pointer; padding: 0.2rem 0.5rem; border-radius: 4px;">×</button>
       </div>
 
-      <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
+      ${isMultiFile ? `
+        <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.5rem;">
+            Modo de envío a tgstorage:
+          </label>
+          <div style="display: flex; gap: 1.2rem;">
+            <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; font-size: 0.88rem; color: #fff;">
+              <input type="radio" name="send-scope" id="scope-all" value="all" checked style="cursor: pointer; accent-color: var(--theme-accent, #e50914);" />
+              <strong>Enviar serie completa (${allFiles.length} episodios)</strong>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; font-size: 0.88rem; color: #94a3b8;">
+              <input type="radio" name="send-scope" id="scope-single" value="single" style="cursor: pointer; accent-color: var(--theme-accent, #e50914);" />
+              <span>Solo este episodio</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="series-name-container" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
+          <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
+            Nombre base de la serie (editable):
+          </label>
+          <input type="text" id="target-seriesname-input" value="${esc(seriesBaseName)}" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.22); border-radius: 6px; padding: 0.6rem 0.75rem; color: #fff; font-size: 0.92rem; outline: none; box-sizing: border-box;" />
+          <div style="display: flex; justify-content: space-between; align-items: center; color: #94a3b8; font-size: 0.78rem; margin-top: 0.45rem;">
+            <span>Total: <strong>${allFiles.length} episodios (${esc(formatBytes(totalSeriesSize))})</strong></span>
+            <span style="color: #38bdf8;">Formato: "[Serie] - 1x01.mp4", "1x02.mp4"...</span>
+          </div>
+        </div>
+      ` : ''}
+
+      <div id="single-name-container" style="${isMultiFile ? 'display: none;' : ''} background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
         <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
           Nombre del archivo en Telegram (editable):
         </label>
@@ -319,7 +356,7 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
         </label>
         <select id="channel-target-select" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; padding: 0.6rem 0.75rem; color: #fff; font-size: 0.9rem; outline: none; box-sizing: border-box;">
           ${tgStorageChannels.map(ch => `
-            <option value="${esc(ch.id)}">[${esc(ch.category || 'General')}] ${esc(ch.title || ch.name)}</option>
+            <option value="${esc(ch.id)}">${ch.id === (isSerie ? tgStorageChannels.find(c => c.category === 'Series')?.id : tgStorageChannels.find(c => c.category === 'Películas')?.id) ? '⭐ ' : ''}[${esc(ch.category || 'General')}] ${esc(ch.title || ch.name)}</option>
           `).join('')}
         </select>
       </div>
@@ -342,7 +379,7 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
           Cancelar
         </button>
         <button type="button" id="modal-send-btn" style="background: var(--theme-accent, #e50914); border: none; border-radius: 6px; padding: 0.6rem 1.4rem; color: #fff; font-size: 0.9rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem;">
-          <span>⚡ Enviar ahora</span>
+          <span>${isMultiFile ? `⚡ Enviar ${allFiles.length} episodios` : '⚡ Enviar ahora'}</span>
         </button>
       </div>
     </div>
@@ -350,22 +387,45 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
 
   document.body.appendChild(modalOverlay);
 
+  const closeModal = () => modalOverlay.remove();
+  modalOverlay.querySelector('#modal-close-btn').onclick = closeModal;
+  modalOverlay.querySelector('#modal-cancel-btn').onclick = closeModal;
+  modalOverlay.addEventListener('click', (e) => {
+    if (e.target === modalOverlay) closeModal();
+  });
+
   const searchInput = modalOverlay.querySelector('#channel-search-input');
   const targetSelect = modalOverlay.querySelector('#channel-target-select');
   const fastCheck = modalOverlay.querySelector('#fast-upload-check');
-  const closeBtn = modalOverlay.querySelector('#modal-close-btn');
-  const cancelBtn = modalOverlay.querySelector('#modal-cancel-btn');
   const sendBtn = modalOverlay.querySelector('#modal-send-btn');
+  const scopeAllRadio = modalOverlay.querySelector('#scope-all');
+  const scopeSingleRadio = modalOverlay.querySelector('#scope-single');
+  const seriesNameContainer = modalOverlay.querySelector('#series-name-container');
+  const singleNameContainer = modalOverlay.querySelector('#single-name-container');
 
-  const closeModal = () => modalOverlay.remove();
-  closeBtn.onclick = closeModal;
-  cancelBtn.onclick = closeModal;
+  if (isMultiFile && scopeAllRadio && scopeSingleRadio) {
+    scopeAllRadio.addEventListener('change', () => {
+      if (scopeAllRadio.checked) {
+        if (seriesNameContainer) seriesNameContainer.style.display = 'block';
+        if (singleNameContainer) singleNameContainer.style.display = 'none';
+        sendBtn.innerHTML = `<span>⚡ Enviar ${allFiles.length} episodios</span>`;
+      }
+    });
+    scopeSingleRadio.addEventListener('change', () => {
+      if (scopeSingleRadio.checked) {
+        if (seriesNameContainer) seriesNameContainer.style.display = 'none';
+        if (singleNameContainer) singleNameContainer.style.display = 'block';
+        sendBtn.innerHTML = '<span>⚡ Enviar archivo ahora</span>';
+      }
+    });
+  }
 
+  // Filtrado reactivo de canales
   searchInput.addEventListener('input', () => {
-    const q = searchInput.value.toLowerCase().trim();
+    const term = (searchInput.value || '').trim().toLowerCase();
     const filtered = tgStorageChannels.filter(ch => {
-      const matchName = (ch.title || ch.name || '').toLowerCase().includes(q);
-      const matchCat = (ch.category || '').toLowerCase().includes(q);
+      const matchName = (ch.title || ch.name || '').toLowerCase().includes(term);
+      const matchCat = (ch.category || '').toLowerCase().includes(term);
       return matchName || matchCat;
     });
 
@@ -374,7 +434,7 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
         <option value="${esc(ch.id)}">[${esc(ch.category || 'General')}] ${esc(ch.title || ch.name)}</option>
       `).join('');
     } else {
-      targetSelect.innerHTML = `<option value="">No hay canales que coincidan</option>`;
+      targetSelect.innerHTML = '<option value="">No hay canales que coincidan</option>';
     }
   });
 
@@ -387,155 +447,256 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
     const targetChannel = tgStorageChannels.find(ch => String(ch.id) === String(targetChannelId));
     const targetChannelName = targetChannel?.title || targetChannel?.name || 'Canal seleccionado';
     const isFastUpload = fastCheck.checked;
-    const filenameInput = modalOverlay.querySelector('#target-filename-input');
-    const filename = filenameInput?.value?.trim() || defaultFilename;
+    const sendScopeAll = isMultiFile && scopeAllRadio && scopeAllRadio.checked;
 
     closeModal();
 
     const bar = ensureProgressBar();
-    const taskId = startUploadTask(`${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`, `Conectando con canal destino "${targetChannelName}"…`, 15);
-    setProgressBar(bar, {
-      id: taskId,
-      title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
-      status: `Conectando con canal destino "${targetChannelName}"…`,
-      percent: 15,
-    });
 
-    try {
-      const sourcePeer = await resolvePeer(client, tg, file.channel || file.channelId);
-      const targetPeer = await resolvePeer(client, tg, targetChannel || targetChannelId);
+    // 1. Resolver el título y sus metadatos TMDB completos
+    let effectiveTitle = titleData;
+    if (!effectiveTitle && file) {
+      const internalTitles = (typeof getChannels === 'function' ? (activeContextConfig?.getTitles?.() || []) : []) || [];
+      const externalTitlesList = Array.from(EXT_CHANNEL_TITLES_CACHE?.values?.() || []).flat();
+      const allTitles = [...internalTitles, ...externalTitlesList];
+      effectiveTitle = allTitles.find(t => t.archivos?.some(f => f.key === file.key || String(f.messageId) === String(file.messageId)));
+    }
 
-      const [msg] = await client.getMessages(sourcePeer, { ids: [file.messageId] });
-      if (!msg || !msg.media) {
-        throw new Error('No se pudo encontrar el mensaje original en Telegram.');
-      }
+    let meta = effectiveTitle?.metadata || file.metadata || null;
+    let effectiveTmdbId = meta?.id || effectiveTitle?.tmdbId || file.tmdbId;
 
-      setProgressBar(bar, {
-        id: taskId,
-        title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
-        status: 'Obteniendo metadatos completos TMDB para el caption…',
-        percent: 30,
-      });
-
-      // 1. Resolver el título y sus metadatos TMDB completos
-      let effectiveTitle = titleData;
-      if (!effectiveTitle && file) {
-        const internalTitles = (typeof getChannels === 'function' ? (activeContextConfig?.getTitles?.() || []) : []) || [];
-        const externalTitlesList = Array.from(EXT_CHANNEL_TITLES_CACHE?.values?.() || []).flat();
-        const allTitles = [...internalTitles, ...externalTitlesList];
-        effectiveTitle = allTitles.find(t => t.archivos?.some(f => f.key === file.key || String(f.messageId) === String(file.messageId)));
-      }
-
-      let meta = effectiveTitle?.metadata || file.metadata || null;
-      let effectiveTmdbId = meta?.id || effectiveTitle?.tmdbId || file.tmdbId;
-
-      // Si tenemos ID de TMDB pero faltan detalles clave como director o casting, obtener detalles completos
-      if (effectiveTmdbId && (!meta?.director || !meta?.cast)) {
-        try {
-          const isTv = effectiveTitle?.tipo === 'serie';
-          const full = await fetchTmdbFullDetails(isTv ? 'tv' : 'movie', effectiveTmdbId);
-          if (full && Object.keys(full).length > 0) {
-            meta = { ...(meta || {}), ...full };
-            if (effectiveTitle) effectiveTitle.metadata = meta;
-          }
-        } catch (err) {
-          console.warn('[contextMenu] No se pudieron cargar detalles adicionales de TMDB', err);
+    if (effectiveTmdbId && (!meta?.director || !meta?.cast)) {
+      try {
+        const isTv = effectiveTitle?.tipo === 'serie' || isSerie;
+        const full = await fetchTmdbFullDetails(isTv ? 'tv' : 'movie', effectiveTmdbId);
+        if (full && Object.keys(full).length > 0) {
+          meta = { ...(meta || {}), ...full };
+          if (effectiveTitle) effectiveTitle.metadata = meta;
         }
+      } catch (err) {
+        console.warn('[contextMenu] No se pudieron cargar detalles adicionales de TMDB', err);
       }
+    }
 
-      // 2. Construir el caption estándar oficial de tgstorage
-      const cap = parseCaption(file.rawCaption || msg.message || '');
-      const standardCaption = buildStandardCaption({
-        fileName: filename,
-        section: targetChannel?.section || targetChannel?.group || file.section || effectiveTitle?.origen?.seccion || '',
-        tmdbId: meta?.id || effectiveTmdbId || cap.tmdbId || '',
-        imdbId: meta?.imdbId || meta?.imdb_id || effectiveTitle?.imdbId || cap.imdbId || '',
-        director: meta?.director || cap.director || '',
-        writer: meta?.writer || cap.writer || '',
-        cast: meta?.cast || cap.cast || '',
-        rating: meta?.rating || meta?.vote_average || cap.rating || '',
-        ageRating: meta?.ageRating || cap.ageRating || '',
-        synopsis: meta?.overview || meta?.synopsis || file.synopsis || cap.synopsis || '',
-      });
-
+    if (sendScopeAll) {
+      // --- ENVÍO EN LOTE DE SERIE COMPLETA ---
+      const seriesInput = modalOverlay.querySelector('#target-seriesname-input');
+      const sBaseName = seriesInput?.value?.trim() || seriesBaseName;
+      const count = allFiles.length;
+      const taskId = startUploadTask(`${isFastUpload ? '⚡ Subida rápida' : '🔄 Subiendo'}: ${sBaseName} (${count} eps)`, `Iniciando envío de ${count} episodios a "${targetChannelName}"…`, 5);
       setProgressBar(bar, {
         id: taskId,
-        title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
-        status: `Enviando a "${targetChannelName}"…`,
-        percent: 60,
+        title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Subiendo'}: ${sBaseName} (${count} eps)`,
+        status: `Iniciando envío de ${count} episodios a "${targetChannelName}"…`,
+        percent: 5,
       });
 
-      if (isFastUpload) {
-        const docMedia = msg.media?.document || msg.media;
-        if (!docMedia) throw new Error('El mensaje original no contiene un archivo reenviable.');
+      try {
+        const targetPeer = await resolvePeer(client, tg, targetChannel || targetChannelId);
 
-        await client.sendFile(targetPeer, {
-          file: docMedia,
-          caption: standardCaption,
-          forceDocument: false,
-        });
-      } else {
-        // Resubida completa: descarga a memoria y sube como nuevo documento con DocumentAttributeFilename
+        for (let i = 0; i < count; i++) {
+          const curFile = allFiles[i];
+          const curFilename = formatSuggestedFileName(curFile, {
+            ...effectiveTitle,
+            nombre: sBaseName,
+            tipo: 'serie',
+            metadata: { ...(meta || {}), name: sBaseName, title: sBaseName },
+          });
+
+          const pct = Math.round((i / count) * 90) + 5;
+          setProgressBar(bar, {
+            id: taskId,
+            title: `⚡ Enviando serie: ${sBaseName} (${i + 1}/${count})`,
+            status: `[${i + 1}/${count}] Enviando "${curFilename}"…`,
+            percent: pct,
+          });
+
+          const fileSourcePeer = await resolvePeer(client, tg, curFile.channel || curFile.channelId || effectiveTitle?.channel || file.channel);
+          const [msg] = await client.getMessages(fileSourcePeer, { ids: [curFile.messageId] });
+          if (!msg || !msg.media) continue;
+
+          const cap = parseCaption(curFile.rawCaption || msg.message || '');
+          const epCaption = buildStandardCaption({
+            fileName: curFilename,
+            section: targetChannel?.section || targetChannel?.group || curFile.section || effectiveTitle?.origen?.seccion || '',
+            tmdbId: meta?.id || effectiveTmdbId || cap.tmdbId || '',
+            imdbId: meta?.imdbId || meta?.imdb_id || effectiveTitle?.imdbId || cap.imdbId || '',
+            director: meta?.director || cap.director || '',
+            writer: meta?.writer || cap.writer || '',
+            cast: meta?.cast || cap.cast || '',
+            rating: meta?.rating || meta?.vote_average || cap.rating || '',
+            ageRating: meta?.ageRating || cap.ageRating || '',
+            synopsis: curFile.synopsis || meta?.overview || meta?.synopsis || cap.synopsis || '',
+          });
+
+          if (isFastUpload) {
+            const docMedia = msg.media?.document || msg.media;
+            if (docMedia) {
+              await client.sendFile(targetPeer, {
+                file: docMedia,
+                caption: epCaption,
+                forceDocument: false,
+              });
+            }
+          } else {
+            const bytes = await client.downloadMedia(msg.media, {});
+            const mimeType = msg.document?.mimeType || (curFilename.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream');
+            const blob = new Blob([bytes], { type: mimeType });
+            const upload = await client.uploadFile({
+              file: new File([blob], curFilename, { type: blob.type }),
+              workers: 3,
+            });
+            await client.sendFile(targetPeer, {
+              file: upload,
+              caption: epCaption,
+              forceDocument: !curFilename.toLowerCase().endsWith('.mp4'),
+              attributes: [new Api.DocumentAttributeFilename({ fileName: curFilename })],
+            });
+          }
+
+          if (i < count - 1) {
+            await new Promise(r => setTimeout(r, 650));
+          }
+        }
+
         setProgressBar(bar, {
           id: taskId,
-          title: `🔄 Resubiendo: ${filename}`,
-          status: `Descargando original (${formatBytes(file.size)})…`,
-          percent: 35,
+          title: `⚡ Serie enviada con éxito: ${sBaseName}`,
+          status: `Los ${count} episodios se han enviado a "${targetChannelName}"`,
+          percent: 100,
+          done: true,
         });
-
-        const bytes = await client.downloadMedia(msg.media, {
-          progressCallback: (done, total) => {
-            const tot = total || file.size || 1;
-            const pct = Math.min(45, Math.round((done / tot) * 45));
-            setProgressBar(bar, {
-              id: taskId,
-              title: `🔄 Resubiendo: ${filename}`,
-              status: `Descargando ${formatBytes(done)} / ${formatBytes(tot)}…`,
-              percent: pct,
-            });
-          }
-        });
-
-        const mimeType = msg.document?.mimeType || (filename.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream');
-        const blob = new Blob([bytes], { type: mimeType });
-        const upload = await client.uploadFile({
-          file: new File([blob], filename, { type: blob.type }),
-          workers: 3,
-          onProgress: (progress) => {
-            const pct = 45 + Math.round(progress * 50);
-            setProgressBar(bar, {
-              id: taskId,
-              title: `🔄 Resubiendo: ${filename}`,
-              status: `Subiendo a "${targetChannelName}" (${Math.round(progress * 100)}%)…`,
-              percent: pct,
-            });
-          }
-        });
-
-        await client.sendFile(targetPeer, {
-          file: upload,
-          caption: standardCaption,
-          forceDocument: !filename.toLowerCase().endsWith('.mp4'),
-          attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
+      } catch (err) {
+        console.error('[contextMenu] Error en subida de serie completa', err);
+        setProgressBar(bar, {
+          id: taskId,
+          title: `Error al enviar serie: ${sBaseName}`,
+          status: err.message || String(err),
+          percent: 0,
+          error: true,
         });
       }
+    } else {
+      // --- ENVÍO DE ARCHIVO INDIVIDUAL ---
+      const filenameInput = modalOverlay.querySelector('#target-filename-input');
+      const filename = filenameInput?.value?.trim() || defaultFilename;
 
+      const taskId = startUploadTask(`${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`, `Conectando con canal destino "${targetChannelName}"…`, 15);
       setProgressBar(bar, {
         id: taskId,
-        title: `${isFastUpload ? '⚡ Subida rápida completada' : '🔄 Resubida completada'}: ${filename}`,
-        status: `Añadido a "${targetChannelName}" con éxito`,
-        percent: 100,
-        done: true,
+        title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
+        status: `Conectando con canal destino "${targetChannelName}"…`,
+        percent: 15,
       });
-    } catch (err) {
-      console.error('[contextMenu] Error en subida/reenvío', err);
-      setProgressBar(bar, {
-        id: taskId,
-        title: `Error al enviar: ${filename}`,
-        status: err.message || String(err),
-        percent: 0,
-        error: true,
-      });
+
+      try {
+        const sourcePeer = await resolvePeer(client, tg, file.channel || file.channelId);
+        const targetPeer = await resolvePeer(client, tg, targetChannel || targetChannelId);
+
+        const [msg] = await client.getMessages(sourcePeer, { ids: [file.messageId] });
+        if (!msg || !msg.media) {
+          throw new Error('No se pudo encontrar el mensaje original en Telegram.');
+        }
+
+        setProgressBar(bar, {
+          id: taskId,
+          title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
+          status: 'Preparando metadatos y caption…',
+          percent: 45,
+        });
+
+        const cap = parseCaption(file.rawCaption || msg.message || '');
+        const standardCaption = buildStandardCaption({
+          fileName: filename,
+          section: targetChannel?.section || targetChannel?.group || file.section || effectiveTitle?.origen?.seccion || '',
+          tmdbId: meta?.id || effectiveTmdbId || cap.tmdbId || '',
+          imdbId: meta?.imdbId || meta?.imdb_id || effectiveTitle?.imdbId || cap.imdbId || '',
+          director: meta?.director || cap.director || '',
+          writer: meta?.writer || cap.writer || '',
+          cast: meta?.cast || cap.cast || '',
+          rating: meta?.rating || meta?.vote_average || cap.rating || '',
+          ageRating: meta?.ageRating || cap.ageRating || '',
+          synopsis: meta?.overview || meta?.synopsis || file.synopsis || cap.synopsis || '',
+        });
+
+        setProgressBar(bar, {
+          id: taskId,
+          title: `${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`,
+          status: `Enviando a "${targetChannelName}"…`,
+          percent: 60,
+        });
+
+        if (isFastUpload) {
+          const docMedia = msg.media?.document || msg.media;
+          if (!docMedia) throw new Error('El mensaje original no contiene un archivo reenviable.');
+
+          await client.sendFile(targetPeer, {
+            file: docMedia,
+            caption: standardCaption,
+            forceDocument: false,
+          });
+        } else {
+          setProgressBar(bar, {
+            id: taskId,
+            title: `🔄 Resubiendo: ${filename}`,
+            status: `Descargando original (${formatBytes(file.size)})…`,
+            percent: 35,
+          });
+
+          const bytes = await client.downloadMedia(msg.media, {
+            progressCallback: (done, total) => {
+              const tot = total || file.size || 1;
+              const pct = Math.min(45, Math.round((done / tot) * 45));
+              setProgressBar(bar, {
+                id: taskId,
+                title: `🔄 Resubiendo: ${filename}`,
+                status: `Descargando ${formatBytes(done)} / ${formatBytes(tot)}…`,
+                percent: pct,
+              });
+            }
+          });
+
+          const mimeType = msg.document?.mimeType || (filename.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream');
+          const blob = new Blob([bytes], { type: mimeType });
+          const upload = await client.uploadFile({
+            file: new File([blob], filename, { type: blob.type }),
+            workers: 3,
+            onProgress: (progress) => {
+              const pct = 45 + Math.round(progress * 50);
+              setProgressBar(bar, {
+                id: taskId,
+                title: `🔄 Resubiendo: ${filename}`,
+                status: `Subiendo a "${targetChannelName}" (${Math.round(progress * 100)}%)…`,
+                percent: pct,
+              });
+            }
+          });
+
+          await client.sendFile(targetPeer, {
+            file: upload,
+            caption: standardCaption,
+            forceDocument: !filename.toLowerCase().endsWith('.mp4'),
+            attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
+          });
+        }
+
+        setProgressBar(bar, {
+          id: taskId,
+          title: `${isFastUpload ? '⚡ Subida rápida completada' : '🔄 Resubida completada'}: ${filename}`,
+          status: `Añadido a "${targetChannelName}" con éxito`,
+          percent: 100,
+          done: true,
+        });
+      } catch (err) {
+        console.error('[contextMenu] Error en subida/reenvío', err);
+        setProgressBar(bar, {
+          id: taskId,
+          title: `Error al enviar: ${filename}`,
+          status: err.message || String(err),
+          percent: 0,
+          error: true,
+        });
+      }
     }
   });
 }
@@ -675,7 +836,11 @@ export function initContextMenu(config) {
       </div>
       <div class="pc-menu-item" id="pc-menu-forward" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem;">⚡</span>
-        <span>Enviar / Subir a canal tgstorage</span>
+        <span>${(targetTitle?.archivos?.length || 1) > 1 ? (targetTitle.tipo === "serie" ? "Enviar serie completa / episodio a tgstorage" : "Enviar colección / archivo a tgstorage") : "Enviar / Subir a canal tgstorage"}</span>
+      </div>
+      <div class="pc-menu-item" id="pc-menu-identify" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
+        <span style="font-size: 1.1rem; color: #c084fc;">✨</span>
+        <span>Identificar / Corregir en TMDB</span>
       </div>
       <div class="pc-menu-item" id="pc-menu-download" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem;">⬇️</span>
@@ -718,6 +883,51 @@ export function initContextMenu(config) {
       const currentTg = currentConfig.tg;
       const currentClient = currentConfig.client || currentTg?.getClient?.();
       showForwardModal(currentClient, currentTg, targetFile, currentConfig.getChannels, targetTitle);
+    });
+
+    menu.querySelector('#pc-menu-identify')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      removeActiveMenu();
+      const currentConfig = activeContextConfig || {};
+      const currentTg = currentConfig.tg;
+      const currentClient = currentConfig.client || currentTg?.getClient?.();
+      const currentSync = currentConfig.sync || window.sync;
+      const currentProfile = currentConfig.profile;
+
+      showMetadataModal(targetTitle, (updatedMeta) => {
+        targetTitle.metadata = updatedMeta;
+        targetTitle.nombre = updatedMeta.name || updatedMeta.title || targetTitle.nombre;
+        if (targetTitle.archivos && !targetTitle.isSaga) {
+          for (const f of targetTitle.archivos) {
+            f.metadata = updatedMeta;
+            f.tmdbId = updatedMeta.id;
+          }
+        }
+        const cardEl = document.querySelector(`.lib-card[data-title="${esc(targetTitle.id)}"]`);
+        if (cardEl) {
+          cardEl._titleData = targetTitle;
+          const nameEl = cardEl.querySelector(".lib-card-name");
+          if (nameEl) nameEl.textContent = updatedMeta.name || updatedMeta.title || targetTitle.nombre;
+          const posterEl = cardEl.querySelector(".lib-card-poster");
+          const posterUrl = updatedMeta.poster;
+          if (posterEl && posterUrl) {
+            posterEl.classList.add("has-poster");
+            let img = posterEl.querySelector("img.poster-image");
+            if (!img) {
+              img = document.createElement("img");
+              img.className = "poster-image";
+              img.alt = updatedMeta.name || updatedMeta.title || "";
+              posterEl.prepend(img);
+            }
+            img.src = posterUrl;
+          }
+        }
+      }, {
+        client: currentClient,
+        peerOf: currentTg?.peerOf,
+        profile: currentProfile,
+        sync: currentSync,
+      });
     });
 
     menu.querySelector('#pc-menu-download')?.addEventListener('click', (ev) => {

@@ -8,6 +8,8 @@ import { fetchFanartBest, parseFanartMovieId, isFanartCollectionUrl } from '../m
 import { getImagePrefs, setImagePref, IMAGE_KINDS } from '../metadata/imagePrefs.js';
 import { getFanartKey } from '../settings/global.js';
 import { attachSpatialNav } from './spatialNav.js';
+import { createKV } from '../core/kv.js';
+import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
 
 const TYPE_LABELS = { movie: 'Película', tv: 'Serie', collection: 'Saga / Colección' };
 
@@ -201,9 +203,15 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
             console.warn('[metadataModal] Error obteniendo detalles TMDB:', err);
           }
 
+          // Normalizar name y title para que ninguno quede indefinido
+          const chosenName = selected.name || selected.title || title.nombre;
+          selected.name = chosenName;
+          selected.title = chosenName;
+
           // Asignar metadatos completos (la identidad cambia: se descartan los originales de imagen anteriores)
           title.metadata = selected;
           title.tmdbId = selected.id;
+          title.nombre = chosenName;
           title._origImages = {};
 
           if (title.archivos && !title.isSaga) {
@@ -215,6 +223,59 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
 
           // Guardar localmente y actualizar vista
           await setManualMetadata(title, selected).catch(() => {});
+
+          // Persistencia inmediata para canales externos (IndexedDB y caché en memoria)
+          try {
+            const kv = createKV();
+            const virtualId = String(title.channel?.id || title.channel?.channelId || title.origen?.channelId || '').trim();
+            if (virtualId) {
+              // 1. Actualizar ext_files_{virtualId} en IndexedDB
+              const cachedFiles = (await kv.get(`ext_files_${virtualId}`).catch(() => [])) || [];
+              if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
+                const targetMsgIds = new Set((title.archivos || []).map(f => String(f.messageId)));
+                let modified = false;
+                for (const f of cachedFiles) {
+                  if (targetMsgIds.has(String(f.messageId))) {
+                    f.metadata = selected;
+                    f.tmdbId = selected.id;
+                    modified = true;
+                  }
+                }
+                if (modified) {
+                  await kv.set(`ext_files_${virtualId}`, cachedFiles).catch(() => {});
+                }
+              }
+
+              // 2. Actualizar metadataMap en library_v2
+              const libObj = (await kv.get('library_v2').catch(() => null)) || {};
+              libObj.metadataMap = libObj.metadataMap || {};
+              libObj.metadataMap[String(title.id)] = selected;
+              libObj.metadataMap[`tmdb_${selected.id}`] = selected;
+              (title.archivos || []).forEach(f => {
+                if (f.key) libObj.metadataMap[String(f.key)] = selected;
+                if (f.messageId) libObj.metadataMap[`${virtualId}:${f.messageId}`] = selected;
+              });
+              await kv.set('library_v2', libObj).catch(() => {});
+
+              // 3. Actualizar caché de títulos del canal externo en memoria
+              const cachedTitles = EXT_CHANNEL_TITLES_CACHE?.get?.(virtualId);
+              if (Array.isArray(cachedTitles)) {
+                const ct = cachedTitles.find(x => String(x.id) === String(title.id));
+                if (ct) {
+                  ct.metadata = selected;
+                  ct.tmdbId = selected.id;
+                  ct.nombre = chosenName;
+                  ct.poster = selected.poster || ct.poster;
+                  ct.backdrop = selected.background || selected.backdrop || ct.backdrop;
+                  if (ct.archivos) {
+                    ct.archivos.forEach(f => { f.metadata = selected; f.tmdbId = selected.id; });
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('[metadataModal] Error persistiendo metadatos externos:', e);
+          }
 
           // Imágenes de la ficha.
           // - Si la identificación cambió de título, se descartan las imágenes que el usuario había
