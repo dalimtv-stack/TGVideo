@@ -1,9 +1,11 @@
+// src/ui/libraryViews.js
+
 import { enrichTitles } from "../metadata/tmdb.js";
 import { createKV } from "../core/kv.js";
 import { modal } from "./settings.js";
 import { prewarmPosterCache } from "../metadata/posterCache.js";
 import { identifyTitlesInBulk } from './adminChannels.js';
-import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
+import { EXT_CHANNEL_TITLES_CACHE, isExternalFileHiddenSync } from './externalTitlesCache.js';
 import { groupTitles, unbundleTitles } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
@@ -29,6 +31,10 @@ export function createLibraryViews(deps) {
   const kv = createKV();
   const LIB_KEY = 'library_v2';
   let lastOpenedTitleId = null;
+  let refreshExternalGrid = null;
+  window.addEventListener('tgvideo:external-hidden-changed', () => {
+    try { refreshExternalGrid?.(); } catch (e) { console.warn('[libraryViews] No se pudo refrescar la cuadrícula externa', e); }
+  });
 
   function showGroupGrid(tg, sync, profile, row, { focusTitleId = null, initialSearch = null } = {}) {
     applyProfileScale(profile);
@@ -138,6 +144,7 @@ export function createLibraryViews(deps) {
       try { localStorage.setItem(`tg_grid_grouped_${profile.id}`, val ? "true" : "false"); } catch (_) {}
     };
     let isGrouped = getGridGrouped();
+    let showHiddenExternal = false;
 
     const isIdentified = (t) => Boolean(t.metadata?.id || t.tmdbId);
 
@@ -183,7 +190,14 @@ export function createLibraryViews(deps) {
     let searchTerm = initialSearch != null ? initialSearch : (row._savedSearch || "");
 
     const getProcessedItems = () => {
-      let filtered = isGrouped ? groupTitles(baseItems) : unbundleTitles(baseItems);
+      let sourceItems = baseItems;
+      if (row.isExternal && !showHiddenExternal) {
+        sourceItems = baseItems.map(t => {
+          const files = (t.archivos || []).filter(f => !isExternalFileHiddenSync(f));
+          return files.length ? { ...t, archivos: files } : null;
+        }).filter(Boolean);
+      }
+      let filtered = isGrouped ? groupTitles(sourceItems) : unbundleTitles(sourceItems);
       if (onlyUnidentified) {
         filtered = filtered.filter(t => !isIdentified(t));
       }
@@ -264,7 +278,8 @@ export function createLibraryViews(deps) {
         <button type="button" class="grid-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}" title="Ordenar por nombre (${currentDir === 'asc' ? 'A-Z' : 'Z-A'})">Nombre${currentSort === 'nombre' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
         <button type="button" class="grid-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}" title="Ordenar por fecha de estreno (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Estreno${currentSort === 'estreno' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
         ${row.isExternal ? `<button type="button" class="grid-sort-btn ${currentSort === 'tamano' ? 'active' : ''}" data-focusable data-sort="tamano" aria-pressed="${currentSort === 'tamano'}" title="Ordenar por tamaño total de los vídeos">Tamaño${currentSort === 'tamano' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>` : ''}
-        <button type="button" class="grid-filter-group-btn ${isGrouped ? "active" : ""}" data-focusable role="checkbox" aria-checked="${isGrouped}" title="Agrupar series y películas">
+        ${row.isExternal ? `<button type="button" class="grid-filter-group-btn ${showHiddenExternal ? 'active' : ''}" data-focusable id="grid-filter-hidden-btn" role="checkbox" aria-checked="${showHiddenExternal}" title="Mostrar u ocultar archivos ya gestionados"><span class="grid-filter-icon" aria-hidden="true">${showHiddenExternal ? '☑' : '☐'}</span><span class="grid-filter-text">${showHiddenExternal ? 'Ocultos visibles' : 'Ver ocultos'}</span></button>` : ''}
+        <button type="button" class="grid-filter-group-btn ${isGrouped ? "active" : ""}" id="grid-filter-group-btn" data-focusable role="checkbox" aria-checked="${isGrouped}" title="Agrupar series y películas">
           <span class="grid-filter-icon" aria-hidden="true">${isGrouped ? "☑" : "☐"}</span>
           <span class="grid-filter-text">Agrupar</span>
         </button>
@@ -378,6 +393,7 @@ export function createLibraryViews(deps) {
     window.addEventListener("scroll", onGridScroll, { passive: true });
 
     renderCards(initialItems);
+    refreshExternalGrid = row.isExternal ? () => renderCards(getProcessedItems()) : null;
 
     const searchInput = document.getElementById("grid-search-input");
     const searchClear = document.getElementById("grid-search-clear");
@@ -428,12 +444,21 @@ export function createLibraryViews(deps) {
         const arrow = isActive ? (currentDir === "asc" ? " ↑" : " ↓") : "";
         btn.textContent = `${baseName}${arrow}`;
       });
-      const gBtn = document.querySelector(".grid-filter-group-btn");
+      const gBtn = document.getElementById("grid-filter-group-btn");
       if (gBtn) {
         gBtn.classList.toggle("active", isGrouped);
         gBtn.setAttribute("aria-checked", String(isGrouped));
         const icon = gBtn.querySelector(".grid-filter-icon");
         if (icon) icon.textContent = isGrouped ? "☑" : "☐";
+      }
+      const hiddenBtn = document.getElementById("grid-filter-hidden-btn");
+      if (hiddenBtn) {
+        hiddenBtn.classList.toggle("active", showHiddenExternal);
+        hiddenBtn.setAttribute("aria-checked", String(showHiddenExternal));
+        const icon = hiddenBtn.querySelector(".grid-filter-icon");
+        const label = hiddenBtn.querySelector(".grid-filter-text");
+        if (icon) icon.textContent = showHiddenExternal ? "☑" : "☐";
+        if (label) label.textContent = showHiddenExternal ? "Ocultos visibles" : "Ver ocultos";
       }
       const fBtn = document.querySelector(".grid-filter-unidentified-btn");
       if (fBtn) {
@@ -462,7 +487,17 @@ export function createLibraryViews(deps) {
         };
       });
 
-      const groupBtn = document.querySelector(".grid-filter-group-btn");
+      const hiddenBtn = document.getElementById("grid-filter-hidden-btn");
+      if (hiddenBtn) {
+        hiddenBtn.onclick = (e) => {
+          e.stopPropagation();
+          showHiddenExternal = !showHiddenExternal;
+          updateToolsUI();
+          renderCards(getProcessedItems());
+        };
+      }
+
+      const groupBtn = document.getElementById("grid-filter-group-btn");
       if (groupBtn) {
         groupBtn.onclick = (e) => {
           e.stopPropagation();

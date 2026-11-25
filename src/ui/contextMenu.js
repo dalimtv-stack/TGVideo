@@ -7,7 +7,8 @@ import { Api } from 'telegram';
 
 import { loadLibrary } from '../library/channels.js';
 import { parseCaption, buildStandardCaption } from '../library/parse.js';
-import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
+import { EXT_CHANNEL_TITLES_CACHE, hideExternalFiles, unhideExternalFiles, isExternalFileHiddenSync } from './externalTitlesCache.js';
+import { isExternalTitle } from '../library/titles.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
 import { extractTitleAndYear, fetchTmdbFullDetails } from '../metadata/tmdb.js';
 import { showMetadataModal } from './metadataModal.js';
@@ -208,6 +209,18 @@ function parseEpisodeHelper(name = '') {
  * - Película: [Nombre de Película] ([año]).ext
  * - Serie: [Nombre de la Serie] - [temporada]x[número de episodio].ext
  */
+function isSeriesTitle(titleData, file) {
+  const channelCat = String(titleData?.channel?.category || file?.channel?.category || '').trim();
+  const isMovieCat = /^pel[ií]culas?$/i.test(channelCat) || /^documental(es)?$/i.test(channelCat);
+  if (isMovieCat) return false;
+  if (titleData?.tipo === 'pelicula' || titleData?.tipo === 'documental') return false;
+  const isSeriesCat = /^series?$/i.test(channelCat);
+  if (isSeriesCat || titleData?.tipo === 'serie') return true;
+  if (titleData?.metadata?.tipo === 'tv' || titleData?.metadata?.type === 'tv') return true;
+  if (file?.season > 0 && file?.episode > 0) return true;
+  return false;
+}
+
 function formatSuggestedFileName(file, titleData) {
   const origName = file.fileName || file.captionFileName || file.label || `video_${file.messageId}.mp4`;
   const extMatch = origName.match(/\.([a-zA-Z0-9]{2,5})$/);
@@ -278,11 +291,11 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
     return;
   }
 
-  const allFiles = Array.isArray(titleData?.archivos) && titleData.archivos.length > 1
+  const isSerie = isSeriesTitle(titleData, file);
+  const allFiles = isSerie && Array.isArray(titleData?.archivos) && titleData.archivos.length > 1
     ? titleData.archivos
     : [file];
-  const isMultiFile = allFiles.length > 1;
-  const isSerie = titleData?.tipo === 'serie' || isMultiFile;
+  const isMultiFile = isSerie && allFiles.length > 1;
   const defaultFilename = formatSuggestedFileName(file, titleData);
   const seriesBaseName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || 'Serie';
   const sizeStr = formatBytes(file.size);
@@ -836,7 +849,7 @@ export function initContextMenu(config) {
       </div>
       <div class="pc-menu-item" id="pc-menu-forward" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem;">⚡</span>
-        <span>${(targetTitle?.archivos?.length || 1) > 1 ? (targetTitle.tipo === "serie" ? "Enviar serie completa / episodio a tgstorage" : "Enviar colección / archivo a tgstorage") : "Enviar / Subir a canal tgstorage"}</span>
+        <span>${targetTitle?.tipo === 'serie' && (targetTitle?.archivos?.length || 1) > 1 ? 'Enviar serie completa / episodio a tgstorage' : 'Enviar / Subir archivo a canal tgstorage'}</span>
       </div>
       <div class="pc-menu-item" id="pc-menu-identify" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem; color: #c084fc;">✨</span>
@@ -850,6 +863,12 @@ export function initContextMenu(config) {
         <span style="font-size: 1.1rem;">✈️</span>
         <span>Mostrar en Telegram</span>
       </div>
+      ${isExternalTitle(targetTitle) || targetFile.channel?.isExternal ? `
+        <div class="pc-menu-item" id="pc-menu-toggle-hidden" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: ${isExternalFileHiddenSync(targetFile) ? '#86efac' : '#fca5a5'};">
+          <span style="font-size: 1.1rem;">${isExternalFileHiddenSync(targetFile) ? '👁️' : '🙈'}</span>
+          <span>${isExternalFileHiddenSync(targetFile) ? 'Mostrar archivo oculto' : 'Ocultar archivo ya gestionado'}</span>
+        </div>
+      ` : ''}
     `;
 
     // Posicionamiento inteligente para no salir de pantalla
@@ -943,6 +962,22 @@ export function initContextMenu(config) {
       ev.stopPropagation();
       removeActiveMenu();
       openInTelegram(targetFile);
+    });
+
+    menu.querySelector('#pc-menu-toggle-hidden')?.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      removeActiveMenu();
+      try {
+        const isHidden = isExternalFileHiddenSync(targetFile);
+        if (isHidden) await unhideExternalFiles(targetFile);
+        else await hideExternalFiles(targetFile);
+        window.dispatchEvent(new CustomEvent('tgvideo:external-hidden-changed', {
+          detail: { channelId: targetFile.channelId || targetFile.channel?.id, messageId: targetFile.messageId },
+        }));
+      } catch (err) {
+        console.error('[contextMenu] Error al cambiar visibilidad del archivo externo', err);
+        alert(`No se pudo actualizar la visibilidad: ${err?.message || err}`);
+      }
     });
 
     activeMenuEl = menu;

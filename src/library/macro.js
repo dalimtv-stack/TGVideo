@@ -7,9 +7,22 @@ export const NO_SECTION = '(Sin sección)';
 export function splitBySection(files) {
   const map = new Map();
   for (const f of files) {
-    const s = f.section || NO_SECTION;
-    if (!map.has(s)) map.set(s, []);
-    map.get(s).push(f);
+    const rawS = f.section ? String(f.section).trim() : '';
+    const s = rawS || NO_SECTION;
+    const lowerKey = s.toLowerCase();
+
+    // Encontrar si ya existe una sección con el mismo nombre normalizado (ignora mayúsculas/espacios)
+    let matchedKey = null;
+    for (const existingKey of map.keys()) {
+      if (existingKey.toLowerCase() === lowerKey) {
+        matchedKey = existingKey;
+        break;
+      }
+    }
+
+    const finalKey = matchedKey || s;
+    if (!map.has(finalKey)) map.set(finalKey, []);
+    map.get(finalKey).push(f);
   }
   return map;
 }

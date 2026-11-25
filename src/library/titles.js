@@ -156,7 +156,15 @@ export function groupTitles(items = []) {
       const firstFile = files[0];
       const rawName = firstFile?.captionFileName || firstFile?.fileName || it.nombre;
       const sName = String(it.parentTitle?.nombre || (it.isLooseFile ? seriesNameFromFile(rawName) : null) || it.nombre || 'Serie').trim();
-      const key = `${it.channel?.id || ''}:${sName.toLowerCase()}`;
+      const rawTmdb = it.tmdbId || it.metadata?.id || firstFile?.tmdbId || firstFile?.metadata?.id;
+      const cleanName = normalizeMovieKey(sName);
+      const yearSource = it.metadata?.first_air_date || it.metadata?.date || it.yearHint || firstFile?.yearHint || '';
+      const yearMatch = String(yearSource).match(/(?:19|20)\d{2}/);
+      const seriesYear = yearMatch ? yearMatch[0] : '';
+      // El título normalizado manda para reunir copias reenviadas y propias aunque sus IDs TMDB difieran.
+      // El año mantiene separadas las series homónimas cuando está disponible.
+      const baseKey = cleanName ? `${cleanName}:${seriesYear}` : (rawTmdb ? `tmdb:${rawTmdb}` : null);
+      const key = isExternalTitle(it) ? `${it.channel?.id || ''}:${baseKey || String(it.id)}` : `serie_${baseKey || String(it.id)}`;
       if (!seriesMap.has(key)) {
         seriesMap.set(key, {
           ...it,
@@ -167,7 +175,7 @@ export function groupTitles(items = []) {
       } else {
         const grp = seriesMap.get(key);
         for (const f of files) {
-          if (!grp.archivos.some(existing => existing.messageId === f.messageId)) {
+          if (!grp.archivos.some(existing => (existing.key && existing.key === f.key) || (existing.messageId === f.messageId && existing.channelId === f.channelId))) {
             grp.archivos.push(f);
           }
         }
@@ -217,8 +225,50 @@ export function mergeMoviesByTmdb(titles) {
   if (!Array.isArray(titles)) return [];
   const result = [];
   const movieTmdbMap = new Map(); // tmdbId -> index in result
+  const seriesTmdbMap = new Map(); // seriesKey -> index in result
 
   for (const t of titles) {
+    // Los títulos de canales externos se preservan de forma independiente para que
+    // el usuario siempre pueda encontrarlos y revisarlos en la cuadrícula de su canal ("+")
+    if (isExternalTitle(t)) {
+      result.push(t);
+      continue;
+    }
+
+    if (t.tipo === 'serie') {
+      const rawTmdb = t.metadata?.id || t.tmdbId;
+      const cleanName = normalizeMovieKey(t.nombre || t.metadata?.name || '');
+      const yearSource = t.metadata?.first_air_date || t.metadata?.date || t.yearHint || '';
+      const yearMatch = String(yearSource).match(/(?:19|20)\d{2}/);
+      const seriesKey = cleanName
+        ? `name_${cleanName}:${yearMatch ? yearMatch[0] : ''}`
+        : (rawTmdb ? `tmdb_${rawTmdb}` : null);
+      if (!seriesKey) {
+        result.push(t);
+        continue;
+      }
+
+      if (!seriesTmdbMap.has(seriesKey)) {
+        seriesTmdbMap.set(seriesKey, result.length);
+        result.push(t);
+      } else {
+        const existing = result[seriesTmdbMap.get(seriesKey)];
+        const existingKeys = new Set((existing.archivos || []).map(f => f.key || `${f.channelId}:${f.messageId}`));
+        for (const f of (t.archivos || [])) {
+          const fKey = f.key || `${f.channelId}:${f.messageId}`;
+          if (!existingKeys.has(fKey)) {
+            existing.archivos.push(f);
+            existingKeys.add(fKey);
+          }
+        }
+        existing.ultimoMensajeFecha = Math.max(existing.ultimoMensajeFecha || 0, t.ultimoMensajeFecha || 0);
+        if (!existing.metadata && t.metadata) existing.metadata = t.metadata;
+        if (!existing.tmdbId && (rawTmdb || t.tmdbId)) existing.tmdbId = rawTmdb || t.tmdbId;
+        sortFiles(existing.archivos, 'serie');
+      }
+      continue;
+    }
+
     if (t.tipo !== 'pelicula' || t.isSaga) {
       result.push(t);
       continue;
@@ -522,11 +572,15 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     } else if (ch.macro) {
       const isSeries = ch.category === 'Series';
       const keyed = files.map(f => {
-        if (f.section) return f;
-        if (isSeries) return { ...f, section: seriesNameFromFile(f.captionFileName || f.fileName) };
+        if (f.section) return { ...f, section: String(f.section).trim() };
+        if (isSeries) {
+          const s = seriesNameFromFile(f.captionFileName || f.fileName);
+          return { ...f, section: s.trim() };
+        }
         const capCand = extractTitlesFromCaption(f.rawCaption || f.caption || '')[0];
         const parsedFile = extractTitleAndYear(f.captionFileName || f.fileName || f.label);
-        return { ...f, section: capCand?.title || parsedFile.title || movieName(f), yearHint: capCand?.year || parsedFile.year };
+        const secName = capCand?.title || parsedFile.title || movieName(f);
+        return { ...f, section: (secName ? secName.trim() : '(Sin sección)'), yearHint: capCand?.year || parsedFile.year };
       });
       for (const [sec, fs] of splitBySection(keyed)) {
         if (fs && fs.length > 0) {
