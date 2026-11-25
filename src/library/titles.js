@@ -177,11 +177,13 @@ export function groupTitles(items = []) {
         const baseKey = rawTmdb ? `tmdb:${rawTmdb}` : (cleanName ? `${cleanName}:${seriesYear}` : String(it.id));
         key = `${it.channel?.id || ''}:${baseKey}`;
       } else {
-        if (rawTmdb) {
-          key = `serie_tmdb_${rawTmdb}`;
-        } else if (it.origen?.tipo === 'dedicado' || (!it.isLooseFile && it.channel?.id)) {
-          // Canales dedicados de tgstorage: cada canal es una serie propia, no fusionar canales distintos de diferentes años
+        if (it.origen?.tipo === 'dedicado' || (!it.isLooseFile && it.channel?.id)) {
+          // Canales dedicados de tgstorage: cada canal es una serie propia independiente.
+          // Agrupa por canal y año (los duplicados/reenviados del mismo canal se consolidan aquí),
+          // impidiendo que canales distintos se fusionen aunque compartieran un TMDB erróneo previo.
           key = `serie_ch_${it.channel?.id || it.id}_${cleanName}:${seriesYear}`;
+        } else if (rawTmdb) {
+          key = `serie_tmdb_${rawTmdb}`;
         } else {
           key = `serie_${cleanName ? `${cleanName}:${seriesYear}` : String(it.id)}`;
         }
