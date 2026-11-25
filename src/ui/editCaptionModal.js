@@ -4,6 +4,20 @@ import { modal } from './settings.js';
 import { parseCaption, buildStandardCaption } from '../library/parse.js';
 import { attachSpatialNav } from './spatialNav.js';
 
+
+function getFloodWaitSeconds(err) {
+  if (typeof err?.seconds === "number" && err.seconds > 0) {
+    return err.seconds;
+  }
+  const str = String(err?.errorMessage || err?.message || err || "");
+  const match = str.match(/FLOOD_WAIT_(\d+)/i) || str.match(/wait of (\d+)\s*seconds/i);
+  if (match) {
+    const s = parseInt(match[1], 10);
+    if (!isNaN(s) && s > 0) return s;
+  }
+  return 0;
+}
+
 function esc(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -456,17 +470,32 @@ export function showEditCaptionModal({
     }
 
     btnSave.disabled = true;
-    if (btnCancel) btnCancel.disabled = true;
+    let cancelRequested = false;
+    if (btnCancel) {
+      btnCancel.disabled = false;
+      btnCancel.textContent = "Cancelar restantes";
+      btnCancel.onclick = (e) => {
+        e.preventDefault();
+        cancelRequested = true;
+        if (statusEl) {
+          statusEl.textContent = "Cancelando proceso tras la operación actual…";
+          statusEl.style.color = "#f59e0b";
+        }
+      };
+    }
+
     let successCount = 0;
     let failedCount = 0;
     let lastError = null;
 
     try {
       for (let i = 0; i < filesToUpdate.length; i++) {
+        if (cancelRequested) break;
         const file = filesToUpdate[i];
         if (!file.messageId) continue;
 
         if (statusEl) {
+          statusEl.style.color = "#38bdf8";
           statusEl.textContent = `Actualizando mensaje ${i + 1} de ${filesToUpdate.length} en Telegram…`;
         }
 
@@ -489,36 +518,61 @@ export function showEditCaptionModal({
             });
         }
 
-        try {
-          await client.invoke(new Api.messages.EditMessage({
-            peer,
-            id: Number(file.messageId),
-            message: String(finalCaption || ''),
-          }));
+        let fileSaved = false;
+        while (!fileSaved && !cancelRequested) {
+          try {
+            await client.invoke(new Api.messages.EditMessage({
+              peer,
+              id: Number(file.messageId),
+              message: String(finalCaption || ''),
+            }));
 
-          file.caption = finalCaption;
-          file.rawCaption = finalCaption;
-          const parsed = parseCaption(finalCaption);
-          if (parsed.fileName) file.captionFileName = parsed.fileName;
-          if (parsed.section) file.section = parsed.section;
-          if (parsed.tmdbId) file.tmdbId = parsed.tmdbId;
-          if (parsed.imdbId) file.imdbId = parsed.imdbId;
-          if (parsed.synopsis) file.synopsis = parsed.synopsis;
+            file.caption = finalCaption;
+            file.rawCaption = finalCaption;
+            const parsed = parseCaption(finalCaption);
+            if (parsed.fileName) file.captionFileName = parsed.fileName;
+            if (parsed.section) file.section = parsed.section;
+            if (parsed.tmdbId) file.tmdbId = parsed.tmdbId;
+            if (parsed.imdbId) file.imdbId = parsed.imdbId;
+            if (parsed.synopsis) file.synopsis = parsed.synopsis;
 
-          successCount++;
-        } catch (mErr) {
-          const em = String(mErr?.errorMessage || mErr?.message || mErr || '');
-          if (/MESSAGE_NOT_MODIFIED/i.test(em)) {
             successCount++;
-          } else {
+            fileSaved = true;
+          } catch (mErr) {
+            const em = String(mErr?.errorMessage || mErr?.message || mErr || '');
+            if (/MESSAGE_NOT_MODIFIED/i.test(em)) {
+              successCount++;
+              fileSaved = true;
+              break;
+            }
+
+            const waitSec = getFloodWaitSeconds(mErr);
+            if (waitSec > 0) {
+              console.warn(`[editCaptionModal] FloodWait detectado (${waitSec}s) para mensaje ${file.messageId}`);
+              let remaining = waitSec + 1;
+              while (remaining > 0 && !cancelRequested) {
+                if (statusEl) {
+                  statusEl.style.color = "#f59e0b";
+                  statusEl.textContent = `⏳ Límite de Telegram (FloodWait): esperando ${remaining}s antes de reanudar (${successCount}/${filesToUpdate.length} completados)…`;
+                }
+                await new Promise(r => setTimeout(r, 1000));
+                remaining--;
+              }
+              if (cancelRequested) break;
+              continue;
+            }
+
             console.warn('[editCaptionModal] Error editando mensaje en Telegram:', file.messageId, mErr);
             failedCount++;
             lastError = mErr;
+            break;
           }
         }
 
-        if (filesToUpdate.length > 1) {
-          await new Promise(r => setTimeout(r, 120));
+        if (cancelRequested) break;
+
+        if (filesToUpdate.length > 1 && !cancelRequested) {
+          await new Promise(r => setTimeout(r, 800));
         }
       }
 
@@ -543,7 +597,9 @@ export function showEditCaptionModal({
         try { onUpdated?.(title, filesToUpdate); } catch (e) { console.warn('[editCaptionModal] onUpdated error', e); }
 
         close();
-        if (failedCount > 0) {
+        if (cancelRequested) {
+          alert(`Proceso detenido por el usuario. Se actualizaron ${successCount} mensaje${successCount === 1 ? '' : 's'} en Telegram.`);
+        } else if (failedCount > 0) {
           alert(`Se actualizaron ${successCount} mensajes en Telegram, pero ${failedCount} fallaron: ${lastError?.message || lastError}`);
         } else {
           alert(`✅ Caption y datos de Telegram actualizados con éxito (${successCount} mensaje${successCount === 1 ? '' : 's'}).`);
@@ -556,15 +612,15 @@ export function showEditCaptionModal({
           alert(`No se pudo actualizar el mensaje en Telegram: ${em}`);
         }
         btnSave.disabled = false;
-        if (btnCancel) btnCancel.disabled = false;
-        if (statusEl) statusEl.textContent = 'Error al guardar en Telegram.';
+        if (btnCancel) { btnCancel.disabled = false; btnCancel.textContent = 'Cancelar'; btnCancel.onclick = () => close(); }
+        if (statusEl) { statusEl.style.color = "#ef4444"; statusEl.textContent = 'Error al guardar en Telegram.'; }
       }
     } catch (err) {
       console.error('[editCaptionModal] Error en proceso de guardado', err);
       alert(`Error al guardar en Telegram: ${err?.message || err}`);
       btnSave.disabled = false;
-      if (btnCancel) btnCancel.disabled = false;
-      if (statusEl) statusEl.textContent = 'Error al guardar en Telegram.';
+      if (btnCancel) { btnCancel.disabled = false; btnCancel.textContent = 'Cancelar'; btnCancel.onclick = () => close(); }
+      if (statusEl) { statusEl.style.color = "#ef4444"; statusEl.textContent = 'Error al guardar en Telegram.'; }
     }
   };
 
