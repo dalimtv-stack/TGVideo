@@ -63,6 +63,55 @@ export async function changeExternalChannelCategory(channelId, newCategory, { sy
   }
 }
 
+export async function removeExternalChannelFromLibrary(channelId, channelName, { sync, onRemoved } = {}) {
+  if (!channelId) return;
+  const targetId = String(channelId);
+  const rawId = targetId.replace(/^ext-/, '');
+  const extId = `ext-${rawId}`;
+
+  // 1. Quitar de external_sources_v1
+  const sources = (await kv.get(EXT_KEY).catch(() => [])) || [];
+  const updatedSources = sources.filter(s => {
+    const sId = String(s.id ?? s.channelId);
+    return sId !== targetId && sId !== rawId && sId !== extId;
+  });
+  await kv.set(EXT_KEY, updatedSources).catch(console.warn);
+
+  // 2. Quitar de library_v2 (canales y cache)
+  const libObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
+  if (libObj) {
+    if (Array.isArray(libObj.channels)) {
+      libObj.channels = libObj.channels.filter(c => {
+        const cId = String(c.id);
+        return cId !== targetId && cId !== rawId && cId !== extId;
+      });
+    }
+    if (libObj.cache) {
+      delete libObj.cache[targetId];
+      delete libObj.cache[rawId];
+      delete libObj.cache[extId];
+    }
+    await kv.set(LIB_KEY, libObj).catch(console.warn);
+  }
+
+  // 3. Limpiar caché de archivos del canal
+  await kv.set(`ext_files_${targetId}`, null).catch(() => {});
+  await kv.set(`ext_files_${rawId}`, null).catch(() => {});
+  await kv.set(`ext_files_${extId}`, null).catch(() => {});
+  clearExternalChannelCache(targetId);
+  clearExternalChannelCache(rawId);
+  clearExternalChannelCache(extId);
+
+  // 4. Sincronizar perfil
+  if (sync?.saveProfile) {
+    await sync.saveProfile().catch(() => {});
+  }
+
+  if (typeof onRemoved === 'function') {
+    onRemoved();
+  }
+}
+
 export function renderExternalsView({
   tg,
   sync,
@@ -377,6 +426,9 @@ export function renderExternalsView({
           <div class="banner-menu-item" id="banner-action-full-update" style="display: flex; align-items: center; gap: 0.55rem; padding: 0.5rem 0.95rem; cursor: pointer; color: #cbd5e1;">
             <span>🔄</span><span>Actualización completa</span>
           </div>
+          <div class="banner-menu-item" id="banner-action-remove-channel" style="display: flex; align-items: center; gap: 0.55rem; padding: 0.5rem 0.95rem; cursor: pointer; color: #ef4444; border-top: 1px solid rgba(255,255,255,0.08); margin-top: 0.25rem;">
+            <span>🗑️</span><span>Quitar de la biblioteca</span>
+          </div>
         </div>
       `;
 
@@ -439,6 +491,20 @@ export function renderExternalsView({
         await scanSingleExternalChannel({ tg, sync, channelRecord: ch, isFull: true, kv });
         clearExternalChannelCache(extId);
         showHome?.(tg, sync, profile, { fast: true, selectedSection: 'externos' });
+      });
+
+      menu.querySelector('#banner-action-remove-channel')?.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        removeBannerMenu();
+        if (!confirm(`¿Estás seguro de que deseas quitar el canal "${channelName}" de la biblioteca?`)) {
+          return;
+        }
+        await removeExternalChannelFromLibrary(extId, channelName, {
+          sync,
+          onRemoved: () => {
+            showHome?.(tg, sync, profile, { fast: true, reload: true, selectedSection: 'externos' });
+          },
+        });
       });
     };
   });

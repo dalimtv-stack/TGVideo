@@ -545,11 +545,39 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
           if (isFastUpload) {
             const docMedia = msg.media?.document || msg.media;
             if (docMedia) {
-              await client.sendFile(targetPeer, {
-                file: docMedia,
-                caption: epCaption,
-                forceDocument: false,
-              });
+              try {
+                await client.sendFile(targetPeer, {
+                  file: docMedia,
+                  caption: epCaption,
+                  forceDocument: false,
+                });
+              } catch (sendErr) {
+                const errMsg = String(sendErr?.message || sendErr || '');
+                if (errMsg.includes('CHAT_FORWARDS_RESTRICTED') || errMsg.includes('FORWARDS_RESTRICTED')) {
+                  console.warn('[contextMenu] Canal con restricción de reenvío (CHAT_FORWARDS_RESTRICTED). Descargando y resubiendo para eludir restricción…', curFilename);
+                  setProgressBar(bar, {
+                    id: taskId,
+                    title: `⚡ Enviando serie: ${sBaseName} (${i + 1}/${count})`,
+                    status: `[${i + 1}/${count}] Canal con reenvío protegido: descargando y resubiendo…`,
+                    percent: pct,
+                  });
+                  const bytes = await client.downloadMedia(msg.media, {});
+                  const mimeType = msg.document?.mimeType || (curFilename.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream');
+                  const blob = new Blob([bytes], { type: mimeType });
+                  const upload = await client.uploadFile({
+                    file: new File([blob], curFilename, { type: blob.type }),
+                    workers: 3,
+                  });
+                  await client.sendFile(targetPeer, {
+                    file: upload,
+                    caption: epCaption,
+                    forceDocument: !curFilename.toLowerCase().endsWith('.mp4'),
+                    attributes: [new Api.DocumentAttributeFilename({ fileName: curFilename })],
+                  });
+                } else {
+                  throw sendErr;
+                }
+              }
             }
           } else {
             const bytes = await client.downloadMedia(msg.media, {});
@@ -643,11 +671,65 @@ async function showForwardModal(client, tg, file, getChannels, titleData = null)
           const docMedia = msg.media?.document || msg.media;
           if (!docMedia) throw new Error('El mensaje original no contiene un archivo reenviable.');
 
-          await client.sendFile(targetPeer, {
-            file: docMedia,
-            caption: standardCaption,
-            forceDocument: false,
-          });
+          try {
+            await client.sendFile(targetPeer, {
+              file: docMedia,
+              caption: standardCaption,
+              forceDocument: false,
+            });
+          } catch (sendErr) {
+            const errMsg = String(sendErr?.message || sendErr || '');
+            if (errMsg.includes('CHAT_FORWARDS_RESTRICTED') || errMsg.includes('FORWARDS_RESTRICTED')) {
+              console.warn('[contextMenu] Canal con restricción de reenvío (CHAT_FORWARDS_RESTRICTED). Descargando y resubiendo para eludir restricción…', filename);
+              setProgressBar(bar, {
+                id: taskId,
+                title: `⚡ Enviando: ${filename}`,
+                status: 'Canal protegido contra reenvío: descargando original…',
+                percent: 30,
+              });
+              const bytes = await client.downloadMedia(msg.media, {
+                progressCallback: (done, total) => {
+                  const tot = total || file.size || 1;
+                  const pct = Math.min(50, Math.round((done / tot) * 50));
+                  setProgressBar(bar, {
+                    id: taskId,
+                    title: `⚡ Enviando: ${filename}`,
+                    status: `Descargando original ${formatBytes(done)} / ${formatBytes(tot)}…`,
+                    percent: pct,
+                  });
+                }
+              });
+              setProgressBar(bar, {
+                id: taskId,
+                title: `⚡ Enviando: ${filename}`,
+                status: 'Subiendo archivo nuevo a Telegram…',
+                percent: 55,
+              });
+              const mimeType = msg.document?.mimeType || (filename.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream');
+              const blob = new Blob([bytes], { type: mimeType });
+              const upload = await client.uploadFile({
+                file: new File([blob], filename, { type: blob.type }),
+                workers: 3,
+                onProgress: (progress) => {
+                  const pct = 55 + Math.round(progress * 40);
+                  setProgressBar(bar, {
+                    id: taskId,
+                    title: `⚡ Enviando: ${filename}`,
+                    status: `Subiendo ${Math.round(progress * 100)}%…`,
+                    percent: pct,
+                  });
+                }
+              });
+              await client.sendFile(targetPeer, {
+                file: upload,
+                caption: standardCaption,
+                forceDocument: !filename.toLowerCase().endsWith('.mp4'),
+                attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
+              });
+            } else {
+              throw sendErr;
+            }
+          }
         } else {
           setProgressBar(bar, {
             id: taskId,
@@ -863,12 +945,22 @@ export function initContextMenu(config) {
         <span style="font-size: 1.1rem;">✈️</span>
         <span>Mostrar en Telegram</span>
       </div>
-      ${isExternalTitle(targetTitle) || targetFile.channel?.isExternal ? `
-        <div class="pc-menu-item" id="pc-menu-toggle-hidden" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: ${isExternalFileHiddenSync(targetFile) ? '#86efac' : '#fca5a5'};">
-          <span style="font-size: 1.1rem;">${isExternalFileHiddenSync(targetFile) ? '👁️' : '🙈'}</span>
-          <span>${isExternalFileHiddenSync(targetFile) ? 'Mostrar archivo oculto' : 'Ocultar archivo ya gestionado'}</span>
-        </div>
-      ` : ''}
+      ${isExternalTitle(targetTitle) || targetFile.channel?.isExternal ? (() => {
+        const targetFiles = (targetTitle?.archivos && targetTitle.archivos.length > 0) ? targetTitle.archivos : [targetFile];
+        const isFullyHidden = targetFiles.every(f => isExternalFileHiddenSync(f));
+        const isSeries = targetTitle?.tipo === 'serie' || targetFiles.length > 1;
+        const labelText = isFullyHidden
+          ? (isSeries ? 'Mostrar serie oculta' : 'Mostrar archivo oculto')
+          : (isSeries ? 'Ocultar serie ya gestionada' : 'Ocultar archivo ya gestionado');
+        const color = isFullyHidden ? '#86efac' : '#fca5a5';
+        const icon = isFullyHidden ? '👁️' : '🙈';
+        return `
+          <div class="pc-menu-item" id="pc-menu-toggle-hidden" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: ${color};">
+            <span style="font-size: 1.1rem;">${icon}</span>
+            <span>${labelText}</span>
+          </div>
+        `;
+      })() : ''}
     `;
 
     // Posicionamiento inteligente para no salir de pantalla
@@ -968,11 +1060,19 @@ export function initContextMenu(config) {
       ev.stopPropagation();
       removeActiveMenu();
       try {
-        const isHidden = isExternalFileHiddenSync(targetFile);
-        if (isHidden) await unhideExternalFiles(targetFile);
-        else await hideExternalFiles(targetFile);
+        const targetFiles = (targetTitle?.archivos && targetTitle.archivos.length > 0) ? targetTitle.archivos : [targetFile];
+        const isFullyHidden = targetFiles.every(f => isExternalFileHiddenSync(f));
+        if (isFullyHidden) {
+          await unhideExternalFiles(targetFiles);
+        } else {
+          await hideExternalFiles(targetFiles);
+        }
         window.dispatchEvent(new CustomEvent('tgvideo:external-hidden-changed', {
-          detail: { channelId: targetFile.channelId || targetFile.channel?.id, messageId: targetFile.messageId },
+          detail: {
+            channelId: targetFile.channelId || targetFile.channel?.id,
+            messageId: targetFile.messageId,
+            titleId: targetTitle?.id,
+          },
         }));
       } catch (err) {
         console.error('[contextMenu] Error al cambiar visibilidad del archivo externo', err);

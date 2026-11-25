@@ -53,7 +53,7 @@ function sortFiles(files, tipo) {
   if (tipo === 'pelicula') {
     return files.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
   }
-  return files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
+  return files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
 }
 
 function makeTitle({ id, ch, name, origen, seccion, files }) {
@@ -74,9 +74,13 @@ const YEAR_GROUP_RE = /^(?:por\s+año|por\s+ano|años|anos|décadas|decadas|por\
 
 // Nombre de la serie a partir del archivo: texto anterior a S01E02 / 1x02 / T1E02
 export function seriesNameFromFile(fileName = '') {
-  const base = String(fileName).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '').replace(/[._]+/g, ' ');
+  let base = String(fileName).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '').replace(/[._]+/g, ' ');
+  // Quitar etiquetas iniciales de canal: [Canal], (Canal), @Canal
+  base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
   const m = base.match(/^(.*?)[\s\-–—\[(]*(?:[ST]\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|temp(?:orada)?\s*\d)/i);
-  const name = (m ? m[1] : base).replace(/[\s\-–—:]+$/, '').replace(/\s+/g, ' ').trim();
+  let name = (m ? m[1] : base).replace(/[\s\-–—:]+$/, '').replace(/\s+/g, ' ').trim();
+  // Quitar año al final entre paréntesis si existe (ej. "Breaking Bad (2008)" -> "Breaking Bad")
+  name = name.replace(/\s*[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$/, '').trim();
   return name || '(Sin sección)';
 }
 
@@ -157,14 +161,19 @@ export function groupTitles(items = []) {
       const rawName = firstFile?.captionFileName || firstFile?.fileName || it.nombre;
       const sName = String(it.parentTitle?.nombre || (it.isLooseFile ? seriesNameFromFile(rawName) : null) || it.nombre || 'Serie').trim();
       const rawTmdb = it.tmdbId || it.metadata?.id || firstFile?.tmdbId || firstFile?.metadata?.id;
-      const cleanName = normalizeMovieKey(sName);
+      const cleanName = normalizeMovieKey(sName).replace(/(?:19|20)\d{2}/g, '');
       const yearSource = it.metadata?.first_air_date || it.metadata?.date || it.yearHint || firstFile?.yearHint || '';
       const yearMatch = String(yearSource).match(/(?:19|20)\d{2}/);
       const seriesYear = yearMatch ? yearMatch[0] : '';
-      // El título normalizado manda para reunir copias reenviadas y propias aunque sus IDs TMDB difieran.
-      // El año mantiene separadas las series homónimas cuando está disponible.
-      const baseKey = cleanName ? `${cleanName}:${seriesYear}` : (rawTmdb ? `tmdb:${rawTmdb}` : null);
-      const key = isExternalTitle(it) ? `${it.channel?.id || ''}:${baseKey || String(it.id)}` : `serie_${baseKey || String(it.id)}`;
+
+      let key = null;
+      if (isExternalTitle(it)) {
+        const baseKey = rawTmdb ? `tmdb:${rawTmdb}` : (cleanName ? `${cleanName}:${seriesYear}` : String(it.id));
+        key = `${it.channel?.id || ''}:${baseKey}`;
+      } else {
+        key = rawTmdb ? `serie_tmdb_${rawTmdb}` : `serie_${cleanName ? `${cleanName}:${seriesYear}` : String(it.id)}`;
+      }
+
       if (!seriesMap.has(key)) {
         seriesMap.set(key, {
           ...it,
@@ -225,7 +234,8 @@ export function mergeMoviesByTmdb(titles) {
   if (!Array.isArray(titles)) return [];
   const result = [];
   const movieTmdbMap = new Map(); // tmdbId -> index in result
-  const seriesTmdbMap = new Map(); // seriesKey -> index in result
+  const seriesTmdbMap = new Map(); // tmdbId -> index in result
+  const seriesNameMap = new Map(); // cleanBaseName -> array of indices in result
 
   for (const t of titles) {
     // Los títulos de canales externos se preservan de forma independiente para que
@@ -236,23 +246,43 @@ export function mergeMoviesByTmdb(titles) {
     }
 
     if (t.tipo === 'serie') {
-      const rawTmdb = t.metadata?.id || t.tmdbId;
-      const cleanName = normalizeMovieKey(t.nombre || t.metadata?.name || '');
+      const rawTmdb = t.metadata?.id || t.tmdbId || t.archivos?.find(f => f.tmdbId)?.tmdbId;
+      const sTitle = t.metadata?.name || t.metadata?.title || t.nombre || '';
+      const cleanName = normalizeMovieKey(sTitle);
+      const cleanBaseName = cleanName.replace(/(?:19|20)\d{2}/g, '');
       const yearSource = t.metadata?.first_air_date || t.metadata?.date || t.yearHint || '';
       const yearMatch = String(yearSource).match(/(?:19|20)\d{2}/);
-      const seriesKey = cleanName
-        ? `name_${cleanName}:${yearMatch ? yearMatch[0] : ''}`
-        : (rawTmdb ? `tmdb_${rawTmdb}` : null);
-      if (!seriesKey) {
-        result.push(t);
-        continue;
+      const yearStr = yearMatch ? yearMatch[0] : '';
+
+      let matchIdx = -1;
+      // 1. Prioridad máxima: Coincidencia por ID de TMDB oficial
+      if (rawTmdb && seriesTmdbMap.has(String(rawTmdb))) {
+        matchIdx = seriesTmdbMap.get(String(rawTmdb));
+      }
+      // 2. Si no coincide por TMDB o aún no lo tiene, coincidencia por título limpio normalizado
+      if (matchIdx < 0 && cleanBaseName && seriesNameMap.has(cleanBaseName)) {
+        const candidateIndices = seriesNameMap.get(cleanBaseName);
+        for (const idx of candidateIndices) {
+          const candidate = result[idx];
+          const candYear = String(candidate.metadata?.first_air_date || candidate.metadata?.date || candidate.yearHint || '').match(/(?:19|20)\d{2}/)?.[0] || '';
+          // Si ambos tienen año explícito y difieren, son series distintas. Si no, se unifican.
+          if (!yearStr || !candYear || yearStr === candYear) {
+            matchIdx = idx;
+            break;
+          }
+        }
       }
 
-      if (!seriesTmdbMap.has(seriesKey)) {
-        seriesTmdbMap.set(seriesKey, result.length);
+      if (matchIdx < 0) {
+        const newIdx = result.length;
+        if (rawTmdb) seriesTmdbMap.set(String(rawTmdb), newIdx);
+        if (cleanBaseName) {
+          if (!seriesNameMap.has(cleanBaseName)) seriesNameMap.set(cleanBaseName, []);
+          seriesNameMap.get(cleanBaseName).push(newIdx);
+        }
         result.push(t);
       } else {
-        const existing = result[seriesTmdbMap.get(seriesKey)];
+        const existing = result[matchIdx];
         const existingKeys = new Set((existing.archivos || []).map(f => f.key || `${f.channelId}:${f.messageId}`));
         for (const f of (t.archivos || [])) {
           const fKey = f.key || `${f.channelId}:${f.messageId}`;
@@ -263,7 +293,10 @@ export function mergeMoviesByTmdb(titles) {
         }
         existing.ultimoMensajeFecha = Math.max(existing.ultimoMensajeFecha || 0, t.ultimoMensajeFecha || 0);
         if (!existing.metadata && t.metadata) existing.metadata = t.metadata;
-        if (!existing.tmdbId && (rawTmdb || t.tmdbId)) existing.tmdbId = rawTmdb || t.tmdbId;
+        if (!existing.tmdbId && (rawTmdb || t.tmdbId)) {
+          existing.tmdbId = rawTmdb || t.tmdbId;
+          seriesTmdbMap.set(String(existing.tmdbId), matchIdx);
+        }
         sortFiles(existing.archivos, 'serie');
       }
       continue;
@@ -572,7 +605,13 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     } else if (ch.macro) {
       const isSeries = ch.category === 'Series';
       const keyed = files.map(f => {
-        if (f.section) return { ...f, section: String(f.section).trim() };
+        if (f.section) {
+          let s = String(f.section).trim();
+          if (isSeries) {
+            s = s.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '').replace(/\s*[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$/, '').trim();
+          }
+          return { ...f, section: s || '(Sin sección)' };
+        }
         if (isSeries) {
           const s = seriesNameFromFile(f.captionFileName || f.fileName);
           return { ...f, section: s.trim() };
