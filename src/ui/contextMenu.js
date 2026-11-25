@@ -1250,11 +1250,24 @@ export function initContextMenu(config) {
           await kv.del(`manual_tmdb:${k}`).catch(() => {});
         }
 
-        // 3. Borrar de library_v2 metadataMap en IndexedDB
+        // 3. Borrar de library_v2 metadataMap y limpiar tmdbId de los archivos cacheados
         const lib = await kv.get('library_v2').catch(() => null);
-        if (lib?.metadataMap) {
-          for (const k of keysToDelete) {
-            delete lib.metadataMap[k];
+        if (lib) {
+          if (lib.metadataMap) {
+            for (const k of keysToDelete) {
+              delete lib.metadataMap[k];
+            }
+          }
+          if (lib.cache) {
+            const chKeys = [channelId, rawChannelId, titleId].filter(Boolean);
+            for (const ck of chKeys) {
+              if (lib.cache[ck]?.files) {
+                for (const f of lib.cache[ck].files) {
+                  f.metadata = null;
+                  f.tmdbId = null;
+                }
+              }
+            }
           }
           await kv.set('library_v2', lib).catch(() => {});
         }

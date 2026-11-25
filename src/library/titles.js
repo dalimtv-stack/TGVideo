@@ -261,43 +261,33 @@ export function mergeMoviesByTmdb(titles) {
     }
 
     if (t.tipo === 'serie') {
+      // 1. Canales dedicados de tgstorage: cada canal es una serie propia e independiente.
+      // NUNCA deben fusionarse entre sí (ej. remakes o series de distintos años con nombres similares como Hitchcock 1955 y 1985).
+      if (t.origen?.tipo === 'dedicado') {
+        result.push(t);
+        continue;
+      }
+
       const rawTmdb = t.metadata?.id || t.tmdbId || t.archivos?.find(f => f.tmdbId)?.tmdbId;
-      const sTitle = t.metadata?.name || t.metadata?.title || t.nombre || '';
+      const sTitle = t.nombre || t.metadata?.name || t.metadata?.title || '';
       const cleanName = normalizeMovieKey(sTitle);
-      const cleanBaseName = cleanName.replace(/(?:19|20)\d{2}/g, '');
       const yearSource = t.metadata?.first_air_date || t.metadata?.date || t.yearHint || '';
       const yearMatch = String(yearSource).match(/(?:19|20)\d{2}/);
       const yearStr = yearMatch ? yearMatch[0] : '';
+      const seriesKey = cleanName
+        ? `name_${cleanName}:${yearStr}`
+        : (rawTmdb ? `tmdb_${rawTmdb}` : null);
 
-      let matchIdx = -1;
-      // 1. Prioridad máxima: Coincidencia por ID de TMDB oficial
-      if (rawTmdb && seriesTmdbMap.has(String(rawTmdb))) {
-        matchIdx = seriesTmdbMap.get(String(rawTmdb));
-      }
-      // 2. Si no coincide por TMDB o aún no lo tiene, coincidencia por título limpio normalizado
-      if (matchIdx < 0 && cleanBaseName && seriesNameMap.has(cleanBaseName)) {
-        const candidateIndices = seriesNameMap.get(cleanBaseName);
-        for (const idx of candidateIndices) {
-          const candidate = result[idx];
-          const candYear = String(candidate.metadata?.first_air_date || candidate.metadata?.date || candidate.yearHint || '').match(/(?:19|20)\d{2}/)?.[0] || '';
-          // Si ambos tienen año explícito y difieren, son series distintas. Si no, se unifican.
-          if (!yearStr || !candYear || yearStr === candYear) {
-            matchIdx = idx;
-            break;
-          }
-        }
+      if (!seriesKey) {
+        result.push(t);
+        continue;
       }
 
-      if (matchIdx < 0) {
-        const newIdx = result.length;
-        if (rawTmdb) seriesTmdbMap.set(String(rawTmdb), newIdx);
-        if (cleanBaseName) {
-          if (!seriesNameMap.has(cleanBaseName)) seriesNameMap.set(cleanBaseName, []);
-          seriesNameMap.get(cleanBaseName).push(newIdx);
-        }
+      if (!seriesTmdbMap.has(seriesKey)) {
+        seriesTmdbMap.set(seriesKey, result.length);
         result.push(t);
       } else {
-        const existing = result[matchIdx];
+        const existing = result[seriesTmdbMap.get(seriesKey)];
         const existingKeys = new Set((existing.archivos || []).map(f => f.key || `${f.channelId}:${f.messageId}`));
         for (const f of (t.archivos || [])) {
           const fKey = f.key || `${f.channelId}:${f.messageId}`;
@@ -310,7 +300,6 @@ export function mergeMoviesByTmdb(titles) {
         if (!existing.metadata && t.metadata) existing.metadata = t.metadata;
         if (!existing.tmdbId && (rawTmdb || t.tmdbId)) {
           existing.tmdbId = rawTmdb || t.tmdbId;
-          seriesTmdbMap.set(String(existing.tmdbId), matchIdx);
         }
         sortFiles(existing.archivos, 'serie');
       }
