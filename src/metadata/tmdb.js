@@ -150,9 +150,21 @@ async function request(path, params = {}, signal) {
   const headers = {};
   if (key.includes(".")) headers.Authorization = `Bearer ${key}`;
   else url.searchParams.set("api_key", key);
-  const response = await fetch(url, { headers, signal });
-  if (!response.ok) throw new Error(response.status === 401 ? "La clave de TMDB no es válida." : `TMDB no disponible (${response.status}).`);
-  return response.json();
+  let attempts = 0;
+  while (attempts < 4) {
+    const response = await fetch(url, { headers, signal });
+    if (response.status === 429) {
+      attempts++;
+      const retryHeader = Number(response.headers.get("Retry-After"));
+      const waitSec = (!isNaN(retryHeader) && retryHeader > 0) ? retryHeader : attempts * 1.5;
+      console.warn(`[tmdb] Límite de peticiones alcanzado (429). Esperando ${waitSec}s antes de reintentar (intento ${attempts}/4)...`);
+      await new Promise(r => setTimeout(r, waitSec * 1000));
+      continue;
+    }
+    if (!response.ok) throw new Error(response.status === 401 ? "La clave de TMDB no es válida." : `TMDB no disponible (${response.status}).`);
+    return response.json();
+  }
+  throw new Error("TMDB no disponible (429: límite de peticiones excedido tras varios reintentos).");
 }
 // Imágenes disponibles en TMDB para un título: { poster: [...], backdrop: [...], logo: [...] }
 export async function fetchTmdbImages(type, id, signal) {
@@ -914,7 +926,7 @@ export async function enrichTitles(titles, { signal, onUpdate, onProgress } = {}
   let done = 0;
   let index = 0;
   const total = titles.length;
-  await Promise.all(Array.from({ length: Math.min(6, titles.length) }, async () => {
+  await Promise.all(Array.from({ length: Math.min(4, titles.length) }, async () => {
     while (index < titles.length && !signal?.aborted) {
       const title = titles[index++];
       try {

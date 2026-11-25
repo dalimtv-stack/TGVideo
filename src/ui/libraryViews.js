@@ -180,10 +180,79 @@ export function createLibraryViews(deps) {
       return list;
     };
 
+    let searchTerm = "";
+
     const getProcessedItems = () => {
       let filtered = isGrouped ? groupTitles(baseItems) : unbundleTitles(baseItems);
       if (onlyUnidentified) {
         filtered = filtered.filter(t => !isIdentified(t));
+      }
+      const q = (searchTerm || "").trim().toLowerCase();
+      if (q) {
+        filtered = filtered.filter(t => {
+          const tName = String(t.nombre || "").toLowerCase();
+          const metaName = String(t.metadata?.name || t.metadata?.title || "").toLowerCase();
+          const origName = String(t.metadata?.original_title || t.metadata?.original_name || "").toLowerCase();
+          const tmdbId = String(t.tmdbId || t.metadata?.id || "").toLowerCase();
+          const imdbId = String(t.imdbId || t.metadata?.imdbId || t.metadata?.imdb_id || "").toLowerCase();
+          const year = String(t.yearHint || t.metadata?.year || t.metadata?.date || "").toLowerCase();
+          const overview = String(t.metadata?.overview || t.metadata?.synopsis || "").toLowerCase();
+          const director = String(t.metadata?.director || "").toLowerCase();
+          const cast = String(t.metadata?.cast || "").toLowerCase();
+          const genres = Array.isArray(t.metadata?.genres)
+            ? t.metadata.genres.map(g => (typeof g === "object" ? g.name : g)).join(" ").toLowerCase()
+            : "";
+
+          if (
+            tName.includes(q) ||
+            metaName.includes(q) ||
+            origName.includes(q) ||
+            tmdbId.includes(q) ||
+            imdbId.includes(q) ||
+            year.includes(q) ||
+            overview.includes(q) ||
+            director.includes(q) ||
+            cast.includes(q) ||
+            genres.includes(q)
+          ) {
+            return true;
+          }
+
+          if (Array.isArray(t.archivos)) {
+            for (const f of t.archivos) {
+              const fName = String(f.fileName || "").toLowerCase();
+              const capName = String(f.captionFileName || "").toLowerCase();
+              const rawName = String(f.rawFileName || "").toLowerCase();
+              const rawCap = String(f.rawCaption || "").toLowerCase();
+              const label = String(f.label || "").toLowerCase();
+              const syn = String(f.synopsis || "").toLowerCase();
+              const msgId = String(f.messageId || "").toLowerCase();
+              const sec = String(f.section || "").toLowerCase();
+              if (
+                fName.includes(q) ||
+                capName.includes(q) ||
+                rawName.includes(q) ||
+                rawCap.includes(q) ||
+                label.includes(q) ||
+                syn.includes(q) ||
+                msgId.includes(q) ||
+                sec.includes(q)
+              ) {
+                return true;
+              }
+              if (f.season && f.episode) {
+                const ep1 = `${f.season}x${f.episode}`.toLowerCase();
+                const ep2 = `${f.season}x${String(f.episode).padStart(2, "0")}`.toLowerCase();
+                const ep3 = `s${f.season}e${f.episode}`.toLowerCase();
+                const ep4 = `s${String(f.season).padStart(2, "0")}e${String(f.episode).padStart(2, "0")}`.toLowerCase();
+                if (ep1.includes(q) || ep2.includes(q) || ep3.includes(q) || ep4.includes(q)) {
+                  return true;
+                }
+              }
+            }
+          }
+          return false;
+        });
       }
       return sortGridItems(filtered, currentSort, currentDir);
     };
@@ -223,6 +292,11 @@ export function createLibraryViews(deps) {
           <div class="grid-header-info">
             <h1>${esc(row.title)}</h1>
             <span class="grid-count">${initialItems.length} ${initialItems.length === 1 ? "título" : "títulos"}</span>
+          </div>
+          <div class="grid-search-container" style="display: flex; align-items: center; position: relative; min-width: 190px; max-width: 320px; flex: 1 1 auto; margin: 0 0.5rem;">
+            <span style="position: absolute; left: 0.75rem; color: #94a3b8; font-size: 0.9rem; pointer-events: none;">🔍</span>
+            <input type="search" id="grid-search-input" class="grid-search-input" data-focusable placeholder="Buscar archivo, título, TMDB..." value="${esc(searchTerm)}" style="width: 100%; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 9999px; padding: 0.4rem 2rem 0.4rem 2.2rem; color: #fff; font-size: 0.88rem; outline: none; transition: border-color 0.2s, background 0.2s;" />
+            <button type="button" id="grid-search-clear" style="position: absolute; right: 0.5rem; display: none; background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 0.85rem; padding: 0.2rem;" title="Limpiar búsqueda">✕</button>
           </div>
           ${row.isExternal ? `
             <button class="btn-icon" data-focusable id="grid-btn-reload" title="Actualizar canal" aria-label="Actualizar canal" style="font-size: 1.2rem; margin-right: 0.4rem;">↻</button>
@@ -271,7 +345,21 @@ export function createLibraryViews(deps) {
         if (items.length > 0) {
           appendGridBatch(mainEl, items);
         } else {
-          mainEl.innerHTML = `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;"><p>No se encontraron vídeos ${onlyUnidentified ? "sin identificar " : ""}en este canal.</p></div>`;
+          if (searchTerm.trim()) {
+            mainEl.innerHTML = `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;">
+              <p style="font-size: 1.1rem; margin-bottom: 0.4rem; color: #fff;">Sin resultados para "<strong>${esc(searchTerm)}</strong>"</p>
+              <p style="color: #888; font-size: 0.88rem;">Busca por nombre de archivo, capítulo (ej: 1x02), título o ID de TMDB.</p>
+              <button class="btn btn-secondary" id="grid-empty-reset-search" style="margin-top: 1.2rem; padding: 0.5rem 1.2rem;">Restablecer búsqueda</button>
+            </div>`;
+            mainEl.querySelector("#grid-empty-reset-search")?.addEventListener("click", () => {
+              if (searchInput) searchInput.value = "";
+              searchTerm = "";
+              if (searchClear) searchClear.style.display = "none";
+              renderCards(getProcessedItems());
+            });
+          } else {
+            mainEl.innerHTML = `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;"><p>No se encontraron vídeos ${onlyUnidentified ? "sin identificar " : ""}en este canal.</p></div>`;
+          }
         }
       }
     };
@@ -289,6 +377,39 @@ export function createLibraryViews(deps) {
     window.addEventListener("scroll", onGridScroll, { passive: true });
 
     renderCards(initialItems);
+
+    const searchInput = document.getElementById("grid-search-input");
+    const searchClear = document.getElementById("grid-search-clear");
+    if (searchInput) {
+      let searchTimeout = null;
+      searchInput.addEventListener("input", () => {
+        searchTerm = searchInput.value;
+        if (searchClear) searchClear.style.display = searchTerm ? "inline-block" : "none";
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+          renderCards(getProcessedItems());
+        }, 150);
+      });
+      searchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          searchInput.value = "";
+          searchTerm = "";
+          if (searchClear) searchClear.style.display = "none";
+          renderCards(getProcessedItems());
+        }
+      });
+    }
+    if (searchClear) {
+      searchClear.addEventListener("click", () => {
+        if (searchInput) {
+          searchInput.value = "";
+          searchTerm = "";
+          searchClear.style.display = "none";
+          searchInput.focus();
+          renderCards(getProcessedItems());
+        }
+      });
+    }
 
     const updateToolsUI = () => {
       document.querySelectorAll(".grid-sort-btn").forEach(btn => {

@@ -300,7 +300,7 @@ export function renderExternalsView({
           isExternal: true,
           channel: ch,
           onRefreshRequested: async (isFull) => {
-            await scanSingleExternalChannel({ tg, sync, channelRecord: ch, isFull });
+            await scanSingleExternalChannel({ tg, sync, channelRecord: ch, isFull, kv });
             clearExternalChannelCache(extId);
             const updatedFiles = (await kv.get(`ext_files_${extId}`).catch(() => [])) || [];
             const lib = await kv.get(LIB_KEY).catch(() => null);
@@ -420,7 +420,7 @@ export function renderExternalsView({
       menu.querySelector('#banner-action-quick-update')?.addEventListener('click', async (ev) => {
         ev.stopPropagation();
         removeBannerMenu();
-        await scanSingleExternalChannel({ tg, sync, channelRecord: ch, isFull: false });
+        await scanSingleExternalChannel({ tg, sync, channelRecord: ch, isFull: false, kv });
         clearExternalChannelCache(extId);
         showHome?.(tg, sync, profile, { fast: true, selectedSection: 'externos' });
       });
@@ -428,7 +428,7 @@ export function renderExternalsView({
       menu.querySelector('#banner-action-full-update')?.addEventListener('click', async (ev) => {
         ev.stopPropagation();
         removeBannerMenu();
-        await scanSingleExternalChannel({ tg, sync, channelRecord: ch, isFull: true });
+        await scanSingleExternalChannel({ tg, sync, channelRecord: ch, isFull: true, kv });
         clearExternalChannelCache(extId);
         showHome?.(tg, sync, profile, { fast: true, selectedSection: 'externos' });
       });

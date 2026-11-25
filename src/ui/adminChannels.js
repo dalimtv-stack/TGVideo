@@ -7,6 +7,9 @@ import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../
 import { seriesNameFromFile } from '../library/titles.js';
 import { formatBytes } from '../core/utils.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
+import { createKV } from '../core/kv.js';
+
+const defaultKv = createKV();
 
 const LIB_KEY = 'library_v2';
 const EXT_KEY = 'external_sources_v1';
@@ -1195,7 +1198,8 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
 /**
  * Escanea o actualiza un único canal externo (rápido o completo) y refresca su almacenamiento.
  */
-export async function scanSingleExternalChannel({ tg, sync, channelRecord, isFull = false }) {
+export async function scanSingleExternalChannel({ tg, sync, channelRecord, isFull = false, kv: passedKv = null }) {
+  const kv = passedKv || defaultKv;
   if (!tg || !channelRecord) return;
   const client = tg.getClient?.() || tg.client;
   if (!client) throw new Error('Cliente de Telegram no disponible');

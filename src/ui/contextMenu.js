@@ -173,17 +173,17 @@ function openInTelegram(file) {
 function extractYear(titleData, file) {
   if (titleData?.metadata?.year) return String(titleData.metadata.year);
   if (titleData?.metadata?.date) {
-    const m = String(titleData.metadata.date).match(/((?:19|20)\d{2})/);
+    const m = String(titleData.metadata.date).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
   if (titleData?.metadata?.release_date) {
-    const m = String(titleData.metadata.release_date).match(/((?:19|20)\d{2})/);
+    const m = String(titleData.metadata.release_date).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
   if (titleData?.yearHint) return String(titleData.yearHint);
   if (file?.yearHint) return String(file.yearHint);
   const cand = [file?.captionFileName, file?.fileName, file?.rawCaption, titleData?.nombre].filter(Boolean).join(' ');
-  const m = cand.match(/((?:19|20)\d{2})/);
+  const m = cand.match(/\b((?:19|20)\d{2})\b/);
   return m ? m[1] : null;
 }
 
@@ -236,9 +236,10 @@ function formatSuggestedFileName(file, titleData) {
   let year = extractYear(titleData, file);
 
   if (!mName) {
-    mName = cleanBase.replace(/\s*AÑO\s*\d{4}/i, '').replace(/((?:19|20)\d{2})/g, '').trim();
+    mName = cleanBase.replace(/\s*AÑO\s*\d{4}/i, '').replace(/\b((?:19|20)\d{2})\b/g, '').trim();
   } else if (year) {
-    mName = mName.replace(new RegExp(`\s*\(?\[?${year}\)?\]?\s*$`, 'i'), '').trim();
+    mName = mName.replace(new RegExp(`\\s*[\\(\\[]?${year}[\\)\\]]?\\s*$`, "i"), "").trim();
+
   }
 
   if (year) {
