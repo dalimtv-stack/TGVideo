@@ -1,7 +1,7 @@
 // src/ui/externalTitlesBuilder.js
 // Construcción y agrupación de títulos para canales, grupos y temas externos.
-import { applyEpisodeOverrides } from './externalTitlesCache.js';
-import { isVideoMessage, getFileName, parseCaption, parseEpisode, detectTrailingSeriesMap, getTrailingSeriesForFile } from '../library/parse.js';
+import { applyEpisodeOverrides, applySeriesMoves } from './externalTitlesCache.js';
+import { isVideoMessage, getFileName, parseCaption, parseEpisode, detectTrailingSeriesMap, getTrailingSeriesForFile, detectNumberedSeriesMap, getNumberedSeriesForFile } from '../library/parse.js';
 import { extractTitleAndYear, extractTitlesFromCaption } from '../metadata/tmdb.js';
 import { seriesNameFromFile, normalizeMovieKey } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
@@ -232,6 +232,7 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
   } else if (category === 'Series') {
     // Procesar en orden cronológico por messageId para agrupar episodios que van seguidos
     const sortedDetectedFiles = [...detectedFiles].sort((a, b) => (Number(a.messageId) || 0) - (Number(b.messageId) || 0) || ((a.date || 0) - (b.date || 0)));
+    const numberedSeriesMap = detectNumberedSeriesMap(detectedFiles);
 
     const seriesTmdbMap = new Map();
     const seriesNameMap = new Map();
@@ -247,13 +248,18 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
       const fMeta = resolveExternalMetadata(null, f.tmdbId, [f], virtualId, metadataMap);
       const fileTmdbId = fMeta?.id || f.tmdbId || null;
       const trailingInfo = getTrailingSeriesForFile(f.captionFileName || f.fileName, trailingSeriesMap);
-      const prefixCandidate = seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap);
+      const numberedInfo = getNumberedSeriesForFile(f.captionFileName || f.fileName, numberedSeriesMap);
+      const prefixCandidate = seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap, numberedSeriesMap);
 
       let knownName = null;
       if (isValidSeriesCandidate(fMeta?.name || fMeta?.title)) {
         knownName = fMeta.name || fMeta.title;
       } else if (isValidSeriesCandidate(trailingInfo?.candidate)) {
         knownName = trailingInfo.candidate;
+      } else if (isValidSeriesCandidate(numberedInfo?.candidate)) {
+        knownName = numberedInfo.candidate;
+        if (!f.season || f.season === 0) f.season = numberedInfo.season;
+        if (!f.episode || f.episode === 0) f.episode = numberedInfo.episode;
       } else if (isValidSeriesCandidate(prefixCandidate)) {
         knownName = prefixCandidate;
       }
@@ -399,5 +405,5 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
     generatedTitles.push(titleObj);
   }
 
-  return generatedTitles;
+  return applySeriesMoves(generatedTitles);
 }

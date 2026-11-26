@@ -72,24 +72,29 @@ export function buildStandardCaption({
   return base.slice(0, 1024);
 }
 
-/** S01E02, 1x02, T7 C14, T07C14, "Episodio 3", "Cap 3", o número suelto */
+/**
+ * S01E02, 1x02, T7 C14, T07C14, T01, E04, Temporada 3, capítulo 2,
+ * Lupin T1 C01, "Episodio 3", "Cap 3", etc.
+ */
 export function parseEpisode(name = '') {
   const clean = String(name || '').replace(/[._]+/g, ' ');
 
-  // 1. S01E02, T01E02, T7 C14, T07C14, S7 C14, Temp 7 Cap 14, Temporada 7 Capitulo 14, etc.
-  let m = clean.match(/\b(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s-]*(\d{1,2})[\s-]*(?:[EC]|ep(?:isodio)?|cap(?:[ií]tulo)?)[\s-]*(\d{1,3})(?!\d)/i);
+  // 1. Temporada con Episodio explícito:
+  // S01E02, T01E02, T01, E04, T1, C01, Temp 1, Cap 4, Temporada 3, capítulo 2,
+  // Lupin T1 C01, S1-E4, Temp 3 - Cap 2, etc.
+  let m = clean.match(/\b(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s,–—.:_-]*(\d{1,2})[\s,–—.:_-]*(?:[EC]|ep(?:isodio)?|cap(?:[ií]tulo)?|ch(?:apter)?)[\s,–—.:_-]*(\d{1,4})(?!\d)/i);
   if (m) return { season: +m[1], episode: +m[2] };
 
-  // 2. 7x14, 07x14, 1x02
-  m = clean.match(/\b(\d{1,2})\s*x\s*(\d{1,3})(?!\d)/i);
+  // 2. 7x14, 07x14, 1x02, 1x105
+  m = clean.match(/\b(\d{1,2})\s*x\s*(\d{1,4})(?!\d)/i);
   if (m) return { season: +m[1], episode: +m[2] };
 
-  // 3. T7 - 14 (sin letra en el episodio si viene precedido de T/Temp claro)
-  m = clean.match(/\bT(?:emp(?:orada)?)?[\s-]*(\d{1,2})[\s-]+(\d{1,3})(?!\d)/i);
+  // 3. T7 - 14, Temp 7 - 14 (sin letra en el episodio si viene precedido de T/Temp claro y separador)
+  m = clean.match(/\b(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s,–—.:_-]*(\d{1,2})[\s,–—.:-]+(\d{1,4})(?!\d)/i);
   if (m) return { season: +m[1], episode: +m[2] };
 
-  // 4. Solo episodio: Episodio 3, Cap 3, Capitulo 14
-  m = clean.match(/\b(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s-]*(\d{1,3})(?!\d)/i);
+  // 4. Solo episodio: Episodio 3, Cap 3, Capitulo 14, Ep 59, C04, Ch 2
+  m = clean.match(/\b(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*(\d{1,4})(?!\d)/i);
   if (m) return { season: 1, episode: +m[1] };
 
   return { season: 0, episode: 0 };
@@ -100,7 +105,7 @@ export function prettyName(fileName = '') {
 }
 
 /** Limpia la etiqueta técnica del nombre de un episodio y deja el título legible. */
-export function prettyEpisodeName(fileName = '', showName = '') {
+export function prettyEpisodeName(fileName = '', showName = '', fallbackEp = null) {
   let label = prettyName(fileName);
   const candidates = [showName].filter(Boolean);
   for (const candidate of candidates) {
@@ -109,7 +114,7 @@ export function prettyEpisodeName(fileName = '', showName = '') {
     label = label.replace(new RegExp(`\\s*[-–—:]*\\s*${escaped}\\s*$`, 'i'), '');
   }
   label = label
-    .replace(/^\s*(?:[ST]\s*\d{1,2}[\s._-]*[EC]\s*\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\s*\d{1,2}[\s._-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?\s*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\s*\d{1,3})\s*[-–—:]*\s*/i, '')
+    .replace(/^\s*(?:[ST]\s*\d{1,2}[\s,–—._-]*[EC]\s*\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\s*\d{1,2}[\s,–—._-]*(?:[EC]|ep|cap(?:[ií]tulo)?|ch(?:apter)?)?\s*\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\s*\d{1,4})\s*[-–—:]*\s*/i, '')
     .replace(/\[[^\]]*\]|\([^)]*\)/g, (part) => /(?:2160|1080|720|480|4k|uhd|bluray|blu\s*ray|hdtv|web[- ]?dl|webrip|brrip|dual|castellano|latino|dts|ac3|x26[45]|h26[45]|hevc)/i.test(part) ? '' : part)
     .replace(/\b(?:2160p|1080p|720p|480p|4k|uhd|bluray|blu\s*ray|hdtv|web[- ]?dl|webrip|brrip|dual|castellano|latino|dts|ac3|x26[45]|h26[45]|hevc)\b.*$/i, '')
     .replace(/[._]+/g, ' ')
@@ -117,16 +122,23 @@ export function prettyEpisodeName(fileName = '', showName = '') {
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Si tras quitar showName solo queda un número suelto (ej. "59" o "- 59")
+  if (/^\s*[-–—:#]*\s*\d{1,4}\s*$/.test(label)) {
+    const num = label.match(/\d{1,4}/)[0];
+    return `Episodio ${parseInt(num, 10)}`;
+  }
+
   if (showName && (!label || label.toLowerCase() === showName.toLowerCase())) {
     const ep = parseEpisode(fileName);
-    if (ep.episode > 0) return `Episodio ${ep.episode}`;
+    const epNum = ep.episode > 0 ? ep.episode : fallbackEp;
+    if (epNum > 0) return `Episodio ${epNum}`;
   }
   return label || prettyName(fileName);
 }
 
 const GENERIC_BLACKLIST = /^(?:cap[ií]tulo|episodio|ep|cap|parte|part|temporada|temp|season|video|pelicula|movie|serie|unknown|sin secci[oó]n)$/i;
 
-function normalizeSeriesKey(str) {
+export function normalizeSeriesKey(str) {
   return String(str || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -180,7 +192,7 @@ export function extractTrailingSeriesCandidate(fileName = '') {
   base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
 
   // Detectar código de episodio al inicio (1x01, S01E01, etc.) seguido del nombre de la serie
-  const m = base.match(/^\s*(?:[ST]\d{1,2}[\s._-]*[EC]\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s._-]*\d{1,2}[\s._-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*\d{1,3})\s*[-–—:._]*\s*(.+)$/i);
+  const m = base.match(/^\s*(?:[ST]\d{1,2}[\s,–—.:_-]*[EC]\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\b[\s,–—.:_-]*\d{1,2}[\s,–—.:_-]*(?:[EC]|ep|cap(?:[ií]tulo)?|ch(?:apter)?)?[\s,–—.:_-]*\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*\d{1,4})\s*[-–—:._]*\s*(.+)$/i);
   if (!m) return null;
 
   return cleanTrailingCandidate(m[1]);
@@ -232,4 +244,78 @@ export function getTrailingSeriesForFile(fileName = '', trailingMap = null) {
   const match = trailingMap.get(norm);
   if (!match) return null;
   return { candidate: match.candidate, year: match.year || cand.year || null };
+}
+
+/**
+ * Extrae candidato de serie numerada bare ("Yo decido Amar - 59").
+ */
+export function extractNumberedSeriesCandidate(fileName = '') {
+  let base = String(fileName).replace(VIDEO_EXT, '').trim();
+  base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
+
+  const qualityKw = '(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|x26[45]|h26[45]|hevc|dual|multi|castellano|latino|spanish|spa|esp|sub|subs|vose|eng)';
+  base = base.replace(new RegExp(`\\b${qualityKw}\\b.*$`, 'i'), '').trim();
+
+  // Buscar separador seguido de número al final: "Yo decido Amar - 59", "Yo decido Amar #59"
+  const m = base.match(/^(.+?)\s*[-–—#:]+\s*(\d{1,4})\s*$/) || base.match(/^(.+?)\s+(\d{1,4})\s*$/);
+  if (!m) return null;
+
+  const cand = m[1].replace(/[-–—:._\s]+$/, '').trim();
+  const epNum = parseInt(m[2], 10);
+  if (epNum <= 0) return null;
+  // Años entre 1900 y 2099 se excluyen para no confundir películas con año
+  if (m[2].length === 4 && epNum >= 1900 && epNum <= 2099) return null;
+  if (!cand || cand.length < 2) return null;
+  if (/^(?:video|pelicula|movie|serie|unknown|file|input|sin secci[oó]n)$/i.test(cand)) return null;
+
+  return { candidate: cand, episode: epNum };
+}
+
+/**
+ * Detecta series numeradas aisladas (ej. "Yo decido Amar - 59").
+ * REGLA ESTRICTA: SOLO SERIES y tiene que haber VARIOS episodios (>= 2) con el mismo nombre.
+ */
+export function detectNumberedSeriesMap(files = []) {
+  if (!Array.isArray(files) || files.length === 0) return new Map();
+
+  const groups = new Map();
+  for (const f of files) {
+    const name = f?.captionFileName || f?.fileName || f?.name || f?.label || '';
+    const cand = extractNumberedSeriesCandidate(name);
+    if (cand) {
+      const norm = normalizeSeriesKey(cand.candidate);
+      if (norm) {
+        if (!groups.has(norm)) {
+          groups.set(norm, { candidate: cand.candidate, episodes: new Set([cand.episode]), count: 1 });
+        } else {
+          const g = groups.get(norm);
+          g.count++;
+          g.episodes.add(cand.episode);
+          if (cand.candidate.length > g.candidate.length && cand.candidate.length < 50) {
+            g.candidate = cand.candidate;
+          }
+        }
+      }
+    }
+  }
+
+  const validMap = new Map();
+  for (const [norm, data] of groups.entries()) {
+    // Al menos 2 episodios distintos con el mismo patrón
+    if (data.count >= 2) {
+      validMap.set(norm, { candidate: data.candidate, count: data.count });
+    }
+  }
+  return validMap;
+}
+
+export function getNumberedSeriesForFile(fileName = '', numberedMap = null) {
+  if (!numberedMap || numberedMap.size === 0) return null;
+  const cand = extractNumberedSeriesCandidate(fileName);
+  if (!cand) return null;
+  const norm = normalizeSeriesKey(cand.candidate);
+  if (!norm) return null;
+  const match = numberedMap.get(norm);
+  if (!match) return null;
+  return { candidate: match.candidate, season: 1, episode: cand.episode };
 }

@@ -1,13 +1,15 @@
 // src/ui/externalTitlesCache.js
-// Caché en memoria para títulos derivados de canales externos, gestión de archivos ocultos y overrides de episodios.
+// Caché en memoria para títulos derivados de canales externos, gestión de archivos ocultos, overrides de episodios y reubicación manual de episodios entre series.
 import { createKV } from "../core/kv.js";
 
 const kv = createKV();
 const EXT_HIDDEN_KEY = "ext_hidden_files_v1";
 const EPISODE_OVERRIDES_KEY = "tgv_episode_overrides_v1";
+const SERIES_MOVES_KEY = "tgv_series_moves_v1";
 
 export const EXT_CHANNEL_TITLES_CACHE = new Map();
 const episodeOverridesMap = new Map();
+const seriesMovesMap = new Map();
 
 export function clearExternalChannelCache(channelId) {
   if (channelId) {
@@ -304,4 +306,152 @@ export async function saveEpisodeOverride({ title, file, season, episode, name =
       file.metadata = { ...(file.metadata || {}), name: overrideData.name };
     }
   }
+}
+
+/**
+ * Obtiene la asignación manual de serie para un episodio (reubicación).
+ */
+export function getEpisodeSeriesMove(fileOrKey) {
+  if (!fileOrKey) return null;
+  if (seriesMovesMap.size === 0) {
+    try {
+      const raw = localStorage.getItem(SERIES_MOVES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        for (const [k, v] of Object.entries(parsed)) seriesMovesMap.set(k, v);
+      }
+    } catch (_) {}
+  }
+
+  if (typeof fileOrKey === "string") {
+    return seriesMovesMap.get(fileOrKey) || null;
+  }
+
+  const f = fileOrKey;
+  if (f.key && seriesMovesMap.has(f.key)) return seriesMovesMap.get(f.key);
+
+  const chId = String(f.channelId || f.channel?.id || "").trim();
+  const msgId = String(f.messageId || "").trim();
+  if (chId && msgId) {
+    const rawCh = chId.replace(/^ext-/, "");
+    const cand = seriesMovesMap.get(`${chId}:${msgId}`)
+      || seriesMovesMap.get(`${rawCh}:${msgId}`)
+      || seriesMovesMap.get(`ext-${rawCh}:${msgId}`);
+    if (cand) return cand;
+  }
+  return null;
+}
+
+/**
+ * Guarda la reubicación manual de un episodio a otra serie existente o nueva.
+ */
+export async function saveEpisodeSeriesMove({ file, sourceTitle, targetTitle, targetSeriesId, targetSeriesName, season, episode }) {
+  const s = Number(season) || 1;
+  const ep = Number(episode) || 1;
+  const targetId = String(targetSeriesId || targetTitle?.id || "").trim();
+  const targetName = String(targetSeriesName || targetTitle?.nombre || "").trim();
+
+  const moveData = {
+    targetTitleId: targetId,
+    targetTitleName: targetName,
+    sourceTitleId: sourceTitle ? String(sourceTitle.id || "") : null,
+    sourceTitleName: sourceTitle ? String(sourceTitle.nombre || "") : null,
+    season: s,
+    episode: ep,
+    updated_at: Date.now(),
+  };
+
+  const keys = new Set();
+  if (file?.key) keys.add(String(file.key).trim());
+
+  const chId = String(file?.channelId || file?.channel?.id || sourceTitle?.channel?.id || "").trim();
+  const msgId = String(file?.messageId || "").trim();
+  if (chId && msgId) {
+    keys.add(`${chId}:${msgId}`);
+    const rawCh = chId.replace(/^ext-/, "");
+    if (rawCh) {
+      keys.add(`${rawCh}:${msgId}`);
+      keys.add(`ext-${rawCh}:${msgId}`);
+    }
+  }
+
+  for (const k of keys) {
+    seriesMovesMap.set(k, moveData);
+  }
+
+  try {
+    const raw = localStorage.getItem(SERIES_MOVES_KEY);
+    const stored = raw ? JSON.parse(raw) : {};
+    for (const k of keys) stored[k] = moveData;
+    localStorage.setItem(SERIES_MOVES_KEY, JSON.stringify(stored));
+  } catch (_) {}
+
+  try {
+    const kvStored = (await kv.get(SERIES_MOVES_KEY).catch(() => ({}))) || {};
+    for (const k of keys) kvStored[k] = moveData;
+    await kv.set(SERIES_MOVES_KEY, kvStored).catch(() => {});
+  } catch (_) {}
+
+  // Mantener coherente también el override numérico
+  await saveEpisodeOverride({ title: targetTitle || sourceTitle, file, season: s, episode: ep });
+
+  if (file) {
+    file.season = s;
+    file.episode = ep;
+    file.seriesMove = moveData;
+  }
+  return moveData;
+}
+
+/**
+ * Aplica las reubicaciones de series a una lista de títulos en memoria.
+ */
+export function applySeriesMoves(titles) {
+  if (!Array.isArray(titles)) return titles;
+  if (seriesMovesMap.size === 0) {
+    try {
+      const raw = localStorage.getItem(SERIES_MOVES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        for (const [k, v] of Object.entries(parsed)) seriesMovesMap.set(k, v);
+      }
+    } catch (_) {}
+  }
+  if (seriesMovesMap.size === 0) return titles;
+
+  for (const t of titles) {
+    if (t.tipo !== "serie" || !Array.isArray(t.archivos)) continue;
+    const toRemove = [];
+    for (const f of t.archivos) {
+      const move = getEpisodeSeriesMove(f);
+      if (move && move.targetTitleId && String(move.targetTitleId) !== String(t.id)) {
+        toRemove.push(f);
+        let target = titles.find(x => String(x.id) === String(move.targetTitleId) || (x.tipo === "serie" && x.nombre && move.targetTitleName && x.nombre.toLowerCase().trim() === move.targetTitleName.toLowerCase().trim()));
+        if (!target) {
+          target = {
+            id: move.targetTitleId,
+            tipo: "serie",
+            nombre: move.targetTitleName || "Serie",
+            grupo: t.grupo || "Series",
+            channel: t.channel,
+            origen: t.origen,
+            archivos: [],
+            ultimoMensajeFecha: f.date || 0,
+          };
+          titles.push(target);
+        }
+        if (Number.isInteger(move.season)) f.season = move.season;
+        if (Number.isInteger(move.episode)) f.episode = move.episode;
+        if (!target.archivos.some(existing => existing.key === f.key)) {
+          target.archivos.push(f);
+          target.archivos.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || (a.date - b.date));
+        }
+      }
+    }
+    if (toRemove.length > 0) {
+      t.archivos = t.archivos.filter(f => !toRemove.includes(f));
+    }
+  }
+
+  return titles.filter(t => t.tipo !== "serie" || (Array.isArray(t.archivos) && t.archivos.length > 0));
 }

@@ -39,12 +39,12 @@ export function extractTitleAndYear(name = "") {
   const parenQualityRe = new RegExp("\\([^\\)]*" + qualityKw + "[^\\)]*\\)", "gi");
   str = str.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
 
-  // 4. Eliminar códigos de episodios: S01E02, 1x02, T7 C14
+  // 4. Eliminar códigos de episodios: S01E02, 1x02, T7 C14, T01, E04, Temporada 3, capítulo 2, etc.
   // Si está al INICIO: eliminar solo el prefijo del episodio para conservar el título que viene detrás (ej: 1x01 - Castle Rock, T7 C14 - Aida)
-  str = str.replace(/^\s*(?:[ST]\d{1,2}[\s._-]*[EC]\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s._-]*\d{1,2}[\s._-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*\d{1,3})\s*[-–—:._]*\s*/i, " ");
+  str = str.replace(/^\s*(?:[ST]\d{1,2}[\s,–—.:_-]*[EC]\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\b[\s,–—.:_-]*\d{1,2}[\s,–—.:_-]*(?:[EC]|ep|cap(?:[ií]tulo)?|ch(?:apter)?)?[\s,–—.:_-]*\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*\d{1,4})\s*[-–—:._]*\s*/i, " ");
   // Si está en medio o al final: eliminar desde el código del episodio hasta el final
-  str = str.replace(/(?:[ST]\d{1,2}[\s._-]*[EC]\d{1,3}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s._-]*\d{1,2}[\s._-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}).*/i, " ");
-  str = str.replace(/\d{1,2}x\d{1,3}.*/i, " ");
+  str = str.replace(/(?:[ST]\d{1,2}[\s,–—.:_-]*[EC]\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\b[\s,–—.:_-]*\d{1,2}[\s,–—.:_-]*(?:[EC]|ep|cap(?:[ií]tulo)?|ch(?:apter)?)?[\s,–—.:_-]*\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*\d{1,4}).*/i, " ");
+  str = str.replace(/\d{1,2}x\d{1,4}.*/i, " ");
 
   // 5. Eliminar desde la primera palabra clave suelta de calidad hasta el final
   const bareQualityRe = new RegExp(`\\b${qualityKw}\\b.*`, "i");
@@ -641,7 +641,34 @@ async function searchByCaptions(type, title, alreadyTried, signal) {
   return null;
 }
 
-export async function searchTmdbManual({ query, type = "movie", year = "", directId = null }, signal) {
+export async function searchTmdbManual(input, signal) {
+  let query = "";
+  let type = "movie";
+  let year = "";
+  let directId = null;
+
+  if (typeof input === "string") {
+    query = input;
+    type = (typeof arguments[1] === "string" ? arguments[1] : null) || "movie";
+    year = (typeof arguments[2] === "string" ? arguments[2] : null) || "";
+    directId = arguments[3] || null;
+  } else if (input && typeof input === "object") {
+    query = input.query || "";
+    type = input.type || "movie";
+    year = input.year || "";
+    directId = input.directId || null;
+  }
+
+  // Si la búsqueda es un número puro o un ID/enlace directo a TMDB, tratarlo como directId
+  if (!directId) {
+    const rawTrimmed = String(query || "").trim();
+    if (/^\d+$/.test(rawTrimmed)) {
+      directId = rawTrimmed;
+    } else {
+      directId = parseTmdbId(rawTrimmed);
+    }
+  }
+
   const endpoint = type === "collection" ? "collection" : type === "serie" || type === "tv" ? "tv" : "movie";
   const id = parseTmdbId(directId);
   if (id) {

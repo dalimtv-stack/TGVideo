@@ -218,9 +218,12 @@ export async function renderUploadTab({ mainPanel, client, tg }) {
 /** Formulario para un único archivo */
 async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
   const rawName = file.name;
+  const epDetected = parseEpisode(rawName);
+  const isEp = epDetected && (epDetected.episode > 0 || epDetected.season > 0);
   const parsedInfo = extractTitleAndYear(rawName);
   const cleanName = parsedInfo.title || cleanSearchName(rawName);
   const detectedYear = parsedInfo.year || '';
+  const fileExt = file.name.match(/\.([a-zA-Z0-9]{2,5})$/)?.[0] || '.mp4';
 
   workspace.innerHTML = `
     <div class="admin-upload-form">
@@ -236,8 +239,8 @@ async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
         <label>Buscar e identificar en TMDB:</label>
         <div style="display:flex;gap:0.6rem;">
           <select class="admin-select" id="upload-tmdb-type" style="width:140px;flex:0 0 auto;">
-            <option value="movie" selected>Película</option>
-            <option value="tv">Serie / TV</option>
+            <option value="movie" ${!isEp ? 'selected' : ''}>Película</option>
+            <option value="tv" ${isEp ? 'selected' : ''}>Serie / TV</option>
             <option value="collection">Colección</option>
           </select>
           <input type="text" class="admin-input" id="upload-tmdb-query" value="${esc(cleanName)}" placeholder="Título o ID de TMDB (ej. Matrix o 603)" />
@@ -271,15 +274,14 @@ async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
         </div>
         <div class="admin-field-group">
           <label>Temporada / Episodio (si es serie):</label>
-          <input type="text" class="admin-input" id="meta-episode" placeholder="Ej. T1·E01 o 1x01" />
+          <input type="text" class="admin-input" id="meta-episode" value="${isEp ? `T${epDetected.season}·E${String(epDetected.episode).padStart(2, '0')}` : ''}" placeholder="Ej. T1·E01 o 1x01" />
         </div>
       </div>
 
       <div class="admin-field-group">
         <label>Nombre final del archivo que verá Telegram:</label>
-        <input type="text" class="admin-input" id="meta-final-filename" value="${esc(detectedYear ? `${cleanName} (${detectedYear}).mp4` : file.name)}" />
+        <input type="text" class="admin-input" id="meta-final-filename" value="${esc(detectedYear ? `${cleanName} (${detectedYear})${fileExt}` : file.name)}" />
       </div>
-
       <div class="admin-field-group">
         <label>Sinopsis:</label>
         <textarea class="admin-textarea" id="meta-synopsis" rows="3" placeholder="Sinopsis del título…"></textarea>
@@ -502,9 +504,20 @@ function setupTmdbSearch(initialQuery) {
     }
 
     const type = typeSelect?.value || 'movie';
-    const res = await searchTmdbManual(q, type);
+    let res = null;
+    try {
+      res = await searchTmdbManual({ query: q, type });
+    } catch (err) {
+      if (resultsDiv) {
+        resultsDiv.innerHTML = `<p style="color:#f87171;padding:0.5rem;">Error en TMDB: ${esc(err?.message || 'Fallo de conexión o clave no configurada')}</p>`;
+      }
+      return;
+    }
 
-    if (!res || !res.results || !res.results.length) {
+    // Normalizar lista de resultados (admite tanto array directo como objeto con .results)
+    const items = Array.isArray(res) ? res : (res?.results || []);
+
+    if (!items.length) {
       if (resultsDiv) resultsDiv.innerHTML = '<p style="color:#aaa;padding:0.5rem;">No se encontraron resultados en TMDB.</p>';
       return;
     }
@@ -512,16 +525,17 @@ function setupTmdbSearch(initialQuery) {
     if (resultsDiv) {
       resultsDiv.innerHTML = `
         <div style="max-height:240px;overflow-y:auto;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:0.5rem;">
-          ${res.results.map(item => {
-            const title = item.title || item.name || '';
-            const year = (item.release_date || item.first_air_date || '').slice(0, 4);
-            const poster = item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : '';
+          ${items.map(item => {
+            const title = item.name || item.title || '';
+            const year = (item.date || item.release_date || item.first_air_date || '').slice(0, 4);
+            const poster = item.poster || (item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : '');
+            const rating = Number(item.rating || item.vote_average || 0);
             return `
-              <div class="tmdb-search-item" data-id="${item.id}" data-title="${esc(title)}" data-year="${esc(year)}" data-overview="${esc(item.overview || '')}" data-vote="${item.vote_average || ''}" style="display:flex;align-items:center;gap:0.8rem;padding:0.4rem;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;">
+              <div class="tmdb-search-item" data-id="${item.id}" data-title="${esc(title)}" data-year="${esc(year)}" data-overview="${esc(item.overview || '')}" data-vote="${rating > 0 ? rating.toFixed(1) : ''}" style="display:flex;align-items:center;gap:0.8rem;padding:0.4rem;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;">
                 ${poster ? `<img src="${poster}" style="width:36px;height:52px;object-fit:cover;border-radius:4px;" />` : '<div style="width:36px;height:52px;background:#333;border-radius:4px;"></div>'}
                 <div style="flex:1;">
                   <strong style="color:#fff;font-size:0.9rem;">${esc(title)}</strong>
-                  <span style="color:#aaa;font-size:0.8rem;">(${year || 'N/A'}) · ⭐ ${item.vote_average ? item.vote_average.toFixed(1) : '-'}</span>
+                  <span style="color:#aaa;font-size:0.8rem;">(${year || 'N/A'}) · ⭐ ${rating > 0 ? rating.toFixed(1) : '-'}</span>
                 </div>
               </div>
             `;
@@ -552,6 +566,8 @@ function setupTmdbSearch(initialQuery) {
             filenameInput.value = year ? `${title} (${year})${ext}` : `${title}${ext}`;
           }
 
+          if (queryInput) queryInput.value = title;
+
           resultsDiv.style.display = 'none';
         });
       });
@@ -565,6 +581,11 @@ function setupTmdbSearch(initialQuery) {
       executeSearch();
     }
   });
+
+  // Si se dispone de un término inicial de al menos 2 caracteres, ejecutar búsqueda inicial automáticamente
+  if (initialQuery && String(initialQuery).trim().length >= 2) {
+    executeSearch().catch(() => {});
+  }
 }
 
 async function populateChannelSelect(selectId, client, preferredCat = 'Películas') {

@@ -13,7 +13,8 @@ export function isExternalTitle(t) {
  * Capa de datos: convierte canales (dedicados, contenedores de año y macro) en "Títulos" unificados.
  * No toca el DOM.
  */
-import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName, prettyEpisodeName, detectTrailingSeriesMap, getTrailingSeriesForFile } from './parse.js';
+import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName, prettyEpisodeName, detectTrailingSeriesMap, getTrailingSeriesForFile, detectNumberedSeriesMap, getNumberedSeriesForFile } from './parse.js';
+import { applySeriesMoves } from '../ui/externalTitlesCache.js';
 import { splitBySection } from './macro.js';
 import { parseChannelTitle } from './channels.js';
 import { extractTitleAndYear, extractTitlesFromCaption } from '../metadata/tmdb.js';
@@ -47,6 +48,18 @@ async function scanFiles(client, peer, ch) {
       duration: durAttr?.duration || 0, mimeType: doc?.mimeType || 'video/mp4', date: msg.date,
     });
   }
+  if (ch.category === 'Series') {
+    const numberedMap = detectNumberedSeriesMap(files);
+    for (const f of files) {
+      if (!f.season && !f.episode) {
+        const numInfo = getNumberedSeriesForFile(f.captionFileName || f.fileName, numberedMap);
+        if (numInfo) {
+          f.season = numInfo.season;
+          f.episode = numInfo.episode;
+        }
+      }
+    }
+  }
   return files;
 }
 
@@ -78,17 +91,25 @@ function makeTitle({ id, ch, name, origen, seccion, files }) {
 const YEAR_RE = /\b((?:19|20)\d{2})\b/;
 const YEAR_GROUP_RE = /^(?:por\s+año|por\s+ano|años|anos|décadas|decadas|por\s+década|por\s+decada)$/i;
 
-// Nombre de la serie a partir del archivo: texto anterior a S01E02 / 1x02 / T1E02
-export function seriesNameFromFile(fileName = '', trailingMap = null) {
+// Nombre de la serie a partir del archivo: texto anterior a S01E02 / 1x02 / T1E02 / T01, E04 / Lupin T1 C01
+export function seriesNameFromFile(fileName = '', trailingMap = null, numberedMap = null) {
   if (trailingMap) {
     const trailingInfo = getTrailingSeriesForFile(fileName, trailingMap);
     if (trailingInfo?.candidate) return trailingInfo.candidate;
   }
+  if (numberedMap) {
+    const numInfo = getNumberedSeriesForFile(fileName, numberedMap);
+    if (numInfo?.candidate) return numInfo.candidate;
+  }
   let base = String(fileName).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, '').replace(/[._]+/g, ' ');
   // Quitar etiquetas iniciales de canal: [Canal], (Canal), @Canal
   base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
-  const m = base.match(/^(.*?)[\s\-–—\[(]*(?:(?:[ST]|temp(?:orada)?|season)\s*\d{1,2}[\s-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?\s*\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\s*\d{1,3})/i);
-  let name = (m ? m[1] : base).replace(/[\s\-–—:]+$/, '').replace(/\s+/g, ' ').trim();
+
+  // Patrón robusto para detectar inicio de temporada/episodio con comas, guiones o espacios
+  const epPattern = /(?:(?:[ST]|temp(?:orada)?|season)[\s,–—.:_-]*\d{1,2}[\s,–—.:_-]*(?:[EC]|ep(?:isodio)?|cap(?:[ií]tulo)?|ch(?:apter)?)[\s,–—.:_-]*\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:[ST]|temp(?:orada)?|season)[\s,–—.:_-]*\d{1,2}[\s,–—.:-]+\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*\d{1,4})/i;
+
+  const m = base.match(new RegExp(`^(.*?)[\\s\\-–—\\[(]*\\b` + epPattern.source, 'i'));
+  let name = (m ? m[1] : base).replace(/[\s\-–—:,]+$/, '').replace(/\s+/g, ' ').trim();
   // Quitar año al final entre paréntesis si existe (ej. "Breaking Bad (2008)" -> "Breaking Bad")
   name = name.replace(/\s*[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$/, '').trim();
   if (!name || name.length < 2 || /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|video|file|input|\d+)$/i.test(name)) {
@@ -170,9 +191,10 @@ export function groupTitles(items = []) {
     }];
 
     if (isSeries) {
+      const numberedMap = detectNumberedSeriesMap(files);
       const firstFile = files[0];
       const rawName = firstFile?.captionFileName || firstFile?.fileName || it.nombre;
-      const sName = String(it.parentTitle?.nombre || (it.isLooseFile ? seriesNameFromFile(rawName) : null) || it.nombre || 'Serie').trim();
+      const sName = String(it.parentTitle?.nombre || (it.isLooseFile ? seriesNameFromFile(rawName, null, numberedMap) : null) || it.nombre || 'Serie').trim();
       const rawTmdb = it.tmdbId || it.metadata?.id || firstFile?.tmdbId || firstFile?.metadata?.id;
       const cleanName = normalizeMovieKey(sName).replace(/(?:19|20)\d{2}/g, '');
       const parsedYear = extractTitleAndYear(sName).year || extractTitleAndYear(it.nombre).year || extractTitleAndYear(it.channel?.name || '').year;
@@ -373,7 +395,7 @@ export function mergeMoviesByTmdb(titles) {
     }
   }
 
-  return result;
+  return applySeriesMoves(result);
 }
 
 /**
@@ -641,6 +663,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
         // Agrupamos cada serie por su TMDB ID o por el nombre individual extraído del archivo.
         // Si no se sabe de qué serie son, los episodios van todos seguidos y se agrupan como "Serie desconocida [N]".
         const trailingSeriesMap = detectTrailingSeriesMap(files);
+        const numberedSeriesMap = detectNumberedSeriesMap(files);
         const seriesTmdbMap = new Map();
         const seriesNameMap = new Map();
         const unknownGroups = [];
@@ -663,12 +686,18 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
 
         for (const f of sortedFiles) {
           const trailingInfo = getTrailingSeriesForFile(f.captionFileName || f.fileName, trailingSeriesMap);
-          const prefixName = seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap);
+          const numberedInfo = getNumberedSeriesForFile(f.captionFileName || f.fileName, numberedSeriesMap);
+          const prefixName = seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap, numberedSeriesMap);
           const sectionName = (f.section && !/^(cl[aá]sicas|series|general|sin secci[oó]n)$/i.test(f.section) && f.section !== ch.group) ? f.section : null;
           const fileTmdb = f.tmdbId ? String(f.tmdbId).trim() : null;
 
           let sName = null;
           if (isValidSeriesCandidate(trailingInfo?.candidate)) sName = trailingInfo.candidate;
+          else if (isValidSeriesCandidate(numberedInfo?.candidate)) {
+            sName = numberedInfo.candidate;
+            if (!f.season || f.season === 0) f.season = numberedInfo.season;
+            if (!f.episode || f.episode === 0) f.episode = numberedInfo.episode;
+          }
           else if (isValidSeriesCandidate(prefixName)) sName = prefixName;
           else if (isValidSeriesCandidate(sectionName)) sName = sectionName;
 
@@ -801,6 +830,6 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
   }));
 
   // Consolidar películas con el mismo ID de TMDB detectado previamente
-  const finalTitles = attachAutoCollections(mergeMoviesByTmdb(titles.filter(t => t.archivos && t.archivos.length > 0)));
+  const finalTitles = applySeriesMoves(attachAutoCollections(mergeMoviesByTmdb(titles.filter(t => t.archivos && t.archivos.length > 0))));
   return { titles: finalTitles, cache: newCache };
 }

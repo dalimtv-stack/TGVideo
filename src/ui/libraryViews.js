@@ -7,6 +7,7 @@ import { prewarmPosterCache } from "../metadata/posterCache.js";
 import { identifyTitlesInBulk } from './adminChannels.js';
 import { EXT_CHANNEL_TITLES_CACHE, isExternalFileHiddenSync, getEpisodeOverride, saveEpisodeOverride, applyEpisodeOverrides } from './externalTitlesCache.js';
 import { showEpisodeIdentificationModal } from './episodeIdentificationModal.js';
+import { showMoveEpisodeModal } from './moveEpisodeModal.js';
 import { groupTitles, unbundleTitles } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
@@ -1062,7 +1063,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
         <div class="ep-state">
           ${p?.is_completed ? '<span class="ep-visto-badge">✓ Visto</span>' : pct ? Math.round(pct) + '%' : ''}
-          ${t.tipo === 'serie' ? `<button class="btn-icon-circle episode-identification-btn" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir temporada y episodio" aria-label="Corregir identificación del episodio">✎</button>` : ''}
+          ${t.tipo === 'serie' ? `<button class="btn-icon-circle episode-move-btn" data-focusable type="button" data-key="${esc(f.key)}" title="Mover a otra serie" aria-label="Mover episodio a otra serie">⇄</button><button class="btn-icon-circle episode-identification-btn" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir temporada y episodio" aria-label="Corregir identificación del episodio">✎</button>` : ''}
           ${(t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1)) ? `<button class="btn-icon-circle saga-film-btn-meta" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>` : ''}
         </div>
       </div>`;
@@ -1071,6 +1072,78 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       el.onclick = () => { const f = t.archivos.find(x => x.key === el.dataset.key); if (f) play(f); };
     });
     if (t.tipo === 'serie') {
+      container.querySelectorAll('.episode-move-btn').forEach(moveBtn => {
+        moveBtn.onclick = (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const f = t.archivos.find(x => x.key === moveBtn.dataset.key);
+          if (!f) return;
+          showMoveEpisodeModal({
+            file: f,
+            currentTitle: t,
+            allTitles: getTitles() || [],
+            esc,
+            onMoved: async ({ file, sourceTitle, targetTitle, targetSeriesId, targetSeriesName, newSeason, newEpisode }) => {
+              sourceTitle.archivos = (sourceTitle.archivos || []).filter(x => x.key !== file.key);
+              file.season = newSeason;
+              file.episode = newEpisode;
+
+              let target = targetTitle;
+              const all = getTitles() || [];
+              if (!target) {
+                target = all.find(x => String(x.id) === String(targetSeriesId) || (x.tipo === 'serie' && x.nombre?.toLowerCase().trim() === targetSeriesName.toLowerCase().trim()));
+              }
+              if (!target) {
+                target = {
+                  id: targetSeriesId || `custom_series_${Date.now()}`,
+                  tipo: 'serie',
+                  isSaga: false,
+                  nombre: targetSeriesName,
+                  grupo: sourceTitle.grupo || 'Series',
+                  channel: sourceTitle.channel,
+                  origen: sourceTitle.origen,
+                  archivos: [],
+                  ultimoMensajeFecha: file.date || Date.now(),
+                };
+                all.push(target);
+              }
+              if (target) {
+                target.archivos = target.archivos || [];
+                if (!target.archivos.some(x => x.key === file.key)) {
+                  target.archivos.push(file);
+                }
+                target.archivos.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || (a.date - b.date));
+              }
+
+              if (getTitles()) {
+                setTitles([...all]);
+                await persistMetadata?.();
+              }
+
+              if (sourceTitle.archivos.length === 0) {
+                back();
+                return;
+              }
+
+              seasonsMap.clear();
+              for (const fItem of sourceTitle.archivos) {
+                const s = Number.isInteger(fItem.season) ? fItem.season : (Number(fItem.season) || 1);
+                if (!seasonsMap.has(s)) seasonsMap.set(s, []);
+                seasonsMap.get(s).push(fItem);
+              }
+              seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
+              hasSeasons = sourceTitle.tipo === 'serie' && seasons.length > 1;
+
+              if (!seasons.includes(currentSeason)) {
+                currentSeason = seasons[0] || 1;
+              }
+              renderEpisodes(currentSeason);
+              loadSeasonMeta(currentSeason);
+            },
+          });
+        };
+      });
+
       container.querySelectorAll('.episode-identification-btn').forEach(editBtn => {
         editBtn.onclick = (e) => {
           e.stopPropagation();
