@@ -1,3 +1,4 @@
+// src/library/titles.js
 export function isExternalTitle(t) {
   return Boolean(
     t?.origen?.tipo === "externo" ||
@@ -8,7 +9,6 @@ export function isExternalTitle(t) {
   );
 }
 
-// src/library/titles.js
 /**
  * Capa de datos: convierte canales (dedicados, contenedores de año y macro) en "Títulos" unificados.
  * No toca el DOM.
