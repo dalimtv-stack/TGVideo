@@ -156,7 +156,7 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
       const renderDialogsTree = () => {
         resultContainer.innerHTML = `
           <div style="margin-bottom:1rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
-            <input type="text" id="filter-channels-input" placeholder="🔍 Filtrar canales o grupos por nombre o ID…" style="flex:1 1 300px;background:#0f172a;border:1px solid rgba(255,255,255,0.2);border-radius:6px;padding:0.55rem 0.8rem;color:#fff;font-size:0.88rem;outline:none;" />
+            <input type="text" id="filter-channels-input" data-focusable placeholder="🔍 Filtrar canales o grupos por nombre o ID…" style="flex:1 1 300px;background:#0f172a;border:1px solid rgba(255,255,255,0.2);border-radius:6px;padding:0.55rem 0.8rem;color:#fff;font-size:0.88rem;outline:none;" />
             <span style="font-size:0.82rem;color:#94a3b8;" id="filter-channels-count">${dialogs.length} disponibles</span>
           </div>
           <div class="admin-topic-tree">
@@ -408,6 +408,7 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
   const existingModal = document.querySelector('.admin-modal-overlay');
   existingModal?.remove();
 
+  const prevFocus = document.activeElement;
   const isTopic = Boolean(topic);
   const displayName = isTopic ? `${dialog.title} > ${topic.title}` : dialog.title;
   const defaultGroup = isTopic ? topic.title : dialog.title;
@@ -415,7 +416,7 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
   const overlay = document.createElement('div');
   overlay.className = 'admin-modal-overlay';
   overlay.innerHTML = `
-    <div class="admin-modal-card">
+    <div class="admin-modal-card" role="dialog" aria-modal="true" aria-label="Añadir a la biblioteca">
       <h3 style="margin:0;font-size:1.15rem;color:#fff;">Añadir a la biblioteca</h3>
       <p style="margin:0;color:#ccc;font-size:0.9rem;line-height:1.4;">
         ¿Deseas escanear e incorporar los vídeos de <strong>${esc(displayName)}</strong> como canal de la biblioteca?
@@ -423,7 +424,7 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
 
       <div class="admin-field-group">
         <label>Categoría en biblioteca:</label>
-        <select class="admin-select" id="modal-channel-category">
+        <select class="admin-select" id="modal-channel-category" data-focusable>
           <option value="Películas" selected>Películas</option>
           <option value="Series">Series</option>
           <option value="Deportes">Deportes</option>
@@ -433,7 +434,7 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
 
       <div class="admin-field-group">
         <label>Nombre / Colección en biblioteca:</label>
-        <input type="text" class="admin-input" id="modal-channel-group" value="${esc(defaultGroup)}">
+        <input type="text" class="admin-input" id="modal-channel-group" data-focusable value="${esc(defaultGroup)}">
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:0.75rem;margin-top:0.6rem;">
@@ -445,17 +446,29 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
 
   document.body.appendChild(overlay);
 
-  overlay.querySelector('#modal-cancel-btn')?.addEventListener('click', () => overlay.remove());
+  const closeModal = () => {
+    overlay.remove();
+    prevFocus?.focus?.({ preventScroll: true });
+  };
+
+  overlay.querySelector('#modal-cancel-btn')?.addEventListener('click', closeModal);
 
   overlay.querySelector('#modal-confirm-btn')?.addEventListener('click', () => {
     const category = overlay.querySelector('#modal-channel-category').value;
     const groupName = overlay.querySelector('#modal-channel-group').value.trim() || displayName;
     overlay.remove();
-    startScanWithProgress({ dialog, topic, category, groupName, client, kv, titles, onSuccess });
+    startScanWithProgress({ dialog, topic, category, groupName, client, kv, titles, onSuccess, prevFocus });
   });
+
+  // Enfocar inmediatamente el botón de confirmar para mando / Android TV
+  setTimeout(() => {
+    const firstFocus = overlay.querySelector('#modal-confirm-btn') || overlay.querySelector('[data-focusable]');
+    firstFocus?.focus?.({ preventScroll: true });
+    firstFocus?.classList?.add('dpad-focused');
+  }, 50);
 }
 
-async function startScanWithProgress({ dialog, topic, category, groupName, client, kv, titles, onSuccess }) {
+async function startScanWithProgress({ dialog, topic, category, groupName, client, kv, titles, onSuccess, prevFocus }) {
   const existingModal = document.querySelector('.admin-modal-overlay');
   existingModal?.remove();
 
@@ -496,6 +509,10 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
   const fillEl = progressOverlay.querySelector('#prog-bar-fill');
   const statusEl = progressOverlay.querySelector('#prog-status-text');
   const cancelBtn = progressOverlay.querySelector('#prog-cancel-btn');
+  setTimeout(() => {
+    cancelBtn?.focus?.({ preventScroll: true });
+    cancelBtn?.classList?.add('dpad-focused');
+  }, 50);
 
   cancelBtn?.addEventListener('click', () => {
     isCancelled = true;
@@ -655,6 +672,7 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     // Botón de finalización rápida sin demora de TMDB
     cancelBtn.textContent = 'Guardar y Finalizar (Rápido)';
     cancelBtn.className = 'btn-primary';
+    cancelBtn.setAttribute('data-focusable', '');
     cancelBtn.disabled = false;
 
     // Crear botón opcional de TMDB
@@ -663,17 +681,22 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
       tmdbBtn = document.createElement('button');
       tmdbBtn.id = 'prog-tmdb-btn';
       tmdbBtn.className = 'btn-secondary';
+      tmdbBtn.setAttribute('data-focusable', '');
       tmdbBtn.style.marginRight = '0.8rem';
       tmdbBtn.textContent = 'Identificar en TMDB (Opcional)';
       cancelBtn.parentNode.insertBefore(tmdbBtn, cancelBtn);
     }
 
-
-
     cancelBtn.onclick = () => {
       progressOverlay.remove();
+      prevFocus?.focus?.({ preventScroll: true });
       onSuccess?.();
     };
+
+    setTimeout(() => {
+      cancelBtn.focus({ preventScroll: true });
+      cancelBtn.classList.add('dpad-focused');
+    }, 50);
 
     if (tmdbBtn) {
       tmdbBtn.onclick = async () => {
@@ -772,7 +795,7 @@ export async function identifyTitlesInBulk(titlesToEnrich = [], { modalTitle = '
       <div style="background:rgba(255,255,255,0.08);height:8px;border-radius:4px;overflow:hidden;margin-bottom:1.5rem;">
         <div id="bulk-id-fill" style="background:linear-gradient(90deg, #a855f7, #38bdf8);height:100%;width:0%;transition:width 0.2s ease;"></div>
       </div>
-      <button type="button" id="bulk-id-cancel" class="btn btn-secondary" style="padding:0.5rem 1.4rem;border-radius:8px;cursor:pointer;">Cancelar</button>
+      <button type="button" id="bulk-id-cancel" data-focusable class="btn btn-secondary" style="padding:0.5rem 1.4rem;border-radius:8px;cursor:pointer;">Cancelar</button>
     </div>
   `;
   document.body.appendChild(idOverlay);
@@ -780,6 +803,10 @@ export async function identifyTitlesInBulk(titlesToEnrich = [], { modalTitle = '
   const statusEl = idOverlay.querySelector('#bulk-id-status');
   const fillEl = idOverlay.querySelector('#bulk-id-fill');
   const cancelBtn = idOverlay.querySelector('#bulk-id-cancel');
+  setTimeout(() => {
+    cancelBtn?.focus?.({ preventScroll: true });
+    cancelBtn?.classList?.add('dpad-focused');
+  }, 50);
 
   const controller = new AbortController();
   cancelBtn.onclick = () => {
@@ -993,17 +1020,17 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
             <span id="admin-ext-count-text" style="color:#94a3b8;font-size:0.85rem;"></span>
           </div>
           <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
-            <button type="button" class="btn-primary" id="admin-ext-btn-identify-all" style="padding:0.45rem 0.9rem;font-size:0.85rem;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:0.4rem;background:#9333ea;">✨ Identificar pendientes con TMDB</button>
+            <button type="button" class="btn-primary" data-focusable id="admin-ext-btn-identify-all" style="padding:0.45rem 0.9rem;font-size:0.85rem;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:0.4rem;background:#9333ea;">✨ Identificar pendientes con TMDB</button>
             <div style="display:flex;align-items:center;gap:0.4rem;">
               <label style="color:#aaa;font-size:0.85rem;">Ordenar por:</label>
-              <select class="admin-select" id="admin-ext-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
+              <select class="admin-select" data-focusable id="admin-ext-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
                 <option value="date_desc">📅 Fecha de subida (más recientes)</option>
                 <option value="date_asc">📅 Fecha de subida (más antiguos)</option>
                 <option value="name_asc">🔤 Nombre (A - Z)</option>
               </select>
             </div>
             <label style="display:inline-flex;align-items:center;gap:0.4rem;color:#e2e8f0;font-size:0.85rem;cursor:pointer;">
-              <input type="checkbox" id="admin-ext-filter-unidentified" style="cursor:pointer;" />
+              <input type="checkbox" data-focusable id="admin-ext-filter-unidentified" style="cursor:pointer;" />
               Solo no identificadas
             </label>
           </div>

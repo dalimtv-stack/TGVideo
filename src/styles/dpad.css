@@ -8,19 +8,22 @@
   outline: none;
 }
 
-.lib-card:focus .lib-card-poster {
+.lib-card:focus .lib-card-poster,
+.lib-card.dpad-focused .lib-card-poster {
   transform: scale(1.08);
   border-color: #fff;
   border-radius: 8px;
   box-shadow: 0 0 24px rgba(255, 255, 255, 0.45);
 }
 
-.profile-card:focus {
+.profile-card:focus,
+.profile-card.dpad-focused {
   outline: none;
   transform: scale(1.08);
 }
 
-.profile-card:focus .avatar {
+.profile-card:focus .avatar,
+.profile-card.dpad-focused .avatar {
   outline: 3px solid #fff;
   outline-offset: 3px;
   border-radius: 12px;
@@ -37,24 +40,35 @@
 
 .btn:focus-visible,
 .btn.dpad-focused,
+.btn:focus,
 .btn-ghost:focus-visible,
 .btn-ghost.dpad-focused,
+.btn-ghost:focus,
 .btn-icon:focus-visible,
 .btn-icon.dpad-focused,
+.btn-icon:focus,
 .logout-btn:focus-visible,
 .logout-btn.dpad-focused,
+.logout-btn:focus,
 .btn-syn-toggle:focus-visible,
-.btn-syn-toggle.dpad-focused {
-  outline: 3px solid #fff;
-  outline-offset: 2px;
+.btn-syn-toggle.dpad-focused,
+.btn-syn-toggle:focus,
+.btn-primary:focus,
+.btn-primary:focus-visible,
+.btn-primary.dpad-focused,
+.btn-secondary:focus,
+.btn-secondary:focus-visible,
+.btn-secondary.dpad-focused,
+.btn-danger:focus,
+.btn-danger:focus-visible,
+.btn-danger.dpad-focused {
+  outline: 3px solid #fff !important;
+  outline-offset: 2px !important;
   border-radius: 6px;
-  box-shadow: 0 0 16px rgba(255, 255, 255, 0.4);
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.5) !important;
 }
 
-.btn-icon-circle:focus {
-  outline: none;
-}
-
+.btn-icon-circle:focus,
 .btn-icon-circle:focus-visible,
 .btn-icon-circle.dpad-focused {
   outline: 3px solid #fff;
@@ -66,7 +80,8 @@
 }
 
 .ep:focus,
-.ep:focus-visible {
+.ep:focus-visible,
+.ep.dpad-focused {
   background: rgba(255, 255, 255, 0.22) !important;
   border-color: #fff !important;
   border-radius: 8px !important;
@@ -76,7 +91,8 @@
 }
 
 .season-btn:focus,
-.season-btn:focus-visible {
+.season-btn:focus-visible,
+.season-btn.dpad-focused {
   background: rgba(255, 255, 255, 0.3) !important;
   border-color: #fff !important;
   color: #fff !important;
@@ -95,7 +111,8 @@
   border-radius: 6px;
 }
 
-.btn-select-meta:focus {
+.btn-select-meta:focus,
+.btn-select-meta.dpad-focused {
   outline: 3px solid #fff;
   outline-offset: 2px;
   background: #fff;
@@ -119,11 +136,12 @@
   background: rgba(255, 255, 255, 0.16);
 }
 
-
 .player-next-up-play:focus,
 .player-next-up-play:focus-visible,
+.player-next-up-play.dpad-focused,
 .player-next-up-cancel:focus,
-.player-next-up-cancel:focus-visible {
+.player-next-up-cancel:focus-visible,
+.player-next-up-cancel.dpad-focused {
   outline: 3px solid #fff !important;
   outline-offset: 2px !important;
   border-radius: 4px !important;

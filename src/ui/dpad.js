@@ -27,9 +27,9 @@ export function handleBack() {
   }
 
   // 0.1 Modales de administración o diálogos
-  const adminModal = document.querySelector('.admin-modal-overlay');
+  const adminModal = document.querySelector('.admin-modal-overlay, .modal-overlay');
   if (adminModal) {
-    const cancelBtn = adminModal.querySelector('#modal-cancel-btn, #reupload-cancel, .btn-secondary');
+    const cancelBtn = adminModal.querySelector('#modal-cancel-btn, #reupload-cancel, #bulk-id-cancel, #prog-cancel-btn, .btn-secondary, button');
     if (cancelBtn) cancelBtn.click();
     else adminModal.remove();
     return true;
@@ -145,10 +145,21 @@ function focusAndReveal(el) {
 
 function move(dir) {
   // Si hay un modal abierto, limitar la navegación a los elementos dentro del modal
-  const modalEl = document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up, .carousel-trailer-modal');
+  const modalEl = document.querySelector('.admin-modal-overlay, .modal-overlay, .settings-overlay, .player-tracks-overlay, .player-next-up, .carousel-trailer-modal');
   const scope = modalEl || document;
   const items = [...scope.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
   if (!items.length) return;
+
+  // Si hay un modal abierto y el foco no está dentro del modal, capturarlo de inmediato
+  if (modalEl && (!document.activeElement || !modalEl.contains(document.activeElement))) {
+    const firstModal = items[0] || modalEl.querySelector('button, input, select');
+    if (firstModal) {
+      firstModal.focus({ preventScroll: true });
+      firstModal.classList.add('dpad-focused');
+      firstModal.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      return;
+    }
+  }
 
   const cur = document.activeElement && scope.contains(document.activeElement) ? document.activeElement : null;
   if (!cur) {
@@ -1044,6 +1055,99 @@ function move(dir) {
     }
   }
 
+  // 3.8 Navegación dedicada para el Panel de Administración (.admin-screen)
+  const adminScreen = cur.closest('.admin-screen');
+  if (adminScreen && !modalEl) {
+    const backBtn = adminScreen.querySelector('#admin-btn-back');
+    const sidebar = adminScreen.querySelector('.admin-sidebar');
+    const mainPanel = adminScreen.querySelector('.admin-main');
+
+    // Botón Volver del Admin (#admin-btn-back)
+    if (cur === backBtn) {
+      if (dir === 'down') {
+        const activeTab = sidebar?.querySelector('.admin-tab-btn.is-active[data-focusable]') || sidebar?.querySelector('.admin-tab-btn[data-focusable]');
+        if (activeTab) {
+          activeTab.focus({ preventScroll: true });
+          activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      if (dir === 'right') {
+        const firstMain = mainPanel ? [...mainPanel.querySelectorAll('[data-focusable]')].find(e => e.offsetParent && !e.disabled) : null;
+        if (firstMain) {
+          firstMain.focus({ preventScroll: true });
+          firstMain.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+      return;
+    }
+
+    // Pestañas laterales del Admin (.admin-sidebar)
+    if (sidebar && sidebar.contains(cur)) {
+      const tabs = [...sidebar.querySelectorAll('.admin-tab-btn[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+      const tabIdx = tabs.indexOf(cur);
+
+      if (dir === 'up') {
+        if (tabIdx > 0) {
+          tabs[tabIdx - 1].focus({ preventScroll: true });
+          tabs[tabIdx - 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        } else if (backBtn) {
+          backBtn.focus({ preventScroll: true });
+          backBtn.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+
+      if (dir === 'down') {
+        if (tabIdx !== -1 && tabIdx < tabs.length - 1) {
+          tabs[tabIdx + 1].focus({ preventScroll: true });
+          tabs[tabIdx + 1].scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+
+      if (dir === 'right') {
+        const mainItems = mainPanel ? [...mainPanel.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled) : [];
+        if (mainItems.length) {
+          const curRect = cur.getBoundingClientRect();
+          const target = mainItems.reduce((best, item) => {
+            const r = item.getBoundingClientRect();
+            const dist = Math.abs((r.top + r.height / 2) - (curRect.top + curRect.height / 2));
+            return !best || dist < best.dist ? { item, dist } : best;
+          }, null)?.item || mainItems[0];
+          target?.focus({ preventScroll: true });
+          target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+
+      return;
+    }
+
+    // Dentro del panel principal (.admin-main)
+    if (mainPanel && mainPanel.contains(cur)) {
+      if (dir === 'left') {
+        const curRect = cur.getBoundingClientRect();
+        const mainItems = [...mainPanel.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+        const hasLeftSibling = mainItems.some(el => {
+          if (el === cur) return false;
+          const r = el.getBoundingClientRect();
+          return r.right <= curRect.left + 15 && Math.abs((r.top + r.height / 2) - (curRect.top + curRect.height / 2)) < curRect.height * 0.8;
+        });
+
+        if (!hasLeftSibling) {
+          const activeTab = sidebar?.querySelector('.admin-tab-btn.is-active[data-focusable]') || sidebar?.querySelector('.admin-tab-btn[data-focusable]');
+          if (activeTab) {
+            activeTab.focus({ preventScroll: true });
+            activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+            return;
+          }
+        }
+      }
+    }
+  }
+
   // 4. Navegación espacial general para modales y formularios
   const curRect = cur.getBoundingClientRect();
   const c = { x: curRect.left + curRect.width / 2, y: curRect.top + curRect.height / 2 };
@@ -1093,6 +1197,14 @@ function move(dir) {
 export function initDpad() {
   if (initialized) return;
   initialized = true;
+
+  // Sincronizar foco TV con clase dpad-focused
+  document.addEventListener('focusin', (e) => {
+    e.target?.classList?.add('dpad-focused');
+  });
+  document.addEventListener('focusout', (e) => {
+    e.target?.classList?.remove('dpad-focused');
+  });
 
   // Integración con botón físico Atrás de Android / Fire TV vía Capacitor
   try {
@@ -1271,7 +1383,7 @@ export function initDpad() {
           if (submitBtn) submitBtn.click();
           else form.requestSubmit?.();
         }
-      } else if (document.activeElement?.hasAttribute('data-focusable')) {
+      } else if (document.activeElement?.hasAttribute('data-focusable') || document.activeElement?.getAttribute('role') === 'button') {
         e.preventDefault();
         document.activeElement.click();
       }

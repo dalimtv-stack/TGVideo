@@ -232,18 +232,18 @@ async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
           <strong style="color:#38bdf8;font-size:1.05rem;">${esc(file.name)}</strong>
           <div style="color:#aaa;font-size:0.85rem;margin-top:0.2rem;">Tamaño: ${formatBytes(file.size)}</div>
         </div>
-        <button class="btn-secondary admin-btn-sm" id="btn-change-file">Cambiar selección</button>
+        <button class="btn-secondary admin-btn-sm" data-focusable id="btn-change-file">Cambiar selección</button>
       </div>
 
       <div class="admin-field-group">
         <label>Buscar e identificar en TMDB:</label>
         <div style="display:flex;gap:0.6rem;">
-          <select class="admin-select" id="upload-tmdb-type" style="width:140px;flex:0 0 auto;">
+          <select class="admin-select" data-focusable id="upload-tmdb-type" style="width:140px;flex:0 0 auto;">
             <option value="movie" ${!isEp ? 'selected' : ''}>Película</option>
             <option value="tv" ${isEp ? 'selected' : ''}>Serie / TV</option>
             <option value="collection">Colección</option>
           </select>
-          <input type="text" class="admin-input" id="upload-tmdb-query" value="${esc(cleanName)}" placeholder="Título o ID de TMDB (ej. Matrix o 603)" />
+          <input type="text" class="admin-input" data-focusable id="upload-tmdb-query" value="${esc(cleanName)}" placeholder="Título o ID de TMDB (ej. Matrix o 603)" />
           <button class="btn-primary" data-focusable id="btn-run-tmdb-search" style="flex:0 0 auto;">Buscar</button>
         </div>
       </div>
@@ -253,18 +253,18 @@ async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
       <div class="admin-grid-2col">
         <div class="admin-field-group">
           <label>ID de TMDB:</label>
-          <input type="text" class="admin-input" id="meta-tmdb-id" placeholder="Ej. 603" />
+          <input type="text" class="admin-input" data-focusable id="meta-tmdb-id" placeholder="Ej. 603" />
         </div>
         <div class="admin-field-group">
           <label>Puntuación TMDB (0 - 10):</label>
-          <input type="number" step="0.1" class="admin-input" id="meta-rating" placeholder="Ej. 8.2" />
+          <input type="number" step="0.1" class="admin-input" data-focusable id="meta-rating" placeholder="Ej. 8.2" />
         </div>
       </div>
 
       <div class="admin-grid-2col">
         <div class="admin-field-group">
           <label>Clasificación por edad:</label>
-          <select class="admin-select" id="meta-age-rating">
+          <select class="admin-select" data-focusable id="meta-age-rating">
             <option value="APTA">APTA (Todos los públicos)</option>
             <option value="7">+7 años</option>
             <option value="12" selected>+12 años</option>
@@ -274,22 +274,22 @@ async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
         </div>
         <div class="admin-field-group">
           <label>Temporada / Episodio (si es serie):</label>
-          <input type="text" class="admin-input" id="meta-episode" value="${isEp ? `T${epDetected.season}·E${String(epDetected.episode).padStart(2, '0')}` : ''}" placeholder="Ej. T1·E01 o 1x01" />
+          <input type="text" class="admin-input" data-focusable id="meta-episode" value="${isEp ? `T${epDetected.season}·E${String(epDetected.episode).padStart(2, '0')}` : ''}" placeholder="Ej. T1·E01 o 1x01" />
         </div>
       </div>
 
       <div class="admin-field-group">
         <label>Nombre final del archivo que verá Telegram:</label>
-        <input type="text" class="admin-input" id="meta-final-filename" value="${esc(detectedYear ? `${cleanName} (${detectedYear})${fileExt}` : file.name)}" />
+        <input type="text" class="admin-input" data-focusable id="meta-final-filename" value="${esc(detectedYear ? `${cleanName} (${detectedYear})${fileExt}` : file.name)}" />
       </div>
       <div class="admin-field-group">
         <label>Sinopsis:</label>
-        <textarea class="admin-textarea" id="meta-synopsis" rows="3" placeholder="Sinopsis del título…"></textarea>
+        <textarea class="admin-textarea" data-focusable id="meta-synopsis" rows="3" placeholder="Sinopsis del título…"></textarea>
       </div>
 
       <div class="admin-field-group">
         <label>Canal tgstorage de destino:</label>
-        <select class="admin-select" id="upload-target-channel">
+        <select class="admin-select" data-focusable id="upload-target-channel">
           <option value="">Cargando canales tgstorage…</option>
         </select>
       </div>
@@ -360,18 +360,18 @@ async function renderMultiFileUploadForm({ workspace, files, client, tg }) {
           <strong style="color:#38bdf8;font-size:1.05rem;">${files.length} archivos seleccionados</strong>
           <div style="color:#aaa;font-size:0.85rem;margin-top:0.2rem;">Tamaño total: ${formatBytes(totalSize)}</div>
         </div>
-        <button class="btn-secondary admin-btn-sm" id="btn-change-file">Cambiar selección</button>
+        <button class="btn-secondary admin-btn-sm" data-focusable id="btn-change-file">Cambiar selección</button>
       </div>
 
       <div class="admin-field-group">
         <label>Buscar serie o título en TMDB para todos los archivos:</label>
         <div style="display:flex;gap:0.6rem;">
-          <select class="admin-select" id="upload-tmdb-type" style="width:140px;flex:0 0 auto;">
+          <select class="admin-select" data-focusable id="upload-tmdb-type" style="width:140px;flex:0 0 auto;">
             <option value="tv" selected>Serie / TV</option>
             <option value="movie">Película</option>
             <option value="collection">Colección</option>
           </select>
-          <input type="text" class="admin-input" id="upload-tmdb-query" value="${esc(cleanName)}" placeholder="Título de la serie en TMDB" />
+          <input type="text" class="admin-input" data-focusable id="upload-tmdb-query" value="${esc(cleanName)}" placeholder="Título de la serie en TMDB" />
           <button class="btn-primary" data-focusable id="btn-run-tmdb-search" style="flex:0 0 auto;">Buscar</button>
         </div>
       </div>
@@ -381,18 +381,18 @@ async function renderMultiFileUploadForm({ workspace, files, client, tg }) {
       <div class="admin-grid-2col">
         <div class="admin-field-group">
           <label>ID de TMDB común:</label>
-          <input type="text" class="admin-input" id="meta-tmdb-id" placeholder="Ej. 1399 (Game of Thrones)" />
+          <input type="text" class="admin-input" data-focusable id="meta-tmdb-id" placeholder="Ej. 1399 (Game of Thrones)" />
         </div>
         <div class="admin-field-group">
           <label>Puntuación TMDB (0 - 10):</label>
-          <input type="number" step="0.1" class="admin-input" id="meta-rating" placeholder="Ej. 8.4" />
+          <input type="number" step="0.1" class="admin-input" data-focusable id="meta-rating" placeholder="Ej. 8.4" />
         </div>
       </div>
 
       <div class="admin-grid-2col">
         <div class="admin-field-group">
           <label>Clasificación por edad:</label>
-          <select class="admin-select" id="meta-age-rating">
+          <select class="admin-select" data-focusable id="meta-age-rating">
             <option value="APTA">APTA (Todos los públicos)</option>
             <option value="7">+7 años</option>
             <option value="12">+12 años</option>
@@ -402,18 +402,18 @@ async function renderMultiFileUploadForm({ workspace, files, client, tg }) {
         </div>
         <div class="admin-field-group">
           <label>Temporada común (si aplica):</label>
-          <input type="number" class="admin-input" id="meta-default-season" value="1" min="1" />
+          <input type="number" class="admin-input" data-focusable id="meta-default-season" value="1" min="1" />
         </div>
       </div>
 
       <div class="admin-field-group">
         <label>Sinopsis común:</label>
-        <textarea class="admin-textarea" id="meta-synopsis" rows="2" placeholder="Sinopsis general de la serie…"></textarea>
+        <textarea class="admin-textarea" data-focusable id="meta-synopsis" rows="2" placeholder="Sinopsis general de la serie…"></textarea>
       </div>
 
       <div class="admin-field-group">
         <label>Canal tgstorage de destino:</label>
-        <select class="admin-select" id="upload-target-channel">
+        <select class="admin-select" data-focusable id="upload-target-channel">
           <option value="">Cargando canales tgstorage…</option>
         </select>
       </div>
@@ -531,7 +531,7 @@ function setupTmdbSearch(initialQuery) {
             const poster = item.poster || (item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : '');
             const rating = Number(item.rating || item.vote_average || 0);
             return `
-              <div class="tmdb-search-item" data-id="${item.id}" data-title="${esc(title)}" data-year="${esc(year)}" data-overview="${esc(item.overview || '')}" data-vote="${rating > 0 ? rating.toFixed(1) : ''}" style="display:flex;align-items:center;gap:0.8rem;padding:0.4rem;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;">
+              <div class="tmdb-search-item" data-focusable tabindex="0" role="button" data-id="${item.id}" data-title="${esc(title)}" data-year="${esc(year)}" data-overview="${esc(item.overview || '')}" data-vote="${rating > 0 ? rating.toFixed(1) : ''}" style="display:flex;align-items:center;gap:0.8rem;padding:0.4rem;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;">
                 ${poster ? `<img src="${poster}" style="width:36px;height:52px;object-fit:cover;border-radius:4px;" />` : '<div style="width:36px;height:52px;background:#333;border-radius:4px;"></div>'}
                 <div style="flex:1;">
                   <strong style="color:#fff;font-size:0.9rem;">${esc(title)}</strong>
@@ -544,7 +544,7 @@ function setupTmdbSearch(initialQuery) {
       `;
 
       resultsDiv.querySelectorAll('.tmdb-search-item').forEach(el => {
-        el.addEventListener('click', () => {
+        const chooseItem = () => {
           const id = el.dataset.id;
           const title = el.dataset.title;
           const year = el.dataset.year;
@@ -569,6 +569,13 @@ function setupTmdbSearch(initialQuery) {
           if (queryInput) queryInput.value = title;
 
           resultsDiv.style.display = 'none';
+        };
+        el.addEventListener('click', chooseItem);
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 23) {
+            e.preventDefault();
+            chooseItem();
+          }
         });
       });
     }

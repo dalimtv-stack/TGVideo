@@ -51,13 +51,26 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
       }
       const selected = new Set();
       const total = [...byChannel.values()].reduce((sum, files) => sum + files.length, 0);
-      container.innerHTML = `<p style="color:#aaa;margin-bottom:1rem;">${total} vídeos reenviados en ${byChannel.size} canales tgstorage.</p><div class="admin-accordion-list">${[...byChannel.entries()].map(([name, files], idx) => `<div class="admin-accordion-item"><div class="admin-accordion-header" data-idx="${idx}"><div style="display:flex;align-items:center;gap:.75rem"><input type="checkbox" class="forwarded-channel-check" data-channel="${esc(name)}"><strong>${esc(name)}</strong><span>${files.length} vídeos</span></div><span>▼</span></div><div class="admin-accordion-content" id="forwarded-list-${idx}" style="display:none">${files.map(file => `<div class="admin-video-row"><div class="admin-video-info"><input type="checkbox" class="forwarded-file-check" data-channel="${esc(name)}" data-key="${esc(file.key)}"><span>${esc(file.filename)}</span></div><span>${formatBytes(file.size)}</span></div>`).join('')}</div></div>`).join('')}</div><div class="admin-sticky-bar" id="forwarded-actions" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(18,18,18,.97);padding:.9rem 1.6rem;justify-content:space-between;align-items:center"><span id="forwarded-count">0 seleccionados</span><div style="display:flex;gap:.75rem"><button class="btn-secondary" id="btn-download-forwarded">Descargar</button><button class="btn-primary" id="btn-reupload-forwarded">Resubir</button></div></div>`;
+      container.innerHTML = `<p style="color:#aaa;margin-bottom:1rem;">${total} vídeos reenviados en ${byChannel.size} canales tgstorage.</p><div class="admin-accordion-list">${[...byChannel.entries()].map(([name, files], idx) => `<div class="admin-accordion-item"><div class="admin-accordion-header" data-focusable tabindex="0" role="button" data-idx="${idx}"><div style="display:flex;align-items:center;gap:.75rem"><input type="checkbox" class="forwarded-channel-check" data-focusable data-channel="${esc(name)}"><strong>${esc(name)}</strong><span>${files.length} vídeos</span></div><span>▼</span></div><div class="admin-accordion-content" id="forwarded-list-${idx}" style="display:none">${files.map(file => `<div class="admin-video-row"><div class="admin-video-info"><input type="checkbox" class="forwarded-file-check" data-focusable data-channel="${esc(name)}" data-key="${esc(file.key)}"><span>${esc(file.filename)}</span></div><span>${formatBytes(file.size)}</span></div>`).join('')}</div></div>`).join('')}</div><div class="admin-sticky-bar" id="forwarded-actions" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(18,18,18,.97);padding:.9rem 1.6rem;justify-content:space-between;align-items:center"><span id="forwarded-count">0 seleccionados</span><div style="display:flex;gap:.75rem"><button class="btn-secondary" data-focusable id="btn-download-forwarded">Descargar</button><button class="btn-primary" data-focusable id="btn-reupload-forwarded">Resubir</button></div></div>`;
       const actions = document.getElementById('forwarded-actions');
       const update = () => { actions.style.display = selected.size ? 'flex' : 'none'; document.getElementById('forwarded-count').textContent = `${selected.size} seleccionados`; };
-      container.querySelectorAll('.admin-accordion-header').forEach(header => header.addEventListener('click', e => {
-        if (e.target.closest('input')) return;
-        const body = document.getElementById(`forwarded-list-${header.dataset.idx}`); body.style.display = body.style.display === 'none' ? 'flex' : 'none';
-      }));
+      container.querySelectorAll('.admin-accordion-header').forEach(header => {
+        const toggle = () => {
+          const body = document.getElementById(`forwarded-list-${header.dataset.idx}`);
+          if (body) body.style.display = body.style.display === 'none' ? 'flex' : 'none';
+        };
+        header.addEventListener('click', e => {
+          if (e.target.closest('input')) return;
+          toggle();
+        });
+        header.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 23) {
+            if (e.target.closest('input')) return;
+            e.preventDefault();
+            toggle();
+          }
+        });
+      });
       container.querySelectorAll('.forwarded-file-check').forEach(box => box.addEventListener('change', () => {
         box.checked ? selected.add(box.dataset.key) : selected.delete(box.dataset.key); update();
         const channelBox = container.querySelector(`.forwarded-channel-check[data-channel="${CSS.escape(box.dataset.channel)}"]`);
@@ -103,12 +116,18 @@ function showRenameAndReupload(selected, byChannel, client) {
   const entries = selectedEntries(selected, byChannel);
   if (!entries.length) return;
   const overlay = document.createElement('div'); overlay.className = 'admin-modal-overlay';
-  overlay.innerHTML = `<div class="admin-modal-card"><h3>Renombrar y resubir</h3><p>Revisa el nombre final de cada archivo antes de enviarlo al mismo canal tgstorage.</p><div class="admin-reupload-name-list" style="max-height:45vh;overflow:auto">${entries.map((item, i) => `<label class="admin-field-group"><span>${esc(item.filename)} · ${formatBytes(item.size)}</span><input class="admin-input" data-index="${i}" value="${esc(item.filename)}"></label>`).join('')}</div><label style="display:flex;gap:.5rem;align-items:center"><input type="checkbox" id="admin-premium-check"> Soy usuario Premium (permite archivos de hasta 4 GB)</label><p id="admin-reupload-limit" style="color:#fbbf24"></p><div style="display:flex;justify-content:flex-end;gap:.75rem"><button class="btn-secondary" id="reupload-cancel">Cancelar</button><button class="btn-primary" id="reupload-confirm">Comenzar resubida</button></div></div>`;
+  overlay.innerHTML = `<div class="admin-modal-card"><h3>Renombrar y resubir</h3><p>Revisa el nombre final de cada archivo antes de enviarlo al mismo canal tgstorage.</p><div class="admin-reupload-name-list" style="max-height:45vh;overflow:auto">${entries.map((item, i) => `<label class="admin-field-group"><span>${esc(item.filename)} · ${formatBytes(item.size)}</span><input class="admin-input" data-focusable data-index="${i}" value="${esc(item.filename)}"></label>`).join('')}</div><label style="display:flex;gap:.5rem;align-items:center"><input type="checkbox" data-focusable id="admin-premium-check"> Soy usuario Premium (permite archivos de hasta 4 GB)</label><p id="admin-reupload-limit" style="color:#fbbf24"></p><div style="display:flex;justify-content:flex-end;gap:.75rem"><button class="btn-secondary" data-focusable id="reupload-cancel">Cancelar</button><button class="btn-primary" data-focusable id="reupload-confirm">Comenzar resubida</button></div></div>`;
   document.body.appendChild(overlay);
+  const prevFocus = document.activeElement;
+  setTimeout(() => {
+    const confirmBtn = overlay.querySelector('#reupload-confirm');
+    confirmBtn?.focus({ preventScroll: true });
+    confirmBtn?.classList.add('dpad-focused');
+  }, 50);
   const premium = overlay.querySelector('#admin-premium-check');
   const updateLimit = () => { const max = premium.checked ? 4 * 1024 ** 3 : 2 * 1024 ** 3; const excluded = entries.filter(x => x.size > max).length; overlay.querySelector('#admin-reupload-limit').textContent = excluded ? `${excluded} archivo(s) exceden el límite actual y se omitirán.` : 'Todos los archivos cumplen el límite.'; };
   premium.addEventListener('change', updateLimit); updateLimit();
-  overlay.querySelector('#reupload-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#reupload-cancel').addEventListener('click', () => { overlay.remove(); prevFocus?.focus?.({ preventScroll: true }); });
   overlay.querySelector('#reupload-confirm').addEventListener('click', async () => {
     const maxBytes = premium.checked ? 4 * 1024 ** 3 : 2 * 1024 ** 3;
     const queue = entries.map((item, i) => ({ ...item, newName: overlay.querySelector(`input[data-index="${i}"]`).value.trim() || item.filename })).filter(item => item.size <= maxBytes);
