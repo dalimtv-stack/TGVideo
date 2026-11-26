@@ -36,15 +36,22 @@ export function parseChannelTitle(title) {
 
   const body = rawTitle.replace(TGSTORAGE_SUFFIX_RE, '').trim();
   const parts = body.split(SEP_RE);
-  if (parts.length < 2) return null;
+  if (parts.length === 0) return null;
 
-  const category = normalizeCategory(parts[parts.length - 1]);
+  let category = '';
+  let head = '';
+  if (parts.length === 1) {
+    category = normalizeCategory(parts[0]);
+    head = category;
+  } else {
+    category = normalizeCategory(parts[parts.length - 1]);
+    head = parts.slice(0, -1).join('::');
+  }
+
   if (!VALID_CATEGORIES.includes(category.toLowerCase()) &&
       !['Series', 'Películas', 'Deportes', 'Música'].includes(category)) {
     return null;
   }
-
-  const head = parts.slice(0, -1).join('::');
 
   // Macro o Contenedor directo sin TSEP: Grupo::Categoría::tgstorage (ej. HBO::Series::tgstorage)
   if (!head.includes(TSEP)) {

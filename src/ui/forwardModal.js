@@ -29,32 +29,48 @@ async function resolvePeer(client, tg, target) {
     return target;
   }
   if (target.entity) return target.entity;
-  if (tg?.peerOf && typeof target === 'object' && (target.accessHash || target.hash)) {
+
+  let rawId = String(typeof target === 'object' ? (target.tgChannelId || target.channelId || target.id || '') : target).split('_top_')[0].trim();
+  const cleanId = rawId.replace(/^ext-/, '').trim();
+  if (!cleanId) throw new Error('ID de canal no válido');
+
+  const accessHash = typeof target === 'object' ? (target.accessHash || target.hash) : null;
+  if (tg?.peerOf && accessHash) {
     try {
-      const p = tg.peerOf(target);
+      const p = tg.peerOf({
+        ...target,
+        id: cleanId.replace(/^-100/, '').replace(/^-/, ''),
+        accessHash,
+      });
       if (p) return p;
     } catch (_) {}
   }
-  const rawId = String(typeof target === 'object' ? (target.tgChannelId || target.channelId || target.id || '') : target).split('_top_')[0].trim();
-  if (!rawId) throw new Error('ID de canal no válido');
 
   if (client?.getInputEntity) {
+    const numOnly = cleanId.replace(/^-?100/, '').replace(/^-/, '');
     try {
-      return await client.getInputEntity(rawId);
-    } catch (_) {
-      try {
-        const clean = rawId.replace(/^-100/, '').replace(/^-/, '');
-        return await client.getInputEntity(`-100${clean}`);
-      } catch (err) {
-        if (tg?.peerOf) {
-          const clean = rawId.replace(/^-100/, '').replace(/^-/, '');
-          return tg.peerOf({ id: clean, accessHash: typeof target === 'object' ? (target.accessHash || target.hash) : '0' });
-        }
-        throw new Error(`No se pudo resolver el canal en Telegram: ${err.message || String(err)}`);
-      }
-    }
+      return await client.getInputEntity(`-100${numOnly}`);
+    } catch (_) {}
+    try {
+      return await client.getInputEntity(cleanId);
+    } catch (_) {}
+    try {
+      return await client.getInputEntity(BigInt(`-100${numOnly}`));
+    } catch (_) {}
+    try {
+      return await client.getInputEntity(Number(numOnly));
+    } catch (_) {}
   }
-  throw new Error('Cliente Telegram no disponible para resolver el canal');
+
+  if (tg?.peerOf) {
+    const numOnly = cleanId.replace(/^-?100/, '').replace(/^-/, '');
+    return tg.peerOf({
+      id: numOnly,
+      accessHash: typeof target === 'object' ? (target.accessHash || target.hash || '0') : '0',
+    });
+  }
+
+  throw new Error(`No se pudo resolver el canal en Telegram (${cleanId})`);
 }
 
 function ensureProgressBar() {
@@ -288,18 +304,20 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
   // Ordenar episodios
   allFiles.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
 
-  // Agrupar temporadas
+  // Agrupar temporadas (solo para series, sin mutar películas)
   const seasonsMap = new Map();
-  for (const f of allFiles) {
-    let s = Number(f.season);
-    if (!Number.isFinite(s) || s <= 0) {
-      const parsed = parseEpisode(f.captionFileName || f.fileName || '');
-      s = parsed.season || 1;
-      f.season = s;
-      if (!f.episode) f.episode = parsed.episode || 1;
+  if (isSerie) {
+    for (const f of allFiles) {
+      let s = Number(f.season);
+      if (!Number.isFinite(s) || s <= 0) {
+        const parsed = parseEpisode(f.captionFileName || f.fileName || '');
+        s = parsed.season || 1;
+        f.season = s;
+        if (!f.episode) f.episode = parsed.episode || 1;
+      }
+      if (!seasonsMap.has(s)) seasonsMap.set(s, []);
+      seasonsMap.get(s).push(f);
     }
-    if (!seasonsMap.has(s)) seasonsMap.set(s, []);
-    seasonsMap.get(s).push(f);
   }
   const seasonNumbers = Array.from(seasonsMap.keys()).sort((a, b) => a - b);
 
@@ -409,9 +427,15 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
           Canal destino (tgstorage):
         </label>
         <select id="channel-target-select" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; padding: 0.6rem 0.75rem; color: #fff; font-size: 0.9rem; outline: none; box-sizing: border-box;">
-          ${tgStorageChannels.map(ch => `
-            <option value="${esc(ch.id)}">${ch.id === (isSerie ? tgStorageChannels.find(c => c.category === 'Series')?.id : tgStorageChannels.find(c => c.category === 'Películas')?.id) ? '⭐ ' : ''}[${esc(ch.category || 'General')}] ${esc(ch.title || ch.name)}</option>
-          `).join('')}
+          ${(() => {
+            const preferredCh = isSerie
+              ? (tgStorageChannels.find(c => c.category === 'Series') || tgStorageChannels[0])
+              : (tgStorageChannels.find(c => c.category === 'Películas') || tgStorageChannels[0]);
+            return tgStorageChannels.map(ch => {
+              const isMatch = String(ch.id) === String(preferredCh?.id);
+              return `<option value="${esc(ch.id)}" ${isMatch ? 'selected' : ''}>${isMatch ? '⭐ ' : ''}[${esc(ch.category || 'General')}] ${esc(ch.title || ch.name)}</option>`;
+            }).join('');
+          })()}
         </select>
       </div>
 
@@ -558,6 +582,11 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     }
 
     const isBatchMulti = filesToSend.length > 1;
+    const seriesInput = modalOverlay.querySelector('#target-seriesname-input');
+    const sBaseName = seriesInput?.value?.trim() || uploadJobTitle || seriesBaseName;
+    const filenameInput = modalOverlay.querySelector('#target-filename-input');
+    const filename = filenameInput?.value?.trim() || defaultFilename;
+
     closeModal();
 
     const bar = ensureProgressBar();
@@ -719,9 +748,6 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
       }
     } else {
       // --- ENVÍO DE ARCHIVO INDIVIDUAL ---
-      const filenameInput = modalOverlay.querySelector('#target-filename-input');
-      const filename = filenameInput?.value?.trim() || defaultFilename;
-
       const taskId = startUploadTask(`${isFastUpload ? '⚡ Subida rápida' : '🔄 Resubida completa'}: ${filename}`, `Conectando con canal destino "${targetChannelName}"…`, 15);
       setProgressBar(bar, {
         id: taskId,
@@ -732,10 +758,14 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
 
       try {
         const curTargetFile = filesToSend[0] || file;
-        const sourcePeer = await resolvePeer(client, tg, curTargetFile.channel || curTargetFile.channelId || file.channel || file.channelId);
+        const sourceCandidate = curTargetFile.channel || curTargetFile.channelId || effectiveTitle?.channel || effectiveTitle?.origen?.channelId || file.channel || file.channelId;
+        const sourcePeer = await resolvePeer(client, tg, sourceCandidate);
         const targetPeer = await resolvePeer(client, tg, targetChannel || targetChannelId);
 
-        const [msg] = await client.getMessages(sourcePeer, { ids: [curTargetFile.messageId] });
+        const msgId = Number(curTargetFile.messageId || file.messageId);
+        if (!msgId) throw new Error('ID de mensaje no válido para el archivo');
+
+        const [msg] = await client.getMessages(sourcePeer, { ids: [msgId] });
         if (!msg || !msg.media) {
           throw new Error('No se pudo encontrar el mensaje original en Telegram.');
         }
@@ -896,6 +926,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
           percent: 0,
           error: true,
         });
+        alert(`Error al enviar "${filename}" a tgstorage: ${err.message || String(err)}`);
       }
     }
   });

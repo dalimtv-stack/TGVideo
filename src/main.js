@@ -1053,8 +1053,9 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     };
   });
   document.querySelectorAll('#app .category-grid .lib-card[data-title]').forEach(card => {
+    const t = titles.find(x => String(x.id) === String(card.dataset.title));
+    if (t) card._titleData = t;
     card.onclick = () => {
-      const t = titles.find(x => String(x.id) === String(card.dataset.title));
       if (t) libraryViews.showDetail(tg, sync, profile, t);
     };
   });
@@ -1078,8 +1079,9 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
           const range = document.createRange();
           const frag = range.createContextualFragment(nextBatch.map(t => cardHtml(t, progress)).join(''));
           frag.querySelectorAll('.lib-card[data-title]').forEach(card => {
+            const t = titles.find(x => String(x.id) === String(card.dataset.title));
+            if (t) card._titleData = t;
             card.onclick = () => {
-              const t = titles.find(x => String(x.id) === String(card.dataset.title));
               if (t) libraryViews.showDetail(tg, sync, profile, t);
             };
           });
@@ -1096,8 +1098,9 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
   document.querySelectorAll('#app .row').forEach(rowEl => {
     const rowId = rowEl.dataset.rowId;
     rowEl.querySelectorAll('.lib-card[data-title]').forEach((card, idx) => {
+      const t = titles.find(x => String(x.id) === String(card.dataset.title));
+      if (t) card._titleData = t;
       card.onclick = () => {
-        const t = titles.find(x => String(x.id) === String(card.dataset.title));
         if (t) libraryViews.showDetail(tg, sync, profile, t, { fromRowId: rowId, fromCardIndex: idx + 1 });
       };
     });

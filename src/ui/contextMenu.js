@@ -323,7 +323,7 @@ export function initContextMenu(config) {
 
   document.addEventListener('contextmenu', (e) => {
     const epEl = e.target.closest('.ep');
-    const cardEl = e.target.closest('.lib-card');
+    const cardEl = e.target.closest('.lib-card, .carousel-item');
     const adminRow = e.target.closest('.admin-video-row');
     const detailEl = e.target.closest('.detail');
 
@@ -363,7 +363,15 @@ export function initContextMenu(config) {
       }
     } else if (cardEl) {
       const titleId = cardEl.dataset.title;
-      const t = allTitles.find(x => String(x.id) === String(titleId)) || cardEl._titleData;
+      let t = (titleId ? allTitles.find(x => String(x.id) === String(titleId)) : null) || cardEl._titleData;
+      if (!t && titleId) {
+        t = allTitles.find(x => x.archivos?.some(f => f.key === titleId || `${f.channelId || f.channel?.id}:${f.messageId}` === titleId || String(f.messageId) === String(titleId)));
+      }
+      if (!t && titleId && String(titleId).includes(':')) {
+        const parts = String(titleId).split(':');
+        const mId = parts[parts.length - 1];
+        t = allTitles.find(x => x.archivos?.some(f => String(f.messageId) === String(mId)));
+      }
       if (t && t.archivos && t.archivos.length > 0) {
         // En tarjetas tomamos el primer archivo (o película principal)
         targetFile = t.archivos[0];
@@ -392,6 +400,11 @@ export function initContextMenu(config) {
         targetTitle = dt;
         titleName = dt.nombre;
       }
+    }
+
+    if (targetFile && targetTitle) {
+      if (!targetFile.channel && targetTitle.channel) targetFile.channel = targetTitle.channel;
+      if (!targetFile.channelId) targetFile.channelId = targetTitle.channel?.id || targetTitle.origen?.channelId;
     }
 
     if (!targetFile || !targetFile.messageId) return;
@@ -564,6 +577,7 @@ export function initContextMenu(config) {
       const currentClient = currentConfig.client || currentTg?.getClient?.() || (typeof window !== 'undefined' && window.tg?.getClient?.());
       showForwardModal(currentClient, currentTg, targetFile, currentConfig.getChannels, targetTitle, currentConfig.getTitles).catch(err => {
         console.error('[contextMenu] Error en showForwardModal:', err);
+        alert('Error al abrir envío a tgstorage: ' + (err.message || String(err)));
       });
     });
 
