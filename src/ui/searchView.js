@@ -17,6 +17,8 @@ function haystack(t) {
     t.nombre, m.name, m.title, m.original_title, m.year, t.year,
     m.director, Array.isArray(m.cast) ? m.cast.join(' ') : m.cast, m.casting,
     t.grupo, t.categoria,
+    // Nombres de archivo: permiten encontrar el título aunque su nombre visible venga mal del caption
+    ...(Array.isArray(t.archivos) ? t.archivos.slice(0, 30).map(f => f?.label || f?.fileName) : []),
   ].filter(Boolean).join(' '));
 }
 

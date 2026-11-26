@@ -21,6 +21,8 @@ function setProgress(taskId, { title, status, percent = 0, done = false, error =
   updateUploadTask(taskId, { title, status, percent, done, error });
 }
 
+let forwardedDeletedHandler = null;
+
 export async function renderForwardedTab({ mainPanel, client, tg }) {
   mainPanel.innerHTML = `<div class="admin-panel-header"><div class="admin-panel-title"><h2>Listar vídeos reenviados</h2><p>Selecciona vídeos reenviados de los canales ::tgstorage para descargarlos o resubirlos al canal correspondiente.</p></div><button class="btn-primary" data-focusable id="btn-load-forwarded">Cargar vídeos reenviados</button></div><div id="admin-forwarded-content"><p style="color:#aaa;">Pulsa «Cargar vídeos reenviados» para escanear los canales tgstorage.</p></div>`;
   const loadBtn = document.getElementById('btn-load-forwarded');
@@ -52,6 +54,12 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
       const selected = new Set();
       const total = [...byChannel.values()].reduce((sum, files) => sum + files.length, 0);
       container.innerHTML = `<p style="color:#aaa;margin-bottom:1rem;">${total} vídeos reenviados en ${byChannel.size} canales tgstorage.</p><div class="admin-accordion-list">${[...byChannel.entries()].map(([name, files], idx) => `<div class="admin-accordion-item"><div class="admin-accordion-header" data-focusable tabindex="0" role="button" data-idx="${idx}"><div style="display:flex;align-items:center;gap:.75rem"><input type="checkbox" class="forwarded-channel-check" data-focusable data-channel="${esc(name)}"><strong>${esc(name)}</strong><span>${files.length} vídeos</span></div><span>▼</span></div><div class="admin-accordion-content" id="forwarded-list-${idx}" style="display:none">${files.map(file => `<div class="admin-video-row"><div class="admin-video-info"><input type="checkbox" class="forwarded-file-check" data-focusable data-channel="${esc(name)}" data-key="${esc(file.key)}"><span>${esc(file.filename)}</span></div><span>${formatBytes(file.size)}</span></div>`).join('')}</div></div>`).join('')}</div><div class="admin-sticky-bar" id="forwarded-actions" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(18,18,18,.97);padding:.9rem 1.6rem;justify-content:space-between;align-items:center"><span id="forwarded-count">0 seleccionados</span><div style="display:flex;gap:.75rem"><button class="btn-secondary" data-focusable id="btn-download-forwarded">Descargar</button><button class="btn-primary" data-focusable id="btn-reupload-forwarded">Resubir</button></div></div>`;
+      // Enlaza cada fila con su mensaje para el menú contextual («Enviar/Subir & BORRAR»)
+      const itemsByKey = new Map([...byChannel.values()].flat().map(item => [item.key, item]));
+      container.querySelectorAll('.forwarded-file-check').forEach(box => {
+        const row = box.closest('.admin-video-row');
+        if (row) row._forwardedItem = itemsByKey.get(box.dataset.key) || null;
+      });
       const actions = document.getElementById('forwarded-actions');
       const update = () => { actions.style.display = selected.size ? 'flex' : 'none'; document.getElementById('forwarded-count').textContent = `${selected.size} seleccionados`; };
       container.querySelectorAll('.admin-accordion-header').forEach(header => {
@@ -82,6 +90,27 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
         (byChannel.get(name) || []).forEach(item => box.checked ? selected.add(item.key) : selected.delete(item.key));
         container.querySelectorAll(`.forwarded-file-check[data-channel="${CSS.escape(name)}"]`).forEach(item => { item.checked = box.checked; }); update();
       }));
+      // Tras «Enviar/Subir & BORRAR»: quitar la fila del reenvío borrado y actualizar contadores
+      if (forwardedDeletedHandler) document.removeEventListener('tgv:forwarded-deleted', forwardedDeletedHandler);
+      forwardedDeletedHandler = (ev) => {
+        const key = ev.detail?.key;
+        if (!key || !document.body.contains(container)) return;
+        selected.delete(key);
+        for (const [name, files] of byChannel) {
+          const idx = files.findIndex(item => item.key === key);
+          if (idx === -1) continue;
+          files.splice(idx, 1);
+          const box = container.querySelector(`.forwarded-file-check[data-key="${CSS.escape(key)}"]`);
+          const accordion = box?.closest('.admin-accordion-item');
+          box?.closest('.admin-video-row')?.remove();
+          const countEl = accordion?.querySelector('.admin-accordion-header span:not([class])');
+          if (countEl) countEl.textContent = `${files.length} vídeos`;
+          if (!files.length) { accordion?.remove(); byChannel.delete(name); }
+          break;
+        }
+        update();
+      };
+      document.addEventListener('tgv:forwarded-deleted', forwardedDeletedHandler);
       document.getElementById('btn-download-forwarded')?.addEventListener('click', () => downloadSelected(selected, byChannel, client));
       document.getElementById('btn-reupload-forwarded')?.addEventListener('click', () => showRenameAndReupload(selected, byChannel, client));
       loadBtn.disabled = false; loadBtn.textContent = 'Actualizar reenvíos';

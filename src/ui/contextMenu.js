@@ -431,6 +431,16 @@ export function showContextMenuForElement(sourceEl, coords = null) {
           }
         }
       }
+      // Fila de «Listar vídeos reenviados» que no está en la biblioteca: se construye desde el mensaje escaneado
+      const fw = adminRow._forwardedItem;
+      if (!targetFile && fw?.msg) {
+        targetFile = {
+          key: fw.key, messageId: fw.msg.id, channelId: String(fw.channel?.id ?? ''), channel: fw.channel,
+          fileName: fw.filename, label: fw.filename, size: fw.size, rawCaption: fw.msg.message || '', caption: fw.msg.message || '',
+        };
+        targetTitle = { id: fw.key, nombre: fw.filename, tipo: 'pelicula', archivos: [targetFile], channel: fw.channel };
+        titleName = fw.filename;
+      }
     } else if (detailEl) {
       const detailTitleId = detailEl?.dataset?.title;
       const dt = allTitles.find(x => String(x.id) === String(detailTitleId)) || detailEl?._titleData;
@@ -475,6 +485,7 @@ export function showContextMenuForElement(sourceEl, coords = null) {
     const isMovie = targetTitle?.tipo === 'pelicula' || (!targetTitle?.tipo && !targetTitle?.isSaga && !targetFile.season);
     const hasMultipleVersions = isMovie && allMovieFiles.length > 1;
     const isEpClick = Boolean(epEl);
+    const isForwardedRow = Boolean(adminRow?.closest?.('#admin-forwarded-content'));
 
     menu.innerHTML = `
       <div style="padding: 0.5rem 0.9rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 0.8rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -581,6 +592,11 @@ export function showContextMenuForElement(sourceEl, coords = null) {
           : (isSeries ? 'Ocultar serie ya gestionada' : 'Ocultar archivo ya gestionado');
         return `<div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${fullyHidden ? '#86efac' : '#fca5a5'};"><span style="font-size:1.1rem;">${fullyHidden ? '👁️' : '🙈'}</span><span>${labelText}</span></div>`;
       })() : ''}
+      ${isForwardedRow ? `
+      <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-forward-delete" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; border-top: 1px solid rgba(255,255,255,0.08);">
+        <span style="font-size: 1.1rem;">⚡</span>
+        <span>Enviar/Subir &amp; <strong style="color: #ef4444;">BORRAR</strong> a canal tgstorage</span>
+      </div>` : ''}
     `;
 
     // Posicionamiento inteligente para no salir de pantalla (ratón en PC o mando en TV)
@@ -649,6 +665,23 @@ export function showContextMenuForElement(sourceEl, coords = null) {
       const currentClient = currentConfig.client || currentTg?.getClient?.() || (typeof window !== 'undefined' && window.tg?.getClient?.());
       showForwardModal(currentClient, currentTg, targetFile, currentConfig.getChannels, targetTitle, currentConfig.getTitles).catch(err => {
         console.error('[contextMenu] Error en showForwardModal:', err);
+        alert('Error al abrir envío a tgstorage: ' + (err.message || String(err)));
+      });
+    });
+
+    menu.querySelector('#pc-menu-forward-delete')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      removeActiveMenu();
+      const currentConfig = activeContextConfig || {};
+      const currentTg = currentConfig.tg || (typeof window !== 'undefined' ? window.tg : null);
+      const currentClient = currentConfig.client || currentTg?.getClient?.() || (typeof window !== 'undefined' && window.tg?.getClient?.());
+      // Solo este archivo: nunca la serie completa, porque después se borra el original
+      const singleTitle = { ...targetTitle, archivos: [targetFile] };
+      showForwardModal(currentClient, currentTg, targetFile, currentConfig.getChannels, singleTitle, currentConfig.getTitles, {
+        deleteSourceAfter: true,
+        onSourceDeleted: (f) => document.dispatchEvent(new CustomEvent('tgv:forwarded-deleted', { detail: { key: f?.key || targetFile.key } })),
+      }).catch(err => {
+        console.error('[contextMenu] Error en envío con borrado:', err);
         alert('Error al abrir envío a tgstorage: ' + (err.message || String(err)));
       });
     });

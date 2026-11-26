@@ -215,7 +215,9 @@ function formatSuggestedFileName(file, titleData) {
 /**
  * Modal interactivo para enviar o subir rápidamente un archivo a un canal de tgstorage.
  */
-export async function showForwardModal(client, tg, file, getChannels, titleData = null, getTitles = null) {
+export async function showForwardModal(client, tg, file, getChannels, titleData = null, getTitles = null, options = {}) {
+  // deleteSourceAfter: tras publicar el archivo en el canal destino, borra el mensaje original (reenvío)
+  const deleteSourceAfter = Boolean(options?.deleteSourceAfter);
   if (!client) {
     if (tg?.getClient) client = tg.getClient();
     else if (window.tg?.getClient) client = window.tg.getClient();
@@ -335,7 +337,8 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
   }
   const seasonNumbers = Array.from(seasonsMap.keys()).sort((a, b) => a - b);
 
-  const isMultiFile = isSerie && allFiles.length > 1;
+  if (deleteSourceAfter) allFiles = [file];
+  const isMultiFile = !deleteSourceAfter && isSerie && allFiles.length > 1;
   const seriesBaseName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || 'Serie';
   const defaultFilename = formatSuggestedFileName(file, titleData);
   const sizeStr = formatBytes(file.size);
@@ -368,7 +371,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     <div style="background: #181c24; border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; max-width: 560px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); color: #fff; padding: 1.5rem; font-family: inherit;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.8rem;">
         <h3 style="margin: 0; font-size: 1.2rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
-          <span>⚡</span> ${isMultiFile ? 'Enviar serie / episodios a canal tgstorage' : 'Enviar archivo a canal tgstorage'}
+          <span>⚡</span> ${deleteSourceAfter ? 'Enviar/Subir &amp; <span style="color:#ef4444;">BORRAR</span> a canal tgstorage' : (isMultiFile ? 'Enviar serie / episodios a canal tgstorage' : 'Enviar archivo a canal tgstorage')}
         </h3>
         <button id="modal-close-btn" style="background: transparent; border: none; color: #94a3b8; font-size: 1.4rem; cursor: pointer; padding: 0.2rem 0.5rem; border-radius: 4px;">×</button>
       </div>
@@ -466,12 +469,17 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
         </label>
       </div>
 
+      ${deleteSourceAfter ? `
+      <div style="background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.4); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.2rem; font-size: 0.85rem; color: #fecaca;">
+        Cuando Telegram confirme que el archivo está publicado en el canal destino, se <strong style="color:#ef4444;">BORRARÁ</strong> el reenvío original. Si el envío falla, el original no se toca.
+      </div>` : ''}
+
       <div style="display: flex; justify-content: flex-end; gap: 0.8rem;">
         <button type="button" id="modal-cancel-btn" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 0.6rem 1.2rem; color: #fff; font-size: 0.9rem; cursor: pointer;">
           Cancelar
         </button>
         <button type="button" id="modal-send-btn" style="background: var(--theme-accent, #e50914); border: none; border-radius: 6px; padding: 0.6rem 1.4rem; color: #fff; font-size: 0.9rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem;">
-          <span>${isMultiFile ? `⚡ Enviar ${allFiles.length} episodios` : '⚡ Enviar ahora'}</span>
+          <span>${deleteSourceAfter ? '⚡ Enviar y BORRAR reenvío' : (isMultiFile ? `⚡ Enviar ${allFiles.length} episodios` : '⚡ Enviar ahora')}</span>
         </button>
       </div>
     </div>
@@ -816,12 +824,13 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
           percent: 60,
         });
 
+        let sentMsg = null;
         if (isFastUpload) {
           const docMedia = msg.media?.document || msg.media;
           if (!docMedia) throw new Error('El mensaje original no contiene un archivo reenviable.');
 
           try {
-            await client.sendFile(targetPeer, {
+            sentMsg = await client.sendFile(targetPeer, {
               file: docMedia,
               caption: standardCaption,
               forceDocument: false,
@@ -869,7 +878,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
                   });
                 }
               });
-              await client.sendFile(targetPeer, {
+              sentMsg = await client.sendFile(targetPeer, {
                 file: upload,
                 caption: standardCaption,
                 forceDocument: !filename.toLowerCase().endsWith('.mp4'),
@@ -916,7 +925,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
             }
           });
 
-          await client.sendFile(targetPeer, {
+          sentMsg = await client.sendFile(targetPeer, {
             file: upload,
             caption: standardCaption,
             forceDocument: !filename.toLowerCase().endsWith('.mp4'),
@@ -924,10 +933,29 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
           });
         }
 
+        let deletedNote = '';
+        if (deleteSourceAfter) {
+          const sentId = Array.isArray(sentMsg) ? sentMsg[0]?.id : sentMsg?.id;
+          if (!sentId) throw new Error('Telegram no confirmó la publicación en el canal destino. El reenvío original NO se ha borrado.');
+          setProgressBar(bar, {
+            id: taskId,
+            title: `Borrando reenvío: ${filename}`,
+            status: `Publicado en "${targetChannelName}". Borrando el reenvío original…`,
+            percent: 97,
+          });
+          try {
+            await client.deleteMessages(sourcePeer, [msgId], { revoke: true });
+          } catch (delErr) {
+            throw new Error(`El archivo se publicó en "${targetChannelName}", pero no se pudo borrar el reenvío original: ${delErr?.errorMessage || delErr?.message || delErr}`);
+          }
+          deletedNote = ' · reenvío original borrado';
+          try { options?.onSourceDeleted?.(curTargetFile); } catch (_) {}
+        }
+
         setProgressBar(bar, {
           id: taskId,
           title: `${isFastUpload ? '⚡ Subida rápida completada' : '🔄 Resubida completada'}: ${filename}`,
-          status: `Añadido a "${targetChannelName}" con éxito`,
+          status: `Añadido a "${targetChannelName}" con éxito${deletedNote}`,
           percent: 100,
           done: true,
         });

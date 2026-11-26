@@ -116,6 +116,23 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
   const form = overlay.querySelector('#meta-form');
   attachSpatialNav(overlay.querySelector('.meta-modal-body'));
 
+  // En TV / apaisado la cabecera queda fija y cada columna tiene su propio scroll (src/styles/settings.css).
+  // focus() y scrollIntoView() desplazaban también el diálogo entero y la cabecera quedaba cortada por arriba.
+  const dialogEl = overlay.querySelector('.settings-dialog');
+  dialogEl?.classList.add('meta-dialog');
+  dialogEl?.addEventListener('scroll', () => {
+    if (dialogEl.scrollTop && getComputedStyle(dialogEl).overflowY === 'hidden') dialogEl.scrollTop = 0;
+  });
+  const scrollWithinColumn = (el) => {
+    if (!el) return;
+    const box = el.closest('.meta-results-container, .meta-col-left');
+    if (!box || box.scrollHeight <= box.clientHeight) return;
+    const elRect = el.getBoundingClientRect();
+    const boxRect = box.getBoundingClientRect();
+    if (elRect.top < boxRect.top) box.scrollTop -= (boxRect.top - elRect.top) + 8;
+    else if (elRect.bottom > boxRect.bottom) box.scrollTop += (elRect.bottom - boxRect.bottom) + 8;
+  };
+
   // Botones segmentados (sustituyen a los <select>, que no se abren con el mando)
   overlay.querySelectorAll('.meta-seg-btn').forEach((btn) => {
     btn.onclick = () => {
@@ -134,7 +151,8 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
 
   // Asegurar auto-scroll suave dentro del contenedor de resultados al navegar con D-Pad
   resultsContainer.addEventListener('focusin', (e) => {
-    e.target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    scrollWithinColumn(e.target);
+    if (dialogEl && getComputedStyle(dialogEl).overflowY === 'hidden') dialogEl.scrollTop = 0;
   });
 
   const setTypeUi = (value) => {
@@ -451,8 +469,8 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
       setTimeout(() => {
         const firstBtn = resultsContainer.querySelector('.btn-select-meta');
         if (firstBtn) {
-          firstBtn.focus();
-          firstBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          firstBtn.focus({ preventScroll: true });
+          scrollWithinColumn(firstBtn);
         }
       }, 50);
 

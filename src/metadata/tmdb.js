@@ -98,6 +98,16 @@ export function extractTitleAndYear(name = "") {
  * Formato habitual: "Taxi Driver (1976) Drama | Crimen. Película de culto\n\nSinopsis\n..."
  * Devuelve una lista de candidatos { title, year } ordenados de más a menos fiable.
  */
+// Telegram guarda los emojis personalizados (Premium) como un emoji "de respaldo" en el texto.
+// Los canales que escriben títulos con letras-emoji (🅰️, 🩸, 2️⃣…) producen texto ilegible
+// que no sirve como título. Se eliminan emojis, keycaps (2️⃣), banderas y modificadores.
+const KEYCAP_RE = /[0-9#*]\uFE0F?\u20E3/gu;
+const EMOJI_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}\uFE0E\uFE0F\u200D\u20E3]/gu;
+export function stripEmojiText(value = "") {
+  return String(value || "").replace(KEYCAP_RE, " ").replace(EMOJI_RE, " ").replace(/[ \t]+/g, " ").trim();
+}
+const countLetters = (value = "") => (String(value).match(/\p{L}/gu) || []).length;
+
 export function extractTitlesFromCaption(caption = "") {
   const text = String(caption || "").replace(/\r/g, "");
   if (!text.trim()) return [];
@@ -106,11 +116,12 @@ export function extractTitlesFromCaption(caption = "") {
   const skipLine = /^(sinopsis|synopsis|nombre de archivo|archivo|tmdb|imdb|puntuaci[oó]n|rating|secci[oó]n|g[eé]nero|duraci[oó]n|calidad|idioma|audio|subt[ií]tulos|resoluci[oó]n|codec|peso|tamano|tamaño|formato|temporada|episodio)\b/i;
   const promoPattern = /(@\w+|https?:\/\/|t\.me\/|telegram\.me\/|\b(unete|[uú]nete|canal|grupo|vip|password|contrase[nñ]a|aporte|descarga|s[ií]guenos|link|enlace|compartido|colabora|donaciones|servidor)\b)/i;
 
-  const lines = cleanText.split("\n").map(l => l.replace(/[*_`~]+/g, "").replace(/^[\s\p{Extended_Pictographic}🎬📽️🎞️▶️•·\-–—]+/u, "").trim()).filter(Boolean);
+  const lines = cleanText.split("\n").map(l => stripEmojiText(l.replace(/[*_`~]+/g, "")).replace(/^[\s\p{Extended_Pictographic}🎬📽️🎞️▶️•·\-–—]+/u, "").trim()).filter(Boolean);
   const out = [];
   const push = (title, year) => {
     const t = String(title || "").replace(/[\s.:;,|\-–—]+$/, "").replace(/^[\s.:;,|\-–—]+/, "").replace(/\s+/g, " ").trim();
     if (t.length < 2 || t.length > 120) return;
+    if (countLetters(t) < 2) return; // Sin letras reales (solo emojis/símbolos): no es un título
     if (promoPattern.test(t)) return; // Bloquear spam/promociones como nombres de películas
     if (!out.some(o => o.title.toLowerCase() === t.toLowerCase() && o.year === (year || null))) out.push({ title: t, year: year || null });
   };
