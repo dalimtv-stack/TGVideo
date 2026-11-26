@@ -1,29 +1,165 @@
 // src/ui/moveEpisodeModal.js
-// Modal interactivo para mover un episodio de una serie a otra serie (existente o nueva).
-import { modal } from './settings.js';
-import { attachSpatialNav } from './spatialNav.js';
-import { saveEpisodeSeriesMove } from './externalTitlesCache.js';
+// Modal interactivo y accesible con mando TV para mover un episodio de una serie a otra serie (existente o nueva).
+import { modal } from "./settings.js";
+import { attachSpatialNav } from "./spatialNav.js";
+import { saveEpisodeSeriesMove, EXT_CHANNEL_TITLES_CACHE } from "./externalTitlesCache.js";
+
+/**
+ * Función centralizada y segura para ejecutar el movimiento de un episodio,
+ * garantizando la consistencia en memoria, caché de canal externo, cuadrícula y persistencia en IndexedDB/localStorage.
+ */
+export async function executeEpisodeMove({
+  file,
+  sourceTitle,
+  targetTitle = null,
+  targetSeriesId = null,
+  targetSeriesName = "",
+  newSeason = 1,
+  newEpisode = 1,
+  isExt = false,
+  fromGrid = null,
+  channelId = "",
+  getTitles = null,
+  setTitles = null,
+  persistMetadata = null,
+}) {
+  if (!file || !sourceTitle) return { target: null, isEmpty: false };
+
+  const s = Number(newSeason) || 1;
+  const ep = Number(newEpisode) || 1;
+
+  // 1. Quitar el archivo de la serie origen
+  sourceTitle.archivos = (sourceTitle.archivos || []).filter(x => x.key !== file.key);
+  file.season = s;
+  file.episode = ep;
+
+  // 2. Determinar la colección de títulos activa según el contexto (externo o interno)
+  let titlePool = [];
+  const cleanChId = String(channelId || sourceTitle.channel?.id || fromGrid?.channel?.id || fromGrid?.id || "").replace(/^ext-/, "");
+
+  if (isExt) {
+    if (fromGrid && Array.isArray(fromGrid.gridItems)) {
+      titlePool = fromGrid.gridItems;
+    } else if (fromGrid && Array.isArray(fromGrid.items)) {
+      titlePool = fromGrid.items;
+    } else if (cleanChId && EXT_CHANNEL_TITLES_CACHE.has(cleanChId)) {
+      titlePool = EXT_CHANNEL_TITLES_CACHE.get(cleanChId);
+    } else if (cleanChId && EXT_CHANNEL_TITLES_CACHE.has(`ext-${cleanChId}`)) {
+      titlePool = EXT_CHANNEL_TITLES_CACHE.get(`ext-${cleanChId}`);
+    }
+  } else if (typeof getTitles === "function") {
+    titlePool = getTitles() || [];
+  }
+
+  // 3. Localizar o instanciar la serie destino
+  let target = targetTitle;
+  if (!target && titlePool.length > 0) {
+    target = titlePool.find(x =>
+      (targetSeriesId && String(x.id) === String(targetSeriesId)) ||
+      (x.tipo === "serie" && x.nombre && targetSeriesName && x.nombre.toLowerCase().trim() === targetSeriesName.toLowerCase().trim())
+    );
+  }
+
+  if (!target) {
+    const newId = targetSeriesId || (isExt ? `${cleanChId || "ext"}#${targetSeriesName}` : `custom_series_${Date.now()}`);
+    target = {
+      id: newId,
+      tipo: "serie",
+      isSaga: false,
+      nombre: targetSeriesName,
+      grupo: sourceTitle.grupo || fromGrid?.title || "Series",
+      channel: sourceTitle.channel || fromGrid?.channel,
+      origen: sourceTitle.origen || (isExt ? { tipo: "externo", channelId: cleanChId } : undefined),
+      archivos: [],
+      ultimoMensajeFecha: file.date || Date.now(),
+    };
+    titlePool.push(target);
+    if (isExt && fromGrid) {
+      if (Array.isArray(fromGrid.gridItems) && !fromGrid.gridItems.includes(target)) fromGrid.gridItems.push(target);
+      if (Array.isArray(fromGrid.items) && !fromGrid.items.includes(target)) fromGrid.items.push(target);
+    }
+  }
+
+  // 4. Incorporar el archivo a la serie destino
+  if (target) {
+    target.archivos = target.archivos || [];
+    const alreadyThere = target.archivos.some(x => x.key === file.key || (file.messageId && String(x.messageId) === String(file.messageId)));
+    if (!alreadyThere) {
+      target.archivos.push(file);
+    }
+    target.archivos.sort((a, b) =>
+      ((Number(a.season) || 1) - (Number(b.season) || 1)) ||
+      ((Number(a.episode) || 1) - (Number(b.episode) || 1)) ||
+      (a.date - b.date)
+    );
+  }
+
+  // 5. Si la serie origen se quedó sin archivos, retirarla de las listas activas
+  const isEmpty = (sourceTitle.archivos || []).length === 0;
+  if (isEmpty) {
+    const sIdx = titlePool.findIndex(x => String(x.id) === String(sourceTitle.id));
+    if (sIdx !== -1) titlePool.splice(sIdx, 1);
+    if (isExt && fromGrid) {
+      if (Array.isArray(fromGrid.gridItems)) fromGrid.gridItems = fromGrid.gridItems.filter(x => String(x.id) !== String(sourceTitle.id));
+      if (Array.isArray(fromGrid.items)) fromGrid.items = fromGrid.items.filter(x => String(x.id) !== String(sourceTitle.id));
+    }
+  }
+
+  // 6. Persistir en almacenamiento durable y sincronizar cachés
+  try {
+    await saveEpisodeSeriesMove({
+      file,
+      sourceTitle,
+      targetTitle: target,
+      targetSeriesId: target?.id || targetSeriesId,
+      targetSeriesName: target?.nombre || targetSeriesName,
+      season: s,
+      episode: ep,
+    });
+  } catch (err) {
+    console.warn("[executeEpisodeMove] Error al guardar reubicación:", err);
+  }
+
+  if (isExt) {
+    if (cleanChId) {
+      EXT_CHANNEL_TITLES_CACHE.set(cleanChId, [...titlePool]);
+      EXT_CHANNEL_TITLES_CACHE.set(`ext-${cleanChId}`, [...titlePool]);
+    }
+    if (fromGrid) {
+      fromGrid.gridItems = [...titlePool];
+      fromGrid.items = [...titlePool];
+    }
+  } else if (typeof setTitles === "function") {
+    setTitles([...titlePool]);
+    try {
+      if (typeof persistMetadata === "function") await persistMetadata();
+    } catch (_) {}
+  }
+
+  return { target, isEmpty };
+}
 
 /**
  * Muestra el diálogo modal para mover un episodio individual a otra serie.
+ * Incluye compatibilidad total con mando a distancia Android TV (D-pad).
  */
 export function showMoveEpisodeModal({
   file,
   currentTitle,
   allTitles = [],
-  esc = (s) => String(s || ''),
+  esc = (s) => String(s || ""),
   onMoved,
 }) {
   if (!file || !currentTitle) return;
 
-  const currentFileName = file.captionFileName || file.fileName || file.label || 'Episodio';
+  const currentFileName = file.captionFileName || file.fileName || file.label || "Episodio";
   const curSeason = Number.isInteger(file.season) ? file.season : (Number(file.season) || 1);
   const curEpisode = Number.isInteger(file.episode) ? file.episode : (Number(file.episode) || 1);
 
-  // Filtrar otras series disponibles en la biblioteca
+  // Filtrar otras series disponibles en la biblioteca/canal
   const availableSeries = (allTitles || [])
-    .filter(t => t.tipo === 'serie' && String(t.id) !== String(currentTitle.id))
-    .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', undefined, { sensitivity: 'base' }));
+    .filter(t => t.tipo === "serie" && String(t.id) !== String(currentTitle.id))
+    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", undefined, { sensitivity: "base" }));
 
   const bodyHtml = `
     <div class="move-ep-container" style="display:flex;flex-direction:column;gap:1rem;color:#f0f0f0;">
@@ -43,15 +179,15 @@ export function showMoveEpisodeModal({
                placeholder="Escribe para filtrar series existentes..."
                style="width:100%;box-sizing:border-box;padding:0.6rem;border-radius:6px;border:1px solid #444;background:#1a1a1a;color:#fff;margin-bottom:0.5rem;" />
 
-        <div id="move-ep-list" style="max-height:160px;overflow-y:auto;border:1px solid #333;border-radius:6px;background:#111;padding:0.25rem;">
-          ${availableSeries.length === 0 ? '<div style="padding:0.75rem;text-align:center;color:#888;font-size:0.85rem;">No hay otras series cargadas aún en la biblioteca</div>' : ''}
+        <div id="move-ep-list" style="max-height:160px;overflow-y:auto;border:1px solid #333;border-radius:6px;background:#111;padding:0.25rem;display:flex;flex-direction:column;gap:2px;">
+          ${availableSeries.length === 0 ? `<div style="padding:0.75rem;text-align:center;color:#888;font-size:0.85rem;">No hay otras series cargadas aún en este canal</div>` : ""}
           ${availableSeries.map(s => `
-            <div class="move-ep-option" data-focusable data-series-id="${esc(s.id)}" data-series-name="${esc(s.nombre)}"
-                 style="padding:0.5rem 0.75rem;cursor:pointer;border-radius:4px;display:flex;justify-content:space-between;align-items:center;transition:background 0.15s;">
+            <button type="button" class="move-ep-option" data-focusable data-series-id="${esc(s.id)}" data-series-name="${esc(s.nombre)}"
+                 style="width:100%;text-align:left;background:transparent;border:1px solid transparent;padding:0.5rem 0.75rem;cursor:pointer;border-radius:4px;display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:0.9rem;outline:none;transition:background 0.15s, border-color 0.15s;">
               <span style="font-weight:500;">${esc(s.nombre)}</span>
-              <span style="font-size:0.75rem;color:#888;">${s.archivos?.length || 0} eps</span>
-            </div>
-          `).join('')}
+              <span style="font-size:0.75rem;color:#aaa;">${s.archivos?.length || 0} eps</span>
+            </button>
+          `).join("")}
         </div>
       </div>
 
@@ -90,55 +226,100 @@ export function showMoveEpisodeModal({
     </div>
   `;
 
-  const { overlay, close } = modal('Mover episodio a otra serie', bodyHtml, 'Reasigna este archivo a su serie correspondiente');
+  const { overlay, close } = modal("Mover episodio a otra serie", bodyHtml, "Reasigna este archivo a su serie correspondiente");
 
   let selectedSeriesId = null;
   let selectedSeriesName = null;
 
-  const searchInput = overlay.querySelector('#move-ep-search');
-  const seriesList = overlay.querySelector('#move-ep-list');
-  const newNameInput = overlay.querySelector('#move-ep-new-name');
-  const seasonInput = overlay.querySelector('#move-ep-season');
-  const episodeInput = overlay.querySelector('#move-ep-episode');
-  const errorBox = overlay.querySelector('#move-ep-error');
-  const submitBtn = overlay.querySelector('#move-ep-submit');
-  const cancelBtn = overlay.querySelector('#move-ep-cancel');
+  const searchInput = overlay.querySelector("#move-ep-search");
+  const seriesList = overlay.querySelector("#move-ep-list");
+  const newNameInput = overlay.querySelector("#move-ep-new-name");
+  const seasonInput = overlay.querySelector("#move-ep-season");
+  const episodeInput = overlay.querySelector("#move-ep-episode");
+  const errorBox = overlay.querySelector("#move-ep-error");
+  const submitBtn = overlay.querySelector("#move-ep-submit");
+  const cancelBtn = overlay.querySelector("#move-ep-cancel");
 
   cancelBtn.onclick = close;
 
   function highlightSelectedOption() {
-    seriesList.querySelectorAll('.move-ep-option').forEach(el => {
+    seriesList.querySelectorAll(".move-ep-option").forEach(el => {
       const match = el.dataset.seriesId === selectedSeriesId;
-      el.style.background = match ? 'rgba(33, 150, 243, 0.35)' : 'transparent';
-      el.style.border = match ? '1px solid #2196f3' : '1px solid transparent';
+      el.style.background = match ? "rgba(33, 150, 243, 0.35)" : "transparent";
+      el.style.borderColor = match ? "#2196f3" : "transparent";
     });
   }
 
   // Filtrado reactivo en el input de búsqueda
-  searchInput.addEventListener('input', () => {
+  searchInput.addEventListener("input", () => {
     const q = searchInput.value.trim().toLowerCase();
-    seriesList.querySelectorAll('.move-ep-option').forEach(el => {
-      const name = (el.dataset.seriesName || '').toLowerCase();
-      el.style.display = (!q || name.includes(q)) ? 'flex' : 'none';
+    seriesList.querySelectorAll(".move-ep-option").forEach(el => {
+      const name = (el.dataset.seriesName || "").toLowerCase();
+      el.style.display = (!q || name.includes(q)) ? "flex" : "none";
     });
   });
 
-  seriesList.querySelectorAll('.move-ep-option').forEach(opt => {
-    opt.addEventListener('click', () => {
+  seriesList.querySelectorAll(".move-ep-option").forEach(opt => {
+    const selectThis = () => {
       selectedSeriesId = opt.dataset.seriesId;
       selectedSeriesName = opt.dataset.seriesName;
-      newNameInput.value = '';
+      newNameInput.value = "";
       highlightSelectedOption();
-      errorBox.style.display = 'none';
+      errorBox.style.display = "none";
+    };
+
+    opt.addEventListener("click", selectThis);
+    opt.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        selectThis();
+      }
+    });
+
+    // Foco en Android TV
+    opt.addEventListener("focus", () => {
+      opt.style.borderColor = "#64b5f6";
+      opt.style.background = opt.dataset.seriesId === selectedSeriesId ? "rgba(33, 150, 243, 0.45)" : "rgba(255, 255, 255, 0.1)";
+    });
+    opt.addEventListener("blur", () => {
+      const match = opt.dataset.seriesId === selectedSeriesId;
+      opt.style.borderColor = match ? "#2196f3" : "transparent";
+      opt.style.background = match ? "rgba(33, 150, 243, 0.35)" : "transparent";
     });
   });
 
-  newNameInput.addEventListener('input', () => {
+  newNameInput.addEventListener("input", () => {
     if (newNameInput.value.trim()) {
       selectedSeriesId = null;
       selectedSeriesName = null;
       highlightSelectedOption();
-      errorBox.style.display = 'none';
+      errorBox.style.display = "none";
+    }
+  });
+
+  // Navegación fluida horizontal con teclado/mando dentro del modal
+  seasonInput.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      episodeInput.focus();
+    }
+  });
+  episodeInput.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      seasonInput.focus();
+    }
+  });
+  cancelBtn.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      submitBtn.focus();
+    }
+  });
+  submitBtn.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      cancelBtn.focus();
     }
   });
 
@@ -148,39 +329,32 @@ export function showMoveEpisodeModal({
     const finalSeriesId = customName ? `custom_series_${Date.now()}` : selectedSeriesId;
 
     if (!finalSeriesName) {
-      errorBox.textContent = 'Selecciona una serie de la lista o escribe el nombre de una nueva.';
-      errorBox.style.display = 'block';
+      errorBox.textContent = "Selecciona una serie de la lista o escribe el nombre de una nueva.";
+      errorBox.style.display = "block";
       return;
     }
 
     const newSeason = parseInt(seasonInput.value, 10);
     const newEpisode = parseInt(episodeInput.value, 10);
     if (!Number.isFinite(newSeason) || newSeason < 1) {
-      errorBox.textContent = 'La temporada debe ser un número mayor o igual a 1.';
-      errorBox.style.display = 'block';
+      errorBox.textContent = "La temporada debe ser un número mayor o igual a 1.";
+      errorBox.style.display = "block";
       return;
     }
     if (!Number.isFinite(newEpisode) || newEpisode < 1) {
-      errorBox.textContent = 'El episodio debe ser un número mayor o igual a 1.';
-      errorBox.style.display = 'block';
+      errorBox.textContent = "El episodio debe ser un número mayor o igual a 1.";
+      errorBox.style.display = "block";
       return;
     }
 
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Moviendo...';
+    submitBtn.textContent = "Moviendo...";
 
     try {
-      let targetTitle = (allTitles || []).find(t => String(t.id) === String(finalSeriesId) || (t.tipo === 'serie' && t.nombre?.toLowerCase().trim() === finalSeriesName.toLowerCase()));
-
-      await saveEpisodeSeriesMove({
-        file,
-        sourceTitle: currentTitle,
-        targetTitle,
-        targetSeriesId: targetTitle?.id || finalSeriesId,
-        targetSeriesName: finalSeriesName,
-        season: newSeason,
-        episode: newEpisode,
-      });
+      let targetTitle = (allTitles || []).find(t =>
+        (finalSeriesId && String(t.id) === String(finalSeriesId)) ||
+        (t.tipo === "serie" && t.nombre?.toLowerCase().trim() === finalSeriesName.toLowerCase())
+      );
 
       if (onMoved) {
         await onMoved({
@@ -196,13 +370,17 @@ export function showMoveEpisodeModal({
 
       close();
     } catch (err) {
-      console.error('[moveEpisodeModal] Error al mover episodio:', err);
-      errorBox.textContent = 'Error al guardar el movimiento del episodio.';
-      errorBox.style.display = 'block';
+      console.error("[moveEpisodeModal] Error al mover episodio:", err);
+      errorBox.textContent = "Error al guardar el movimiento del episodio.";
+      errorBox.style.display = "block";
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Mover episodio';
+      submitBtn.textContent = "Mover episodio";
     }
   };
 
   attachSpatialNav?.(overlay);
+
+  setTimeout(() => {
+    searchInput?.focus();
+  }, 60);
 }

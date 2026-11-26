@@ -13,7 +13,11 @@ const seriesMovesMap = new Map();
 
 export function clearExternalChannelCache(channelId) {
   if (channelId) {
-    EXT_CHANNEL_TITLES_CACHE.delete(String(channelId));
+    const s = String(channelId);
+    const raw = s.replace(/^ext-/, "");
+    EXT_CHANNEL_TITLES_CACHE.delete(s);
+    EXT_CHANNEL_TITLES_CACHE.delete(raw);
+    EXT_CHANNEL_TITLES_CACHE.delete(`ext-${raw}`);
     return;
   }
   EXT_CHANNEL_TITLES_CACHE.clear();
@@ -309,6 +313,35 @@ export async function saveEpisodeOverride({ title, file, season, episode, name =
 }
 
 /**
+ * Carga de forma asíncrona todas las reubicaciones de series guardadas (IndexedDB y localStorage).
+ */
+export async function loadSeriesMovesAsync() {
+  try {
+    const rawLs = localStorage.getItem(SERIES_MOVES_KEY);
+    if (rawLs) {
+      const parsed = JSON.parse(rawLs);
+      for (const [k, v] of Object.entries(parsed)) seriesMovesMap.set(k, v);
+    }
+  } catch (_) {}
+
+  try {
+    const fromKv = (await kv.get(SERIES_MOVES_KEY).catch(() => null)) || {};
+    if (fromKv && typeof fromKv === "object") {
+      for (const [k, v] of Object.entries(fromKv)) seriesMovesMap.set(k, v);
+    }
+  } catch (_) {}
+
+  try {
+    const lib = await kv.get("library_v2").catch(() => null);
+    if (lib?.seriesMoves && typeof lib.seriesMoves === "object") {
+      for (const [k, v] of Object.entries(lib.seriesMoves)) seriesMovesMap.set(k, v);
+    }
+  } catch (_) {}
+
+  return seriesMovesMap;
+}
+
+/**
  * Obtiene la asignación manual de serie para un episodio (reubicación).
  */
 export function getEpisodeSeriesMove(fileOrKey) {
@@ -328,6 +361,7 @@ export function getEpisodeSeriesMove(fileOrKey) {
   }
 
   const f = fileOrKey;
+  if (f.seriesMove) return f.seriesMove;
   if (f.key && seriesMovesMap.has(f.key)) return seriesMovesMap.get(f.key);
 
   const chId = String(f.channelId || f.channel?.id || "").trim();
@@ -339,11 +373,15 @@ export function getEpisodeSeriesMove(fileOrKey) {
       || seriesMovesMap.get(`ext-${rawCh}:${msgId}`);
     if (cand) return cand;
   }
+  if (f.captionFileName && seriesMovesMap.has(f.captionFileName)) return seriesMovesMap.get(f.captionFileName);
+  if (f.fileName && seriesMovesMap.has(f.fileName)) return seriesMovesMap.get(f.fileName);
   return null;
 }
 
 /**
  * Guarda la reubicación manual de un episodio a otra serie existente o nueva.
+ * Persiste de inmediato en memoria, localStorage, IndexedDB (kv y library_v2),
+ * y en los registros de archivos del canal externo (ext_files_*).
  */
 export async function saveEpisodeSeriesMove({ file, sourceTitle, targetTitle, targetSeriesId, targetSeriesName, season, episode }) {
   const s = Number(season) || 1;
@@ -374,6 +412,8 @@ export async function saveEpisodeSeriesMove({ file, sourceTitle, targetTitle, ta
       keys.add(`ext-${rawCh}:${msgId}`);
     }
   }
+  if (file?.fileName) keys.add(String(file.fileName).trim());
+  if (file?.captionFileName) keys.add(String(file.captionFileName).trim());
 
   for (const k of keys) {
     seriesMovesMap.set(k, moveData);
@@ -391,6 +431,38 @@ export async function saveEpisodeSeriesMove({ file, sourceTitle, targetTitle, ta
     for (const k of keys) kvStored[k] = moveData;
     await kv.set(SERIES_MOVES_KEY, kvStored).catch(() => {});
   } catch (_) {}
+
+  try {
+    const lib = await kv.get("library_v2").catch(() => null);
+    if (lib) {
+      lib.seriesMoves = lib.seriesMoves || {};
+      for (const k of keys) lib.seriesMoves[k] = moveData;
+      await kv.set("library_v2", lib).catch(() => {});
+    }
+  } catch (_) {}
+
+  // Actualizar también en ext_files_* para que cualquier recarga futura preserve la asignación
+  const channelCandidates = [chId, chId.replace(/^ext-/, ""), `ext-${chId.replace(/^ext-/, "")}`].filter(Boolean);
+  for (const cId of channelCandidates) {
+    try {
+      const extFiles = await kv.get(`ext_files_${cId}`).catch(() => null);
+      if (Array.isArray(extFiles) && extFiles.length > 0) {
+        let touched = false;
+        for (const ef of extFiles) {
+          const match = (msgId && String(ef.messageId) === msgId) || (ef.key && keys.has(ef.key)) || (ef.fileName && keys.has(ef.fileName));
+          if (match) {
+            ef.season = s;
+            ef.episode = ep;
+            ef.seriesMove = moveData;
+            ef.targetSeriesName = targetName;
+            ef.targetSeriesId = targetId;
+            touched = true;
+          }
+        }
+        if (touched) await kv.set(`ext_files_${cId}`, extFiles).catch(() => {});
+      }
+    } catch (_) {}
+  }
 
   // Mantener coherente también el override numérico
   await saveEpisodeOverride({ title: targetTitle || sourceTitle, file, season: s, episode: ep });
@@ -420,16 +492,20 @@ export function applySeriesMoves(titles) {
   if (seriesMovesMap.size === 0) return titles;
 
   for (const t of titles) {
-    if (t.tipo !== "serie" || !Array.isArray(t.archivos)) continue;
+    if (!Array.isArray(t.archivos)) continue;
     const toRemove = [];
     for (const f of t.archivos) {
       const move = getEpisodeSeriesMove(f);
-      if (move && move.targetTitleId && String(move.targetTitleId) !== String(t.id)) {
+      if (move && (move.targetTitleId || move.targetTitleName)) {
+        const isCurrentTarget = String(move.targetTitleId) === String(t.id) ||
+          (t.tipo === "serie" && t.nombre && move.targetTitleName && t.nombre.toLowerCase().trim() === move.targetTitleName.toLowerCase().trim());
+        if (isCurrentTarget) continue;
+
         toRemove.push(f);
         let target = titles.find(x => String(x.id) === String(move.targetTitleId) || (x.tipo === "serie" && x.nombre && move.targetTitleName && x.nombre.toLowerCase().trim() === move.targetTitleName.toLowerCase().trim()));
         if (!target) {
           target = {
-            id: move.targetTitleId,
+            id: move.targetTitleId || `ext#${move.targetTitleName}`,
             tipo: "serie",
             nombre: move.targetTitleName || "Serie",
             grupo: t.grupo || "Series",
@@ -442,7 +518,9 @@ export function applySeriesMoves(titles) {
         }
         if (Number.isInteger(move.season)) f.season = move.season;
         if (Number.isInteger(move.episode)) f.episode = move.episode;
-        if (!target.archivos.some(existing => existing.key === f.key)) {
+        f.seriesMove = move;
+        const alreadyInTarget = target.archivos.some(existing => existing.key === f.key || (f.messageId && String(existing.messageId) === String(f.messageId)));
+        if (!alreadyInTarget) {
           target.archivos.push(f);
           target.archivos.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || (a.date - b.date));
         }
@@ -453,5 +531,5 @@ export function applySeriesMoves(titles) {
     }
   }
 
-  return titles.filter(t => t.tipo !== "serie" || (Array.isArray(t.archivos) && t.archivos.length > 0));
+  return titles.filter(t => Array.isArray(t.archivos) && t.archivos.length > 0);
 }

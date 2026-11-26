@@ -5,7 +5,7 @@ import { prewarmPosterCache } from '../metadata/posterCache.js';
 import { loadOverrides } from '../metadata/overrides.js';
 import { focusFirst } from './dpad.js';
 import { buildTitlesForExternalChannel, scanSingleExternalChannel, identifyTitlesInBulk } from './adminChannels.js';
-import { EXT_CHANNEL_TITLES_CACHE, clearExternalChannelCache } from './externalTitlesCache.js';
+import { EXT_CHANNEL_TITLES_CACHE, clearExternalChannelCache, loadSeriesMovesAsync } from './externalTitlesCache.js';
 export { EXT_CHANNEL_TITLES_CACHE, clearExternalChannelCache } from './externalTitlesCache.js';
 
 const kv = createKV();
@@ -292,14 +292,14 @@ export function renderExternalsView({
     const channelName = ch.groupName || ch.title || ch.name || 'Canal externo';
 
     const loadChannelTitles = async () => {
-      // Siempre cargar los últimos overrides sincronizados/locales
-      await loadOverrides(sync).catch(() => {});
+      // Siempre cargar los últimos overrides sincronizados/locales y reubicaciones
+      await Promise.all([
+        loadOverrides(sync).catch(() => {}),
+        loadSeriesMovesAsync().catch(() => {}),
+      ]);
 
-      let titles = chItem.titles;
       const rawExtId = String(extId).replace(/^ext-/, "");
-      if (!titles || titles.length === 0) {
-        titles = EXT_CHANNEL_TITLES_CACHE.get(extId) || EXT_CHANNEL_TITLES_CACHE.get(rawExtId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${rawExtId}`);
-      }
+      let titles = EXT_CHANNEL_TITLES_CACHE.get(extId) || EXT_CHANNEL_TITLES_CACHE.get(rawExtId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${rawExtId}`) || chItem.titles;
       if (!titles || titles.length === 0) {
         const [f1, f2, f3, lib] = await Promise.all([
           kv.get(`ext_files_${extId}`).catch(() => null),

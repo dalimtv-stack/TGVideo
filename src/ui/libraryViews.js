@@ -7,7 +7,7 @@ import { prewarmPosterCache } from "../metadata/posterCache.js";
 import { identifyTitlesInBulk } from './adminChannels.js';
 import { EXT_CHANNEL_TITLES_CACHE, isExternalFileHiddenSync, getEpisodeOverride, saveEpisodeOverride, applyEpisodeOverrides } from './externalTitlesCache.js';
 import { showEpisodeIdentificationModal } from './episodeIdentificationModal.js';
-import { showMoveEpisodeModal } from './moveEpisodeModal.js';
+import { showMoveEpisodeModal, executeEpisodeMove } from './moveEpisodeModal.js';
 import { groupTitles, unbundleTitles } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
@@ -44,9 +44,20 @@ export function createLibraryViews(deps) {
     const back = () => isExt ? showHome(tg, sync, profile, { selectedSection: "externos" }) : showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
     setBackHandler(back);
 
+    const cleanChId = String(row.channel?.id || row.id || "").replace(/^ext-/, "");
+    if (isExt && cleanChId) {
+      const cached = EXT_CHANNEL_TITLES_CACHE.get(cleanChId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${cleanChId}`);
+      if (Array.isArray(cached) && cached.length > 0) {
+        row.gridItems = cached;
+        row.items = cached;
+      }
+    }
+
     const titles = getTitles() || [];
     const progress = loadProgress(profile.id);
-    const baseItems = (row.gridItems || row.items).map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+    const baseItems = isExt
+      ? (row.gridItems || row.items || [])
+      : (row.gridItems || row.items || []).map(it => titles.find(t => String(t.id) === String(it.id)) || it);
 
     if (row.isExternal) {
       baseItems.forEach(t => {
@@ -1078,61 +1089,47 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           e.preventDefault();
           const f = t.archivos.find(x => x.key === moveBtn.dataset.key);
           if (!f) return;
+          const isExt = Boolean(t._isExternalContext || fromGrid?.isExternal || String(fromGrid?.id || "").startsWith("ext-") || t.origen?.tipo === "externo");
+          const channelId = String(t.channel?.id || fromGrid?.channel?.id || fromGrid?.id || "").replace(/^ext-/, "");
+          const availableTitles = isExt
+            ? (fromGrid?.gridItems || fromGrid?.items || EXT_CHANNEL_TITLES_CACHE.get(channelId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${channelId}`) || [])
+            : (getTitles() || []);
+
           showMoveEpisodeModal({
             file: f,
             currentTitle: t,
-            allTitles: getTitles() || [],
+            allTitles: availableTitles,
             esc,
-            onMoved: async ({ file, sourceTitle, targetTitle, targetSeriesId, targetSeriesName, newSeason, newEpisode }) => {
-              sourceTitle.archivos = (sourceTitle.archivos || []).filter(x => x.key !== file.key);
-              file.season = newSeason;
-              file.episode = newEpisode;
+            onMoved: async ({ targetSeriesId, targetSeriesName, newSeason, newEpisode, targetTitle }) => {
+              const res = await executeEpisodeMove({
+                file: f,
+                sourceTitle: t,
+                targetTitle,
+                targetSeriesId,
+                targetSeriesName,
+                newSeason,
+                newEpisode,
+                isExt,
+                fromGrid,
+                channelId,
+                getTitles,
+                setTitles,
+                persistMetadata,
+              });
 
-              let target = targetTitle;
-              const all = getTitles() || [];
-              if (!target) {
-                target = all.find(x => String(x.id) === String(targetSeriesId) || (x.tipo === 'serie' && x.nombre?.toLowerCase().trim() === targetSeriesName.toLowerCase().trim()));
-              }
-              if (!target) {
-                target = {
-                  id: targetSeriesId || `custom_series_${Date.now()}`,
-                  tipo: 'serie',
-                  isSaga: false,
-                  nombre: targetSeriesName,
-                  grupo: sourceTitle.grupo || 'Series',
-                  channel: sourceTitle.channel,
-                  origen: sourceTitle.origen,
-                  archivos: [],
-                  ultimoMensajeFecha: file.date || Date.now(),
-                };
-                all.push(target);
-              }
-              if (target) {
-                target.archivos = target.archivos || [];
-                if (!target.archivos.some(x => x.key === file.key)) {
-                  target.archivos.push(file);
-                }
-                target.archivos.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || (a.date - b.date));
-              }
-
-              if (getTitles()) {
-                setTitles([...all]);
-                await persistMetadata?.();
-              }
-
-              if (sourceTitle.archivos.length === 0) {
+              if (res.isEmpty) {
                 back();
                 return;
               }
 
               seasonsMap.clear();
-              for (const fItem of sourceTitle.archivos) {
+              for (const fItem of t.archivos) {
                 const s = Number.isInteger(fItem.season) ? fItem.season : (Number(fItem.season) || 1);
                 if (!seasonsMap.has(s)) seasonsMap.set(s, []);
                 seasonsMap.get(s).push(fItem);
               }
               seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
-              hasSeasons = sourceTitle.tipo === 'serie' && seasons.length > 1;
+              hasSeasons = t.tipo === "serie" && seasons.length > 1;
 
               if (!seasons.includes(currentSeason)) {
                 currentSeason = seasons[0] || 1;

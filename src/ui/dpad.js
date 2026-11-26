@@ -920,25 +920,45 @@ function move(dir) {
       return;
     }
 
-    // 3.6 Lista de episodios / archivos (#ep-list)
+    // 3.6 Lista de episodios / archivos (#ep-list) y botones de acción (mover, identificar, TMDB)
     if (curEpList) {
-      const isSagaMeta = cur.classList.contains('saga-film-btn-meta');
-      const curEp = isSagaMeta ? cur.closest('.ep') : cur;
+      const isEpAction = cur.classList.contains('episode-move-btn') ||
+                         cur.classList.contains('episode-identification-btn') ||
+                         cur.classList.contains('saga-film-btn-meta');
+      const curEp = isEpAction ? cur.closest('.ep') : cur;
       const epItems = [...curEpList.querySelectorAll('.ep[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
       const epIdx = epItems.indexOf(curEp);
 
-      if (isSagaMeta) {
+      if (isEpAction) {
+        const curActions = curEp ? [...curEp.querySelectorAll('.episode-move-btn, .episode-identification-btn, .saga-film-btn-meta')].filter(e => e.offsetParent && !e.disabled) : [];
+        const actionIdx = curActions.indexOf(cur);
+
         if (dir === 'left') {
-          if (curEp) {
+          if (actionIdx > 0) {
+            const prevAction = curActions[actionIdx - 1];
+            prevAction.focus();
+            prevAction.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          } else if (curEp) {
             curEp.focus();
             curEp.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           }
           return;
         }
+
+        if (dir === 'right') {
+          if (actionIdx !== -1 && actionIdx < curActions.length - 1) {
+            const nextAction = curActions[actionIdx + 1];
+            nextAction.focus();
+            nextAction.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+          }
+          return;
+        }
+
         if (dir === 'up') {
           if (epIdx > 0) {
-            const prevMeta = epItems[epIdx - 1].querySelector('.saga-film-btn-meta');
-            const target = prevMeta || epItems[epIdx - 1];
+            const prevEp = epItems[epIdx - 1];
+            const prevActions = [...prevEp.querySelectorAll('.episode-move-btn, .episode-identification-btn, .saga-film-btn-meta')].filter(e => e.offsetParent && !e.disabled);
+            const target = prevActions[Math.min(actionIdx >= 0 ? actionIdx : 0, prevActions.length - 1)] || prevEp;
             target.focus();
             target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           } else {
@@ -950,10 +970,12 @@ function move(dir) {
           }
           return;
         }
+
         if (dir === 'down') {
           if (epIdx !== -1 && epIdx < epItems.length - 1) {
-            const nextMeta = epItems[epIdx + 1].querySelector('.saga-film-btn-meta');
-            const target = nextMeta || epItems[epIdx + 1];
+            const nextEp = epItems[epIdx + 1];
+            const nextActions = [...nextEp.querySelectorAll('.episode-move-btn, .episode-identification-btn, .saga-film-btn-meta')].filter(e => e.offsetParent && !e.disabled);
+            const target = nextActions[Math.min(actionIdx >= 0 ? actionIdx : 0, nextActions.length - 1)] || nextEp;
             target.focus();
             target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           }
@@ -962,13 +984,39 @@ function move(dir) {
         return;
       }
 
+      // Foco en el cuerpo del elemento de episodio (.ep)
       if (dir === 'right') {
-        const sagaMetaBtn = cur.querySelector?.('.saga-film-btn-meta');
-        if (sagaMetaBtn) {
-          sagaMetaBtn.focus();
-          sagaMetaBtn.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        const firstAction = cur.querySelector?.('.episode-move-btn, .episode-identification-btn, .saga-film-btn-meta');
+        if (firstAction) {
+          firstAction.focus();
+          firstAction.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
           return;
         }
+        if (seasonActive) {
+          const sItems = [...detailScreen.querySelectorAll('.seasons-track [data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+          const actIdx = sItems.indexOf(seasonActive);
+          const targetSeason = sItems[Math.min(sItems.length - 1, actIdx + 1)];
+          if (targetSeason && targetSeason !== seasonActive) {
+            targetSeason.click();
+            targetSeason.focus();
+            targetSeason.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          }
+        }
+        return;
+      }
+
+      if (dir === 'left') {
+        if (seasonActive) {
+          const sItems = [...detailScreen.querySelectorAll('.seasons-track [data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+          const actIdx = sItems.indexOf(seasonActive);
+          const targetSeason = sItems[Math.max(0, actIdx - 1)];
+          if (targetSeason && targetSeason !== seasonActive) {
+            targetSeason.click();
+            targetSeason.focus();
+            targetSeason.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+          }
+        }
+        return;
       }
 
       if (dir === 'up') {
@@ -984,23 +1032,11 @@ function move(dir) {
         }
         return;
       }
+
       if (dir === 'down') {
         if (epIdx !== -1 && epIdx < epItems.length - 1) {
           epItems[epIdx + 1].focus();
           epItems[epIdx + 1].scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-        }
-        return;
-      }
-      if (dir === 'left' || dir === 'right') {
-        if (seasonActive) {
-          const sItems = [...detailScreen.querySelectorAll('.seasons-track [data-focusable]')].filter(e => e.offsetParent && !e.disabled);
-          const actIdx = sItems.indexOf(seasonActive);
-          const targetSeason = dir === 'left' ? sItems[Math.max(0, actIdx - 1)] : sItems[Math.min(sItems.length - 1, actIdx + 1)];
-          if (targetSeason && targetSeason !== seasonActive) {
-            targetSeason.click();
-            targetSeason.focus();
-            targetSeason.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-          }
         }
         return;
       }
