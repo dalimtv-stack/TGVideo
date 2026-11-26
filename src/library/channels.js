@@ -1,3 +1,4 @@
+// src/library/channels.js
 /**
  * Descubrimiento y listado de canales de vídeo (tgstorage).
  * Categorías soportadas: Series, Películas, Deportes, Música
