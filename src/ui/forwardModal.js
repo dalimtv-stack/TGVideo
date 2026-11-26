@@ -187,14 +187,18 @@ function formatSuggestedFileName(file, titleData) {
   let mName = titleData?.metadata?.title || titleData?.metadata?.name || file?.metadata?.title || file?.metadata?.name || parsedCandidate.title || titleData?.nombre || cleanBase;
 
   if (year) {
+    const escYear = String(year).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // Limpiar el año existente en cualquier parte para evitar duplicados como "Gladiator (2000) (2000)"
-    mName = mName
-      .replace(new RegExp(`\s*[\[\(]?${year}[\]\)]?\s*$`, 'i'), '')
-      .replace(new RegExp(`\s*\b${year}\b\s*`, 'g'), ' ')
+    const cleaned = mName
+      .replace(new RegExp(`\\s*[\\(\\[]?${escYear}[\\)\\]]?\\s*$`, 'i'), '')
+      .replace(new RegExp(`\\b${escYear}\\b`, 'g'), ' ')
       .replace(/\s*[\[\(]?(?:19|20)\d{2}[\]\)]?\s*$/i, '')
       .replace(/\s*AÑO\s*\d{4}/i, '')
       .replace(/\s+/g, ' ')
       .trim();
+    if (cleaned) {
+      mName = cleaned;
+    }
     return `${mName} (${year})${ext}`;
   } else {
     // Si ya trae año entre paréntesis en el propio nombre, mantenerlo
@@ -203,7 +207,9 @@ function formatSuggestedFileName(file, titleData) {
       const matchYear = mName.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
       if (matchYear) {
         const y = matchYear[1];
-        mName = mName.replace(new RegExp(`\s*[\[\(]?${y}[\]\)]?\s*$`, 'i'), '').trim();
+        const escY = String(y).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const cleaned = mName.replace(new RegExp(`\\s*[\\(\\[]?${escY}[\\)\\]]?\\s*$`, 'i'), '').trim();
+        if (cleaned) mName = cleaned;
         return `${mName} (${y})${ext}`;
       }
     }
