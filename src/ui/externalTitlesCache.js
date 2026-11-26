@@ -196,8 +196,10 @@ export function applyEpisodeOverrides(files) {
     if (!f) continue;
     const ov = getEpisodeOverride(f);
     if (ov) {
-      if (Number.isInteger(ov.season)) f.season = ov.season;
-      if (Number.isInteger(ov.episode)) f.episode = ov.episode;
+      // Los valores del caption de Telegram son la fuente común entre dispositivos;
+      // un override local antiguo no debe volver a deshacerlos.
+      if (!f.captionEpisodeOverride && Number.isInteger(ov.season)) f.season = ov.season;
+      if (!f.captionEpisodeOverride && Number.isInteger(ov.episode)) f.episode = ov.episode;
       f.episodeOverride = ov;
       if (ov.name) {
         f.metadata = { ...(f.metadata || {}), name: ov.name };

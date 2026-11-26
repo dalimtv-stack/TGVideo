@@ -23,6 +23,8 @@ export function parseCaption(text = '') {
     const k = m[1].trim().toLowerCase();
     const v = m[2].trim();
     if (k === 'sección' || k === 'seccion') out.section = v;
+    else if (k === 'temporada' || k === 'season') { const n = Number(v); if (Number.isInteger(n) && n >= 0) out.season = n; }
+    else if (k === 'episodio' || k === 'episode' || k === 'número de episodio' || k === 'numero de episodio') { const n = Number(v); if (Number.isInteger(n) && n >= 0) out.episode = n; }
     else if (k === 'nombre de archivo' || k === 'nombre del archivo' || k === 'nombre archivo' || k === 'filename') out.fileName = v;
     else if (k === 'id tmdb' || k === 'tmdb id' || k === 'tmdb') out.tmdbId = v;
     else if (k === 'id imdb' || k === 'imdb id' || k === 'imdb') out.imdbId = v;
@@ -38,6 +40,8 @@ export function parseCaption(text = '') {
 
 export function buildStandardCaption({
   fileName,
+  season,
+  episode,
   section,
   tmdbId,
   imdbId,
@@ -50,6 +54,8 @@ export function buildStandardCaption({
 }) {
   const lines = [];
   if (fileName) lines.push(`Nombre de archivo: ${fileName}`);
+  if (Number.isInteger(Number(season)) && season !== null && season !== undefined) lines.push(`Temporada: ${Number(season)}`);
+  if (Number.isInteger(Number(episode)) && episode !== null && episode !== undefined) lines.push(`Episodio: ${Number(episode)}`);
   if (section) lines.push(`Sección: ${section}`);
   if (tmdbId) lines.push(`ID TMDB: ${tmdbId}`);
   if (imdbId) lines.push(`ID IMDB: ${imdbId}`);
@@ -70,6 +76,26 @@ export function buildStandardCaption({
     }
   }
   return base.slice(0, 1024);
+}
+
+/** Actualiza el número de episodio dentro del nombre, manteniendo el formato que ya use. */
+export function formatEpisodeFileName(fileName = '', season = 1, episode = 1) {
+  const source = String(fileName || '').trim();
+  const s = Math.max(0, Number(season) || 0);
+  const ep = Math.max(0, Number(episode) || 0);
+  let result = source.replace(/\b(\d{1,2})(\s*x\s*)(\d{1,4})\b/i, (match, seasonPart, separator, episodePart) =>
+    `${String(s).padStart(seasonPart.length, '0')}${separator}${String(ep).padStart(episodePart.length, '0')}`
+  );
+  if (result !== source) return result;
+
+  result = source.replace(/\b([ST])(\d{1,2})(\s*[._ -]*[EC])(\d{1,4})\b/i, (match, prefix, seasonPart, separator, episodePart) =>
+    `${prefix}${String(s).padStart(seasonPart.length, '0')}${separator}${String(ep).padStart(episodePart.length, '0')}`
+  );
+  if (result !== source) return result;
+
+  const ext = source.match(/(\.[a-z0-9]{2,5})$/i)?.[1] || '';
+  const base = ext ? source.slice(0, -ext.length) : source;
+  return `${base}${base ? ' ' : ''}S${String(s).padStart(2, '0')}E${String(ep).padStart(2, '0')}${ext}`;
 }
 
 /**

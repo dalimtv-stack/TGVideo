@@ -1,7 +1,9 @@
 // src/ui/episodeIdentificationModal.js
 // Modal modular para corregir temporada, episodio y título de un archivo de serie de forma local.
 
+import { Api } from "telegram";
 import { modal } from "./settings.js";
+import { buildStandardCaption, formatEpisodeFileName, parseCaption } from "../library/parse.js";
 import { attachSpatialNav } from "./spatialNav.js";
 import { saveEpisodeOverride } from "./externalTitlesCache.js";
 
@@ -13,6 +15,8 @@ import { saveEpisodeOverride } from "./externalTitlesCache.js";
 export function showEpisodeIdentificationModal({
   title,
   file,
+  client,
+  peerOf,
   seasonsMap,
   persistMetadata,
   renderEpisodes,
@@ -35,7 +39,7 @@ export function showEpisodeIdentificationModal({
   const { overlay, close } = modal(`Corregir identificación del episodio`, `
     <div style="display:flex;flex-direction:column;gap:.8rem;color:#e2e8f0;">
       <p style="margin:0;color:#cbd5e1;">Archivo: <strong>${esc(fileName)}</strong></p>
-      <p style="margin:0;color:#94a3b8;font-size:.86rem;">Introduce la temporada, número y opcionalmente el título. Esta corrección se guardará localmente.</p>
+      <p style="margin:0;color:#94a3b8;font-size:.86rem;">Al guardar se actualizará el caption de Telegram y la biblioteca local para que los demás dispositivos lean el mismo orden.</p>
       <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
         <label style="display:flex;flex:1;min-width:120px;flex-direction:column;gap:.3rem;">Temporada
           <input id="episode-season-input" type="number" min="0" max="99" value="${currentS}" data-focusable style="padding:.55rem .7rem;background:#11141a;border:1px solid rgba(255,255,255,.18);border-radius:5px;color:#fff;">
@@ -77,13 +81,79 @@ export function showEpisodeIdentificationModal({
       return;
     }
 
-    // 1. Cerrar el modal de inmediato
-    close();
+    const saveButton = overlay.querySelector("#episode-edit-save");
+    if (saveButton?.disabled) return;
+    if (saveButton) {
+      saveButton.disabled = true;
+      saveButton.textContent = "Guardando…";
+    }
+    if (errorEl) errorEl.textContent = "";
 
-    // 2. Modificar el objeto archivo
+    const rawCaption = String(file.rawCaption || file.caption || '');
+    const existingCaption = parseCaption(rawCaption);
+    const oldFileName = existingCaption.fileName || file.captionFileName || file.fileName || file.label || '';
+    const updatedFileName = formatEpisodeFileName(oldFileName, season, episode);
+    const updatedCaption = buildStandardCaption({
+      fileName: updatedFileName,
+      season,
+      episode,
+      section: existingCaption.section || file.section || title?.origen?.seccion || null,
+      tmdbId: existingCaption.tmdbId || file.tmdbId || null,
+      imdbId: existingCaption.imdbId || file.imdbId || null,
+      director: existingCaption.director || '',
+      writer: existingCaption.writer || '',
+      cast: existingCaption.cast || '',
+      rating: existingCaption.rating || '',
+      ageRating: existingCaption.ageRating || '',
+      synopsis: existingCaption.synopsis || file.synopsis || '',
+    });
+
+    // En canales propios, Telegram es la fuente compartida entre dispositivos.
+    // Los canales externos conservan el comportamiento local porque no se pueden editar desde aquí.
+    const isExternalChannel = Boolean(
+      file.channel?.isExternal || title?.channel?.isExternal || title?.isExternal ||
+      title?.origen?.tipo === 'externo' || String(file.channelId || file.channel?.id || '').startsWith('ext-')
+    );
+    const channel = file.channel || title?.channel;
+    try {
+      if (!isExternalChannel) {
+        if (!client || !peerOf || !channel || !file.messageId) {
+          throw new Error('No se pudo acceder al mensaje del canal para actualizar su caption.');
+        }
+        const peer = await peerOf(channel);
+        try {
+          await client.invoke(new Api.messages.EditMessage({
+            peer,
+            id: Number(file.messageId),
+            message: updatedCaption,
+          }));
+        } catch (telegramError) {
+          const code = String(telegramError?.errorMessage || telegramError?.message || '');
+          if (!/MESSAGE_NOT_MODIFIED/i.test(code)) throw telegramError;
+        }
+      }
+    } catch (err) {
+      console.warn('[episodeIdentificationModal] No se pudo actualizar el caption en Telegram:', err);
+      if (errorEl) {
+        errorEl.textContent = `No se guardó el cambio en Telegram: ${String(err?.errorMessage || err?.message || err)}. Revisa permisos y conexión.`;
+      }
+      if (saveButton) {
+        saveButton.disabled = false;
+        saveButton.textContent = 'Guardar identificación';
+      }
+      return;
+    }
+
+    // 1. Actualizar el archivo en memoria, incluida la versión estandarizada del nombre.
     const changed = file.season !== season || file.episode !== episode;
     file.season = season;
     file.episode = episode;
+    file.captionEpisodeOverride = !isExternalChannel;
+    file.caption = updatedCaption;
+    file.rawCaption = updatedCaption;
+    file.captionFileName = updatedFileName;
+    file.fileName = updatedFileName;
+    file.episodeOverride = { season, episode, name: customTitle || null, updated_at: Date.now() };
     if (customTitle) {
       file.metadata = { ...(file.metadata || {}), name: customTitle };
     } else if (changed && file.metadata?.name) {
@@ -92,17 +162,19 @@ export function showEpisodeIdentificationModal({
       delete file.metadata.air_date;
     }
 
-    // 3. Persistir localmente en todas las fuentes pertinentes
+    // 2. Persistir también el override/cache local.
     try {
       await saveEpisodeOverride({ title, file, season, episode, name: customTitle || null });
     } catch (err) {
       console.warn("[episodeIdentificationModal] Error guardando override:", err);
     }
     try {
-      persistMetadata?.();
+      await persistMetadata?.();
     } catch (_) {}
 
-    // 4. Reconstruir el mapa de temporadas y ordenar los archivos
+    close();
+
+    // 3. Reconstruir el mapa de temporadas y ordenar los archivos.
     if (seasonsMap && Array.isArray(title?.archivos)) {
       seasonsMap.clear();
       for (const item of title.archivos) {
@@ -115,7 +187,6 @@ export function showEpisodeIdentificationModal({
       const hasSeasons = title.tipo === "serie" && seasons.length > 1;
       const targetSeason = seasonsMap.has(season) ? season : (seasons[0] || 1);
 
-      // 5. Actualizar la barra de temporadas en el DOM
       const existingBar = document.querySelector(".seasons-bar");
       if (hasSeasons) {
         if (existingBar) {
@@ -142,13 +213,11 @@ export function showEpisodeIdentificationModal({
         existingBar?.remove();
       }
 
-      // 6. Refrescar lista de episodios y metadatos
       renderEpisodes?.(targetSeason);
       loadSeasonMeta?.(targetSeason);
       centerCurrentSeason?.();
     }
 
-    // 7. Actualizar botón de reproducción si procede
     const playBtn = document.getElementById("d-play");
     if (playBtn && profile?.id && loadProgress && formatPlayButtonLabel && titleState) {
       const p = loadProgress(profile.id);

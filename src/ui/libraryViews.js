@@ -1150,6 +1150,8 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           showEpisodeIdentificationModal({
             title: t,
             file: f,
+            client: tg?.getClient?.() || tg?.client,
+            peerOf: tg?.peerOf,
             seasonsMap,
             persistMetadata,
             renderEpisodes,

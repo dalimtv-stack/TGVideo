@@ -30,7 +30,12 @@ async function scanFiles(client, peer, ch) {
     const captionFileName = cap.fileName ? cap.fileName.trim() : null;
     const rawFileName = getFileName(msg) || '';
     const fileName = captionFileName || rawFileName || `video_${msg.id}`;
-    const ep = parseEpisode(fileName) || parseEpisode(rawCaption);
+    const parsedFromName = parseEpisode(fileName);
+    const parsedFromCaption = parseEpisode(rawCaption);
+    const captionHasEpisode = Number.isInteger(cap.season) && Number.isInteger(cap.episode);
+    const ep = captionHasEpisode
+      ? { season: cap.season, episode: cap.episode }
+      : ((parsedFromName?.season || parsedFromName?.episode) ? parsedFromName : parsedFromCaption);
     const doc = msg.document || msg.media?.document;
     const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
     files.push({
@@ -43,7 +48,7 @@ async function scanFiles(client, peer, ch) {
       caption: rawCaption,
       label: prettyName(fileName), section: cap.section || null,
       synopsis: cap.synopsis || null, tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null, imdbId: cap.imdbId ? String(cap.imdbId).trim() : null, rating: cap.rating ? Number(cap.rating) : null,
-      season: ep?.season, episode: ep?.episode,
+      season: ep?.season, episode: ep?.episode, captionEpisodeOverride: captionHasEpisode,
       size: Number(doc?.size?.toString?.() || doc?.size || 0),
       duration: durAttr?.duration || 0, mimeType: doc?.mimeType || 'video/mp4', date: msg.date,
     });
