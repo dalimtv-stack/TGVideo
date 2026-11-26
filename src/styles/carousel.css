@@ -796,5 +796,5 @@ html.is-tv .carousel-trailer-modal {
 }
 /* Punto 11: En modo carrusel portadas, elevar ligeramente la info bajo la portada */
 .carousel-mode-posters .carousel-info {
-  margin-top: -10.5px;
+  margin-top: -0.5px;
 }
