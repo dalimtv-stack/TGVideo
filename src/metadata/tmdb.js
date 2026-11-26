@@ -1,3 +1,4 @@
+// src/metadata/tmdb.js
 import { createKV } from "../core/kv.js";
 import { getTmdbKey } from "../settings/global.js";
 import { getOverride, getOverrideByTmdbId, setOverride, removeOverride } from "./overrides.js";
@@ -39,6 +40,9 @@ export function extractTitleAndYear(name = "") {
   str = str.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
 
   // 4. Eliminar códigos de episodios: S01E02, 1x02
+  // Si está al INICIO: eliminar solo el prefijo del episodio para conservar el título que viene detrás (ej: 1x01 - Castle Rock)
+  str = str.replace(/^\s*(?:[ST]\d{1,2}[\s._-]*E\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|T(?:emp(?:orada)?)?[\s._-]*\d{1,2}[\s._-]*(?:ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*\d{1,3})\s*[-–—:._]*\s*/i, " ");
+  // Si está en medio o al final: eliminar desde el código del episodio hasta el final
   str = str.replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, " ");
   str = str.replace(/\d{1,2}x\d{1,3}.*/i, " ");
 

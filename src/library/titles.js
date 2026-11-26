@@ -13,7 +13,7 @@ export function isExternalTitle(t) {
  * Capa de datos: convierte canales (dedicados, contenedores de año y macro) en "Títulos" unificados.
  * No toca el DOM.
  */
-import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName, prettyEpisodeName } from './parse.js';
+import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName, prettyEpisodeName, detectTrailingSeriesMap, getTrailingSeriesForFile } from './parse.js';
 import { splitBySection } from './macro.js';
 import { parseChannelTitle } from './channels.js';
 import { extractTitleAndYear, extractTitlesFromCaption } from '../metadata/tmdb.js';
@@ -79,7 +79,11 @@ const YEAR_RE = /\b((?:19|20)\d{2})\b/;
 const YEAR_GROUP_RE = /^(?:por\s+año|por\s+ano|años|anos|décadas|decadas|por\s+década|por\s+decada)$/i;
 
 // Nombre de la serie a partir del archivo: texto anterior a S01E02 / 1x02 / T1E02
-export function seriesNameFromFile(fileName = '') {
+export function seriesNameFromFile(fileName = '', trailingMap = null) {
+  if (trailingMap) {
+    const trailingInfo = getTrailingSeriesForFile(fileName, trailingMap);
+    if (trailingInfo?.candidate) return trailingInfo.candidate;
+  }
   let base = String(fileName).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '').replace(/[._]+/g, ' ');
   // Quitar etiquetas iniciales de canal: [Canal], (Canal), @Canal
   base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
@@ -628,14 +632,16 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
       if (ch.category === 'Series') {
         // En canales macro de Series (ej. Clásicas::Series::tgstorage), el canal agrupa múltiples series distintas.
         // La "Sección:" del caption (ej. "Sección: Clásicas") es el grupo/categoría del canal, NO el nombre de la serie.
-        // Agrupamos cada serie por su TMDB ID o por el nombre individual extraído del archivo.
+        // Agrupamos cada serie por su TMDB ID o por el nombre individual extraído del archivo (delante o detrás con varios episodios).
+        const trailingSeriesMap = detectTrailingSeriesMap(files);
         const seriesTmdbMap = new Map();
         const seriesNameMap = new Map();
 
         for (const f of files) {
-          const sName = seriesNameFromFile(f.captionFileName || f.fileName) || (f.section && !/^(cl[aá]sicas|series|general|sin secci[oó]n)$/i.test(f.section) && f.section !== ch.group ? f.section : null) || ch.name || 'Serie';
+          const trailingInfo = getTrailingSeriesForFile(f.captionFileName || f.fileName, trailingSeriesMap);
+          const sName = trailingInfo?.candidate || seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap) || (f.section && !/^(cl[aá]sicas|series|general|sin secci[oó]n)$/i.test(f.section) && f.section !== ch.group ? f.section : null) || ch.name || 'Serie';
           const cleanBase = normalizeMovieKey(sName).replace(/(?:19|20)\d{2}/g, '');
-          const fileYear = f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year || null;
+          const fileYear = trailingInfo?.year || f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year || null;
           const fileTmdb = f.tmdbId ? String(f.tmdbId).trim() : null;
 
           let grp = null;

@@ -1,5 +1,6 @@
+// src/library/parse.js
 // Parseo de nombres de archivo y captions (sin TMDB todavía)
-const VIDEO_EXT = /\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i;
+const VIDEO_EXT = /\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i;
 
 export function getFileName(msg) {
   const doc = msg.document || msg.media?.document;
@@ -88,7 +89,6 @@ export function prettyName(fileName = '') {
   return fileName.replace(VIDEO_EXT, '').replace(/[._]+/g, ' ').trim();
 }
 
-
 /** Limpia la etiqueta técnica del nombre de un episodio y deja el título legible. */
 export function prettyEpisodeName(fileName = '', showName = '') {
   let label = prettyName(fileName);
@@ -96,6 +96,7 @@ export function prettyEpisodeName(fileName = '', showName = '') {
   for (const candidate of candidates) {
     const escaped = String(candidate).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     label = label.replace(new RegExp(`^\\s*${escaped}\\s*[-–—:]*\\s*`, 'i'), '');
+    label = label.replace(new RegExp(`\\s*[-–—:]*\\s*${escaped}\\s*$`, 'i'), '');
   }
   label = label
     .replace(/^\s*(?:S\s*\d{1,2}\s*E\s*\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|T(?:emp(?:orada)?)?\s*\d{1,2}\s*(?:E|ep|cap(?:[ií]tulo)?)?\s*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\s*\d{1,3})\s*[-–—:]*\s*/i, '')
@@ -105,5 +106,120 @@ export function prettyEpisodeName(fileName = '', showName = '') {
     .replace(/\s*[-–—]\s*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+  if (showName && (!label || label.toLowerCase() === showName.toLowerCase())) {
+    const ep = parseEpisode(fileName);
+    if (ep.episode > 0) return `Episodio ${ep.episode}`;
+  }
   return label || prettyName(fileName);
+}
+
+const GENERIC_BLACKLIST = /^(?:cap[ií]tulo|episodio|ep|cap|parte|part|temporada|temp|season|video|pelicula|movie|serie|unknown|sin secci[oó]n)$/i;
+
+function normalizeSeriesKey(str) {
+  return String(str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(castellano|latino|spa|esp|eng|dual|multi|subs?|vose|uhd|remux|hdr|dts|ac3|aac|x264|x265)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+export function cleanTrailingCandidate(trailing = '') {
+  if (!trailing) return null;
+  let str = String(trailing).trim();
+
+  // 1. Quitar corchetes y paréntesis extrayendo año si existe
+  let year = null;
+  str = str.replace(/\[[^\]]*\]/g, ' ').replace(/\([^)]*\)/g, (match) => {
+    const ym = match.match(/\b((?:19|20)\d{2})\b/);
+    if (ym) year = ym[1];
+    return ' ';
+  });
+
+  // 2. Extraer año si quedó suelto al final
+  if (!year) {
+    const ym = str.match(/[\(\[]?\s*((?:19|20)\d{2})\s*[\)\]]?\s*$/);
+    if (ym) {
+      year = ym[1];
+      str = str.slice(0, ym.index).trim();
+    }
+  }
+
+  // 3. Quitar etiquetas técnicas de calidad/códec
+  const qualityKw = '(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|x26[45]|h26[45]|hevc|dual|multi|castellano|latino|spanish|spa|esp|sub|subs|vose|eng)';
+  const qualityRe = new RegExp(`\\b${qualityKw}\\b.*$`, 'i');
+  str = str.replace(qualityRe, ' ');
+
+  // 4. Limpiar corchetes, puntos o símbolos sueltos
+  str = str.replace(/[\[\]\(\)]/g, ' ');
+  str = str.replace(/[._]+/g, ' ');
+  str = str.replace(/[-–—:_.\s]+$/, '').replace(/^\s*[-–—:_.]+/, '').replace(/\s+/g, ' ').trim();
+
+  // 5. Si tiene un subtítulo de episodio tipo "Castle Rock - Capitulo 1", cortar subtítulo
+  const subM = str.match(/^(.+?)\s*[-–—:]\s*(?:cap[ií]tulo|episodio|ep|part|parte|\d+)/i);
+  const candidate = subM ? subM[1].trim() : str;
+
+  if (candidate.length < 2 || GENERIC_BLACKLIST.test(candidate)) return null;
+  return { candidate, year };
+}
+
+export function extractTrailingSeriesCandidate(fileName = '') {
+  let base = String(fileName).replace(VIDEO_EXT, '').trim();
+  // Quitar etiquetas iniciales de canal: [Canal], (Canal), @Canal
+  base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
+
+  // Detectar código de episodio al inicio (1x01, S01E01, etc.) seguido del nombre de la serie
+  const m = base.match(/^\s*(?:[ST]\d{1,2}[\s._-]*E\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|T(?:emp(?:orada)?)?[\s._-]*\d{1,2}[\s._-]*(?:ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*\d{1,3})\s*[-–—:._]*\s*(.+)$/i);
+  if (!m) return null;
+
+  return cleanTrailingCandidate(m[1]);
+}
+
+/**
+ * Analiza un conjunto de archivos para detectar series cuyo nombre va detrás del número de episodio.
+ * Regla: solo se valida si hay VARIOS episodios (>= 2) que compartan ese mismo nombre de serie.
+ */
+export function detectTrailingSeriesMap(files = []) {
+  if (!Array.isArray(files) || files.length === 0) return new Map();
+
+  const counts = new Map();
+  for (const f of files) {
+    const name = f?.captionFileName || f?.fileName || f?.name || f?.label || '';
+    const cand = extractTrailingSeriesCandidate(name);
+    if (cand) {
+      const norm = normalizeSeriesKey(cand.candidate);
+      if (norm) {
+        const existing = counts.get(norm);
+        if (!existing) {
+          counts.set(norm, { count: 1, candidate: cand.candidate, year: cand.year });
+        } else {
+          existing.count++;
+          if (!existing.year && cand.year) existing.year = cand.year;
+          if (cand.candidate.length > existing.candidate.length && cand.candidate.length < 50) {
+            existing.candidate = cand.candidate;
+          }
+        }
+      }
+    }
+  }
+
+  const validMap = new Map();
+  for (const [norm, data] of counts.entries()) {
+    if (data.count >= 2) {
+      validMap.set(norm, { candidate: data.candidate, year: data.year, count: data.count });
+    }
+  }
+  return validMap;
+}
+
+export function getTrailingSeriesForFile(fileName = '', trailingMap = null) {
+  if (!trailingMap || trailingMap.size === 0) return null;
+  const cand = extractTrailingSeriesCandidate(fileName);
+  if (!cand) return null;
+  const norm = normalizeSeriesKey(cand.candidate);
+  if (!norm) return null;
+  const match = trailingMap.get(norm);
+  if (!match) return null;
+  return { candidate: match.candidate, year: match.year || cand.year || null };
 }

@@ -2,7 +2,7 @@
 // Módulo para escanear, integrar y desvincular canales, grupos y temas externos en la biblioteca.
 import { Api } from 'telegram';
 import { clearExternalChannelCache, applyEpisodeOverrides } from './externalTitlesCache.js';
-import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
+import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName, detectTrailingSeriesMap, getTrailingSeriesForFile } from '../library/parse.js';
 import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../metadata/tmdb.js';
 import { seriesNameFromFile, normalizeMovieKey } from '../library/titles.js';
 import { formatBytes } from '../core/utils.js';
@@ -73,9 +73,35 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
   const category = channelRecord.category || 'Películas';
   const groupName = channelRecord.group || channelRecord.name || channelRecord.title || 'Externo';
 
+  applyEpisodeOverrides(detectedFiles);
+  const trailingSeriesMap = detectTrailingSeriesMap(detectedFiles);
+
   if (category === 'Películas') {
     const movieMap = new Map();
+    const seriesDetectedMap = new Map();
+
     for (const f of detectedFiles) {
+      const trailingInfo = getTrailingSeriesForFile(f.captionFileName || f.fileName, trailingSeriesMap);
+      if (trailingInfo?.candidate) {
+        const normKey = normalizeMovieKey(trailingInfo.candidate);
+        if (!seriesDetectedMap.has(normKey)) {
+          seriesDetectedMap.set(normKey, {
+            id: `${virtualId}#${trailingInfo.candidate}`,
+            nombre: trailingInfo.candidate,
+            yearHint: trailingInfo.year || null,
+            files: [f],
+            tmdbId: f.tmdbId || null,
+            imdbId: f.imdbId || null,
+          });
+        } else {
+          const sGrp = seriesDetectedMap.get(normKey);
+          sGrp.files.push(f);
+          if (!sGrp.tmdbId && f.tmdbId) sGrp.tmdbId = f.tmdbId;
+          if (!sGrp.yearHint && trailingInfo.year) sGrp.yearHint = trailingInfo.year;
+        }
+        continue;
+      }
+
       const targetFileName = f.captionFileName || f.fileName || f.label;
       const fileParsed = extractTitleAndYear(targetFileName);
       const isGeneric = /^(video|file|document|input|stream)?_?\d+(\.[a-zA-Z0-9]+)?$/i.test(String(targetFileName || "").trim());
@@ -106,6 +132,29 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
         if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
         if (!grp.yearHint && finalYear) grp.yearHint = finalYear;
       }
+    }
+
+    for (const sGrp of seriesDetectedMap.values()) {
+      sGrp.files.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
+      const savedMeta = resolveExternalMetadata(sGrp.id, sGrp.tmdbId, sGrp.files, virtualId, metadataMap);
+      const titleObj = {
+        id: String(sGrp.id),
+        tipo: 'serie',
+        isSaga: false,
+        grupo: groupName,
+        nombre: savedMeta?.name || savedMeta?.title || sGrp.nombre,
+        yearHint: savedMeta?.year || sGrp.yearHint,
+        origen: { tipo: 'externo', channelId: String(virtualId), messageId: sGrp.files[0].messageId },
+        channel: { ...channelRecord, category: 'Series' },
+        archivos: sGrp.files,
+        ultimoMensajeFecha: sGrp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
+        tmdbId: savedMeta?.id || sGrp.tmdbId || null,
+        imdbId: savedMeta?.imdbId || sGrp.imdbId || null,
+        metadata: savedMeta || null,
+      };
+      if (savedMeta?.poster) titleObj.poster = savedMeta.poster;
+      if (savedMeta?.background || savedMeta?.backdrop) titleObj.backdrop = savedMeta.background || savedMeta.backdrop;
+      generatedTitles.push(titleObj);
     }
 
     for (const grp of movieMap.values()) {
@@ -185,15 +234,16 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
       generatedTitles.push(titleObj);
     }
 } else if (category === 'Series') {
-    applyEpisodeOverrides(detectedFiles);
     const seriesTmdbMap = new Map();
     const seriesNameMap = new Map();
 
     for (const f of detectedFiles) {
       const fMeta = resolveExternalMetadata(null, f.tmdbId, [f], virtualId, metadataMap);
       const fileTmdbId = fMeta?.id || f.tmdbId || null;
-      const sName = fMeta?.name || fMeta?.title || seriesNameFromFile(f.captionFileName || f.fileName) || groupName;
+      const trailingInfo = getTrailingSeriesForFile(f.captionFileName || f.fileName, trailingSeriesMap);
+      const sName = fMeta?.name || fMeta?.title || trailingInfo?.candidate || seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap) || groupName;
       const cleanBase = normalizeMovieKey(sName).replace(/(?:19|20)\d{2}/g, '');
+      const fileYear = trailingInfo?.year || fMeta?.year || null;
 
       let grp = null;
       if (fileTmdbId && seriesTmdbMap.has(String(fileTmdbId))) {
@@ -206,6 +256,7 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
         grp = {
           id: `${virtualId}#${sName}`,
           nombre: sName,
+          yearHint: fileYear,
           files: [f],
           tmdbId: fileTmdbId,
           imdbId: fMeta?.imdbId || f.imdbId || null,
@@ -219,6 +270,7 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
           grp.tmdbId = fileTmdbId;
           seriesTmdbMap.set(String(fileTmdbId), grp);
         }
+        if (!grp.yearHint && fileYear) grp.yearHint = fileYear;
         if (!grp.metadata && fMeta) grp.metadata = fMeta;
         if (fMeta?.name && grp.nombre === groupName) grp.nombre = fMeta.name;
       }
@@ -234,6 +286,7 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
         isSaga: false,
         grupo: groupName,
         nombre: savedMeta?.name || savedMeta?.title || grp.nombre,
+        yearHint: savedMeta?.year || grp.yearHint,
         origen: { tipo: 'externo', channelId: String(virtualId) },
         channel: channelRecord,
         archivos: grp.files,
