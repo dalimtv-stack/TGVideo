@@ -1,6 +1,6 @@
 // src/ui/externalTitlesBuilder.js
 // Construcción y agrupación de títulos para canales, grupos y temas externos.
-import { applyEpisodeOverrides, applySeriesMoves } from './externalTitlesCache.js';
+import { applyEpisodeOverrides, applySeriesMoves, getEpisodeSeriesMove } from './externalTitlesCache.js';
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, detectTrailingSeriesMap, getTrailingSeriesForFile, detectNumberedSeriesMap, getNumberedSeriesForFile } from '../library/parse.js';
 import { extractTitleAndYear, extractTitlesFromCaption } from '../metadata/tmdb.js';
 import { seriesNameFromFile, normalizeMovieKey } from '../library/titles.js';
@@ -252,7 +252,12 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
       const prefixCandidate = seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap, numberedSeriesMap);
 
       let knownName = null;
-      if (isValidSeriesCandidate(fMeta?.name || fMeta?.title)) {
+      const manualMove = getEpisodeSeriesMove(f) || f.seriesMove;
+      if (manualMove && (manualMove.targetSeriesName || manualMove.targetTitleName)) {
+        knownName = manualMove.targetSeriesName || manualMove.targetTitleName;
+        if (Number.isInteger(manualMove.season)) f.season = manualMove.season;
+        if (Number.isInteger(manualMove.episode)) f.episode = manualMove.episode;
+      } else if (isValidSeriesCandidate(fMeta?.name || fMeta?.title)) {
         knownName = fMeta.name || fMeta.title;
       } else if (isValidSeriesCandidate(trailingInfo?.candidate)) {
         knownName = trailingInfo.candidate;

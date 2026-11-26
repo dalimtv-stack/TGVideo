@@ -5,7 +5,7 @@ import { createKV } from "../core/kv.js";
 import { modal } from "./settings.js";
 import { prewarmPosterCache } from "../metadata/posterCache.js";
 import { identifyTitlesInBulk } from './adminChannels.js';
-import { EXT_CHANNEL_TITLES_CACHE, isExternalFileHiddenSync, getEpisodeOverride, saveEpisodeOverride, applyEpisodeOverrides } from './externalTitlesCache.js';
+import { EXT_CHANNEL_TITLES_CACHE, isExternalFileHiddenSync, getEpisodeOverride, saveEpisodeOverride, applyEpisodeOverrides, filterSeriesFilesByMoves } from './externalTitlesCache.js';
 import { showEpisodeIdentificationModal } from './episodeIdentificationModal.js';
 import { showMoveEpisodeModal, executeEpisodeMove } from './moveEpisodeModal.js';
 import { groupTitles, unbundleTitles } from '../library/titles.js';
@@ -831,8 +831,12 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   const nextLabel = formatPlayButtonLabel(t, st, progress);
 
   if (t.tipo === "serie" && Array.isArray(t.archivos)) {
-    applyEpisodeOverrides(t.archivos);
-    t.archivos.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || (a.date - b.date));
+    const isExt = Boolean(t._isExternalContext || fromGrid?.isExternal || String(fromGrid?.id || "").startsWith("ext-") || t.origen?.tipo === "externo");
+    const cleanChId = String(t.channel?.id || fromGrid?.channel?.id || fromGrid?.id || "").replace(/^ext-/, "");
+    const pool = isExt
+      ? (fromGrid?.gridItems || fromGrid?.items || EXT_CHANNEL_TITLES_CACHE.get(cleanChId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${cleanChId}`) || [])
+      : (typeof getTitles === "function" ? getTitles() || [] : []);
+    filterSeriesFilesByMoves(t, pool);
   }
   const seasonsMap = new Map();
   if (t.tipo === "serie" && Array.isArray(t.archivos)) {

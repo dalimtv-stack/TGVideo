@@ -27,11 +27,17 @@ export async function executeEpisodeMove({
 
   const s = Number(newSeason) || 1;
   const ep = Number(newEpisode) || 1;
-
-  // 1. Quitar el archivo de la serie origen
-  sourceTitle.archivos = (sourceTitle.archivos || []).filter(x => x.key !== file.key);
   file.season = s;
   file.episode = ep;
+
+  const matchesFile = (x) =>
+    x === file ||
+    (file.key && x.key === file.key) ||
+    (file.messageId && String(x.messageId) === String(file.messageId)) ||
+    (file.fileName && x.fileName && x.fileName === file.fileName && x.size === file.size);
+
+  // 1. Quitar el archivo de la serie origen en memoria
+  sourceTitle.archivos = (sourceTitle.archivos || []).filter(x => !matchesFile(x));
 
   // 2. Determinar la colección de títulos activa según el contexto (externo o interno)
   let titlePool = [];
@@ -51,7 +57,14 @@ export async function executeEpisodeMove({
     titlePool = getTitles() || [];
   }
 
-  // 3. Localizar o instanciar la serie destino
+  // 3. Quitar el archivo de cualquier título previo en titlePool (para evitar que permanezca en la serie errónea)
+  for (const t of titlePool) {
+    if (Array.isArray(t.archivos)) {
+      t.archivos = t.archivos.filter(x => !matchesFile(x));
+    }
+  }
+
+  // 4. Localizar o instanciar la serie destino
   let target = targetTitle;
   if (!target && titlePool.length > 0) {
     target = titlePool.find(x =>
@@ -80,32 +93,29 @@ export async function executeEpisodeMove({
     }
   }
 
-  // 4. Incorporar el archivo a la serie destino
+  // 5. Incorporar el archivo a la serie destino
   if (target) {
     target.archivos = target.archivos || [];
-    const alreadyThere = target.archivos.some(x => x.key === file.key || (file.messageId && String(x.messageId) === String(file.messageId)));
+    const alreadyThere = target.archivos.some(matchesFile);
     if (!alreadyThere) {
       target.archivos.push(file);
     }
     target.archivos.sort((a, b) =>
       ((Number(a.season) || 1) - (Number(b.season) || 1)) ||
       ((Number(a.episode) || 1) - (Number(b.episode) || 1)) ||
+      ((Number(b.size) || 0) - (Number(a.size) || 0)) ||
       (a.date - b.date)
     );
   }
 
-  // 5. Si la serie origen se quedó sin archivos, retirarla de las listas activas
-  const isEmpty = (sourceTitle.archivos || []).length === 0;
-  if (isEmpty) {
-    const sIdx = titlePool.findIndex(x => String(x.id) === String(sourceTitle.id));
-    if (sIdx !== -1) titlePool.splice(sIdx, 1);
-    if (isExt && fromGrid) {
-      if (Array.isArray(fromGrid.gridItems)) fromGrid.gridItems = fromGrid.gridItems.filter(x => String(x.id) !== String(sourceTitle.id));
-      if (Array.isArray(fromGrid.items)) fromGrid.items = fromGrid.items.filter(x => String(x.id) !== String(sourceTitle.id));
-    }
-  }
+  // 6. Limpiar series vacías de las listas activas
+  const cleanedPool = titlePool.filter(t => t === target || (Array.isArray(t.archivos) && t.archivos.length > 0));
+  titlePool.length = 0;
+  titlePool.push(...cleanedPool);
 
-  // 6. Persistir en almacenamiento durable y sincronizar cachés
+  const isEmpty = (sourceTitle.archivos || []).length === 0;
+
+  // 7. Persistir en almacenamiento durable y sincronizar cachés
   try {
     await saveEpisodeSeriesMove({
       file,
@@ -121,9 +131,9 @@ export async function executeEpisodeMove({
   }
 
   if (isExt) {
-    if (cleanChId) {
-      EXT_CHANNEL_TITLES_CACHE.set(cleanChId, [...titlePool]);
-      EXT_CHANNEL_TITLES_CACHE.set(`ext-${cleanChId}`, [...titlePool]);
+    const cCandidates = [cleanChId, `ext-${cleanChId}`].filter(Boolean);
+    for (const cKey of cCandidates) {
+      EXT_CHANNEL_TITLES_CACHE.set(cKey, [...titlePool]);
     }
     if (fromGrid) {
       fromGrid.gridItems = [...titlePool];

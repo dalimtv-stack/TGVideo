@@ -473,8 +473,91 @@ export async function saveEpisodeSeriesMove({ file, sourceTitle, targetTitle, ta
     file.season = s;
     file.episode = ep;
     file.seriesMove = moveData;
+    file.targetSeriesName = targetName;
+    file.targetSeriesId = targetId;
   }
   return moveData;
+}
+
+/**
+ * Filtra y consolida los episodios de una serie respetando las reubicaciones manuales:
+ * - Excluye episodios que hayan sido movidos a otra serie.
+ * - Incorpora episodios que hayan sido movidos hacia esta serie desde otras del mismo canal o contexto.
+ */
+export function filterSeriesFilesByMoves(title, channelPool = []) {
+  if (!title || !Array.isArray(title.archivos)) return title?.archivos || [];
+  if (seriesMovesMap.size === 0) {
+    try {
+      const raw = localStorage.getItem(SERIES_MOVES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        for (const [k, v] of Object.entries(parsed)) seriesMovesMap.set(k, v);
+      }
+    } catch (_) {}
+  }
+
+  const tId = String(title.id || "").trim();
+  const tName = String(title.nombre || title.metadata?.name || title.metadata?.title || "").toLowerCase().trim();
+
+  const isMatchingThisTitle = (move) => {
+    if (!move) return false;
+    if (move.targetTitleId && String(move.targetTitleId).trim() === tId) return true;
+    if (move.targetTitleName && move.targetTitleName.toLowerCase().trim() === tName) return true;
+    return false;
+  };
+
+  const isMovedAwayFromThis = (move) => {
+    if (!move || (!move.targetTitleId && !move.targetTitleName)) return false;
+    return !isMatchingThisTitle(move);
+  };
+
+  // 1. Descartar cualquier archivo que haya sido reubicado a otra serie
+  let files = title.archivos.filter(f => {
+    const move = getEpisodeSeriesMove(f);
+    return !isMovedAwayFromThis(move);
+  });
+
+  // 2. Incorporar archivos de channelPool que hayan sido reubicados hacia esta serie
+  if (Array.isArray(channelPool) && channelPool.length > 0) {
+    const fileKeys = new Set();
+    const addFileKey = (f) => {
+      if (f.key) fileKeys.add(String(f.key));
+      if (f.messageId) fileKeys.add(String(f.messageId));
+      if (f.fileName) fileKeys.add(String(f.fileName));
+    };
+    files.forEach(addFileKey);
+
+    for (const otherTitle of channelPool) {
+      if (otherTitle === title || !Array.isArray(otherTitle.archivos)) continue;
+      for (const of of otherTitle.archivos) {
+        const move = getEpisodeSeriesMove(of);
+        if (isMatchingThisTitle(move)) {
+          const hasKey = (of.key && fileKeys.has(String(of.key))) ||
+                         (of.messageId && fileKeys.has(String(of.messageId))) ||
+                         (of.fileName && fileKeys.has(String(of.fileName)));
+          if (!hasKey) {
+            if (Number.isInteger(move.season)) of.season = move.season;
+            if (Number.isInteger(move.episode)) of.episode = move.episode;
+            of.seriesMove = move;
+            files.push(of);
+            addFileKey(of);
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Aplicar overrides numéricos y ordenar
+  applyEpisodeOverrides(files);
+  files.sort((a, b) =>
+    ((Number(a.season) || 1) - (Number(b.season) || 1)) ||
+    ((Number(a.episode) || 1) - (Number(b.episode) || 1)) ||
+    ((Number(b.size) || 0) - (Number(a.size) || 0)) ||
+    (a.date - b.date)
+  );
+
+  title.archivos = files;
+  return files;
 }
 
 /**
@@ -521,7 +604,7 @@ export function applySeriesMoves(titles) {
         if (Number.isInteger(move.season)) f.season = move.season;
         if (Number.isInteger(move.episode)) f.episode = move.episode;
         f.seriesMove = move;
-        const alreadyInTarget = target.archivos.some(existing => existing.key === f.key || (f.messageId && String(existing.messageId) === String(f.messageId)));
+        const alreadyInTarget = target.archivos.some(existing => existing === f || existing.key === f.key || (f.messageId && String(existing.messageId) === String(f.messageId)));
         if (!alreadyInTarget) {
           target.archivos.push(f);
           target.archivos.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || (a.date - b.date));
@@ -529,7 +612,7 @@ export function applySeriesMoves(titles) {
       }
     }
     if (toRemove.length > 0) {
-      t.archivos = t.archivos.filter(f => !toRemove.includes(f));
+      t.archivos = t.archivos.filter(f => !toRemove.some(r => r === f || (r.key && r.key === f.key) || (r.messageId && String(r.messageId) === String(f.messageId))));
     }
   }
 

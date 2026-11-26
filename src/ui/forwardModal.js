@@ -4,7 +4,7 @@ import { fetchTmdbFullDetails, extractTitleAndYear } from '../metadata/tmdb.js';
 import { loadLibrary } from '../library/channels.js';
 import { parseCaption, buildStandardCaption, parseEpisode, prettyEpisodeName } from '../library/parse.js';
 import { normalizeMovieKey } from '../library/titles.js';
-import { EXT_CHANNEL_TITLES_CACHE } from './externalTitlesCache.js';
+import { EXT_CHANNEL_TITLES_CACHE, getEpisodeSeriesMove, filterSeriesFilesByMoves } from './externalTitlesCache.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
 
 function esc(value) {
@@ -260,26 +260,33 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
   }
 
   const isSerie = isSeriesTitle(titleData, file);
-  let allFiles = isSerie && Array.isArray(titleData?.archivos) && titleData.archivos.length > 0
-    ? [...titleData.archivos]
-    : [file];
-
-  // Consolidar con episodios de la misma serie en el canal si estuvieran en fichas separadas
   const curTmdb = titleData?.tmdbId || titleData?.metadata?.id || file.tmdbId;
   const curChId = titleData?.channel?.id || file.channelId || titleData?.origen?.channelId;
+
+  const pool = [];
+  if (typeof getTitles === 'function') {
+    try { pool.push(...(getTitles() || [])); } catch (_) {}
+  }
+  if (typeof EXT_CHANNEL_TITLES_CACHE !== 'undefined' && EXT_CHANNEL_TITLES_CACHE?.values) {
+    try {
+      for (const list of EXT_CHANNEL_TITLES_CACHE.values()) {
+        if (Array.isArray(list)) pool.push(...list);
+      }
+    } catch (_) {}
+  }
+
+  let allFiles = [];
+  if (isSerie && titleData) {
+    allFiles = filterSeriesFilesByMoves(titleData, pool);
+  } else if (isSerie && Array.isArray(titleData?.archivos) && titleData.archivos.length > 0) {
+    allFiles = [...titleData.archivos];
+  } else {
+    allFiles = [file];
+  }
+
+  // Consolidar con episodios de la misma serie en el canal si estuvieran en fichas separadas
   if (isSerie && (curTmdb || titleData?.nombre)) {
     const sNameNorm = normalizeMovieKey(titleData.metadata?.name || titleData.metadata?.title || titleData.nombre).replace(/(?:19|20)\d{2}/g, '');
-    const pool = [];
-    if (typeof getTitles === 'function') {
-      try { pool.push(...(getTitles() || [])); } catch (_) {}
-    }
-    if (typeof EXT_CHANNEL_TITLES_CACHE !== 'undefined' && EXT_CHANNEL_TITLES_CACHE?.values) {
-      try {
-        for (const list of EXT_CHANNEL_TITLES_CACHE.values()) {
-          if (Array.isArray(list)) pool.push(...list);
-        }
-      } catch (_) {}
-    }
 
     const siblings = pool.filter(t => {
       if (t === titleData) return false;
@@ -293,6 +300,12 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     const existingKeys = new Set(allFiles.map(f => f.key || `${f.channelId || f.channel?.id}:${f.messageId}`));
     for (const sib of siblings) {
       for (const sf of (sib.archivos || [])) {
+        const move = getEpisodeSeriesMove(sf);
+        if (move && (move.targetTitleId || move.targetTitleName)) {
+          const isTarget = (move.targetTitleId && String(move.targetTitleId) === String(titleData?.id)) ||
+            (move.targetTitleName && titleData?.nombre && move.targetTitleName.toLowerCase().trim() === titleData.nombre.toLowerCase().trim());
+          if (!isTarget) continue; // Descartar episodios que hayan sido movidos a otra serie
+        }
         const sfKey = sf.key || `${sf.channelId || sf.channel?.id}:${sf.messageId}`;
         if (!existingKeys.has(sfKey)) {
           allFiles.push(sf);

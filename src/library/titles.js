@@ -274,7 +274,7 @@ export function groupTitles(items = []) {
     m.archivos.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0));
   }
 
-  return [...seriesMap.values(), ...movieMap.values(), ...others];
+  return applySeriesMoves([...seriesMap.values(), ...movieMap.values(), ...others]);
 }
 
 /**
