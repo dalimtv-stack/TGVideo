@@ -560,9 +560,11 @@ export function initContextMenu(config) {
       ev.stopPropagation();
       removeActiveMenu();
       const currentConfig = activeContextConfig || {};
-      const currentTg = currentConfig.tg;
-      const currentClient = currentConfig.client || currentTg?.getClient?.();
-      showForwardModal(currentClient, currentTg, targetFile, currentConfig.getChannels, targetTitle, currentConfig.getTitles);
+      const currentTg = currentConfig.tg || (typeof window !== 'undefined' ? window.tg : null);
+      const currentClient = currentConfig.client || currentTg?.getClient?.() || (typeof window !== 'undefined' && window.tg?.getClient?.());
+      showForwardModal(currentClient, currentTg, targetFile, currentConfig.getChannels, targetTitle, currentConfig.getTitles).catch(err => {
+        console.error('[contextMenu] Error en showForwardModal:', err);
+      });
     });
 
     menu.querySelector('#pc-menu-identify')?.addEventListener('click', (ev) => {

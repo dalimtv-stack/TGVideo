@@ -599,7 +599,7 @@ export function showEditCaptionModal({
 
         // Pausa preventiva entre ediciones para evitar FloodWait (como en TGComic)
         if (filesToUpdate.length > 1 && !cancelRequested) {
-          await new Promise(r => setTimeout(r, 1200));
+          await new Promise(r => setTimeout(r, 2000));
         }
       }
 

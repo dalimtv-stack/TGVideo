@@ -1,6 +1,6 @@
 // src/ui/forwardModal.js
 import { Api } from 'telegram';
-import { fetchTmdbFullDetails } from '../metadata/tmdb.js';
+import { fetchTmdbFullDetails, extractTitleAndYear } from '../metadata/tmdb.js';
 import { loadLibrary } from '../library/channels.js';
 import { parseCaption, buildStandardCaption, parseEpisode, prettyEpisodeName } from '../library/parse.js';
 import { normalizeMovieKey } from '../library/titles.js';
@@ -100,6 +100,10 @@ function extractYear(titleData, file) {
   if (file?.year) return String(file.year);
 
   // 3. Extracción robusta de nombres de archivo y captions de Telegram
+  const candidate = file?.captionFileName || file?.fileName || file?.rawFileName || file?.label || titleData?.nombre || '';
+  const parsedCandidate = extractTitleAndYear(candidate);
+  if (parsedCandidate.year) return String(parsedCandidate.year);
+
   const raw = `${titleData?.nombre || ''} ${file?.fileName || ''} ${file?.captionFileName || ''} ${file?.rawFileName || ''} ${file?.rawCaption || ''} ${file?.caption || ''} ${file?.label || ''} ${file?.synopsis || ''}`;
 
   const mBracket = raw.match(/[\[\(]((?:19|20)\d{2})[\]\)]/);
@@ -108,7 +112,7 @@ function extractYear(titleData, file) {
   const mYearTag = raw.match(/(?:AÑO|YEAR)\s*(\d{4})/i);
   if (mYearTag) return mYearTag[1];
 
-  const mWord = raw.match(/\b((?:19|20)\d{2})\b/);
+  const mWord = raw.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
   if (mWord) return mWord[1];
 
   return null;
@@ -160,25 +164,30 @@ function formatSuggestedFileName(file, titleData) {
     return `${sName} - ${season}x${epStr}${ext}`;
   }
 
-  let mName = titleData?.metadata?.title || titleData?.metadata?.name || file?.metadata?.title || file?.metadata?.name || titleData?.nombre || cleanBase;
-  let year = extractYear(titleData, file);
+  const candidateName = file?.captionFileName || file?.fileName || file?.label || titleData?.nombre || cleanBase;
+  const parsedCandidate = extractTitleAndYear(candidateName);
+  let year = extractYear(titleData, file) || parsedCandidate.year;
+
+  let mName = titleData?.metadata?.title || titleData?.metadata?.name || file?.metadata?.title || file?.metadata?.name || parsedCandidate.title || titleData?.nombre || cleanBase;
 
   if (year) {
-    // Limpiar el año existente al final del título para evitar duplicados como "Gladiator (2000) (2000)"
+    // Limpiar el año existente en cualquier parte para evitar duplicados como "Gladiator (2000) (2000)"
     mName = mName
-      .replace(new RegExp(`\\s*[\[\(]?${year}[\]\)]?\\s*$`, 'i'), '')
+      .replace(new RegExp(`\s*[\[\(]?${year}[\]\)]?\s*$`, 'i'), '')
+      .replace(new RegExp(`\s*\b${year}\b\s*`, 'g'), ' ')
       .replace(/\s*[\[\(]?(?:19|20)\d{2}[\]\)]?\s*$/i, '')
       .replace(/\s*AÑO\s*\d{4}/i, '')
+      .replace(/\s+/g, ' ')
       .trim();
     return `${mName} (${year})${ext}`;
   } else {
     // Si ya trae año entre paréntesis en el propio nombre, mantenerlo
     const hasParen = mName.match(/[\[\(]((?:19|20)\d{2})[\]\)]/);
     if (!hasParen) {
-      const matchYear = mName.match(/\b((?:19|20)\d{2})\b/);
+      const matchYear = mName.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
       if (matchYear) {
         const y = matchYear[1];
-        mName = mName.replace(new RegExp(`\\s*[\[\(]?${y}[\]\)]?\\s*$`, 'i'), '').trim();
+        mName = mName.replace(new RegExp(`\s*[\[\(]?${y}[\]\)]?\s*$`, 'i'), '').trim();
         return `${mName} (${y})${ext}`;
       }
     }
@@ -191,7 +200,15 @@ function formatSuggestedFileName(file, titleData) {
  */
 export async function showForwardModal(client, tg, file, getChannels, titleData = null, getTitles = null) {
   if (!client) {
+    if (tg?.getClient) client = tg.getClient();
+    else if (window.tg?.getClient) client = window.tg.getClient();
+  }
+  if (!client) {
     alert('Cliente de Telegram no disponible.');
+    return;
+  }
+  if (!file) {
+    console.warn('[forwardModal] Archivo no especificado');
     return;
   }
 
@@ -200,18 +217,28 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     if (typeof getChannels === 'function') {
       channels = getChannels() || [];
     }
-    if (!channels || channels.length === 0) {
-      channels = await loadLibrary(client);
-    }
   } catch (err) {
-    console.warn('[contextMenu] Error cargando canales tgstorage', err);
+    console.warn('[forwardModal] Error getChannels', err);
   }
 
   // Filtrar solo canales propios de tgstorage (excluyendo externos)
-  const tgStorageChannels = (channels || []).filter(ch => !ch.isExternal && ch.category && ['Películas', 'Series', 'Deportes', 'Música'].includes(ch.category));
+  let tgStorageChannels = (channels || []).filter(ch => !ch.isExternal && (ch.category || String(ch.title || '').includes('::tgstorage')));
+
+  // Si no hay canales tgstorage encontrados en la caché (por ejemplo, estamos en la pestaña Externos),
+  // forzamos la carga desde la biblioteca de Telegram para encontrarlos
+  if (tgStorageChannels.length === 0 && client) {
+    try {
+      const loaded = await loadLibrary(client);
+      if (Array.isArray(loaded)) {
+        tgStorageChannels = loaded.filter(ch => !ch.isExternal && (ch.category || String(ch.title || '').includes('::tgstorage')));
+      }
+    } catch (err) {
+      console.warn('[forwardModal] Error cargando canales tgstorage', err);
+    }
+  }
 
   if (tgStorageChannels.length === 0) {
-    alert('No se encontraron canales de tgstorage disponibles en tu biblioteca para enviar el archivo.');
+    alert('No se encontraron canales de tgstorage disponibles en tu biblioteca para enviar el archivo.\nAsegúrate de tener canales creados que terminen en ::tgstorage (ej. Películas::tgstorage).');
     return;
   }
 
@@ -639,7 +666,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
                   const blob = new Blob([bytes], { type: mimeType });
                   const upload = await client.uploadFile({
                     file: new File([blob], curFilename, { type: blob.type }),
-                    workers: 3,
+                    workers: 1,
                   });
                   await client.sendFile(targetPeer, {
                     file: upload,
@@ -658,7 +685,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
             const blob = new Blob([bytes], { type: mimeType });
             const upload = await client.uploadFile({
               file: new File([blob], curFilename, { type: blob.type }),
-              workers: 3,
+              workers: 1,
             });
             await client.sendFile(targetPeer, {
               file: upload,
@@ -787,7 +814,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
               const blob = new Blob([bytes], { type: mimeType });
               const upload = await client.uploadFile({
                 file: new File([blob], filename, { type: blob.type }),
-                workers: 3,
+                workers: 1,
                 onProgress: (progress) => {
                   const pct = 55 + Math.round(progress * 40);
                   setProgressBar(bar, {
@@ -833,7 +860,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
           const blob = new Blob([bytes], { type: mimeType });
           const upload = await client.uploadFile({
             file: new File([blob], filename, { type: blob.type }),
-            workers: 3,
+            workers: 1,
             onProgress: (progress) => {
               const pct = 45 + Math.round(progress * 50);
               setProgressBar(bar, {

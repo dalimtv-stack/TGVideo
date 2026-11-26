@@ -1433,3 +1433,13 @@ html, body {
   border-radius: 20px;
   cursor: pointer;
 }
+
+
+.grid-cards .lib-card-name,
+.category-grid .lib-card-name,
+.category-view--grid .lib-card-name,
+.grid-screen .lib-card-name,
+.screen.grid-screen .lib-card-name {
+  margin-top: 0.65rem !important;
+  font-weight: 700 !important;
+}

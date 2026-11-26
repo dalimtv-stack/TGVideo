@@ -26,8 +26,6 @@ function formatBytes(bytes) {
   return `${(num / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-// ---------- Utilidades de subida (patrón robusto heredado de TGComic) ----------
-
 /** ¿Es un MP4 que Telegram puede tratar como vídeo nativo? */
 export function isMp4File(file, fileName = '') {
   const name = String(fileName || file?.name || '').toLowerCase();
@@ -35,87 +33,155 @@ export function isMp4File(file, fileName = '') {
   return type === 'video/mp4' || /\.(mp4|m4v)$/.test(name);
 }
 
-/** Telegram limita el caption de medios a 1024 caracteres. */
-function fitTelegramCaption(text, max = 1024) {
-  const str = String(text || '');
-  if (str.length <= max) return str;
-  return str.slice(0, max - 1).trimEnd() + '…';
+function parseEpisodeHelper(name = '', fallbackIdx = 1) {
+  const m = name.match(/(\d+)[xX](\d+)/);
+  if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10) };
+  const s = name.match(/[sS](\d+)/);
+  const e = name.match(/[eE](\d+)/);
+  if (s || e) return { season: s ? parseInt(s[1], 10) : 1, episode: e ? parseInt(e[1], 10) : fallbackIdx };
+  const epSolo = name.match(/\b(?:ep|episodio|cap|capitulo)\s*(\d+)\b/i);
+  if (epSolo) return { season: 1, episode: parseInt(epSolo[1], 10) };
+  const numSolo = name.match(/\b(\d{1,3})\b/);
+  if (numSolo) return { season: 1, episode: parseInt(numSolo[1], 10) };
+  return { season: 1, episode: fallbackIdx };
 }
 
-const isGramNoise = (e) => /Missing MTProto Entity|TL definition for ID 0|ENTITY_MEMBER_INVALID|constructor id/i.test(String(e?.message || e || ''));
-
-/** GramJS a veces lanza un error de parseo DESPUÉS de enviar: el mensaje ya está en Telegram, no reintentar. */
-async function sendFileSafe(client, peer, opts) {
-  try {
-    return await client.sendFile(peer, opts);
-  } catch (e) {
-    if (isGramNoise(e)) {
-      console.warn('[upload] aviso interno GramJS tras enviar (mensaje enviado):', e?.message || e);
-      return { __sentWithNoise: true };
-    }
-    throw e;
-  }
-}
-
-/** Lee duración, resolución y una miniatura JPEG del vídeo usando el propio navegador. */
-function probeVideo(file, timeoutMs = 10000) {
+/**
+ * Lee duración y dimensiones de un MP4 en el navegador mediante <video>.
+ */
+export async function probeVideo(file) {
   return new Promise((resolve) => {
-    const result = { duration: 0, width: 0, height: 0, thumb: null };
-    let url = null;
-    let done = false;
-    const video = document.createElement('video');
-    const finish = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      try { video.removeAttribute('src'); video.load(); } catch (_) {}
-      if (url) URL.revokeObjectURL(url);
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try { URL.revokeObjectURL(url); } catch (_) {}
       resolve(result);
     };
-    const timer = setTimeout(finish, timeoutMs);
+
+    const timer = setTimeout(() => {
+      finish({ duration: 0, width: 0, height: 0, thumb: null });
+    }, 10000);
+
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+
+    let url = '';
     try {
       url = URL.createObjectURL(file);
-      video.preload = 'metadata';
-      video.muted = true;
-      video.playsInline = true;
-      video.onerror = finish;
-      video.onloadedmetadata = () => {
-        result.duration = Number.isFinite(video.duration) ? Math.round(video.duration) : 0;
-        result.width = video.videoWidth || 0;
-        result.height = video.videoHeight || 0;
-        const target = Math.min(Math.max(1, (video.duration || 10) * 0.1), 30);
-        try { video.currentTime = target; } catch (_) { finish(); }
-      };
+    } catch (_) {
+      clearTimeout(timer);
+      return resolve({ duration: 0, width: 0, height: 0, thumb: null });
+    }
+
+    video.onloadedmetadata = () => {
+      clearTimeout(timer);
+      const duration = Math.round(video.duration || 0);
+      const width = video.videoWidth || 0;
+      const height = video.videoHeight || 0;
+
+      if (!width || !height) {
+        return finish({ duration, width, height, thumb: null });
+      }
+
+      const seekTime = Math.min(Math.max(1, Math.floor(duration * 0.1)), 15);
+      video.currentTime = seekTime;
+
       video.onseeked = () => {
         try {
-          const w = video.videoWidth, h = video.videoHeight;
-          if (w && h) {
-            const scale = Math.min(1, 320 / Math.max(w, h));
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.round(w * scale);
-            canvas.height = Math.round(h * scale);
-            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-            canvas.toBlob((blob) => {
-              if (blob) result.thumb = new File([blob], 'thumb.jpg', { type: 'image/jpeg' });
-              finish();
-            }, 'image/jpeg', 0.8);
-            return;
+          const maxDim = 320;
+          let tw = width;
+          let th = height;
+          if (tw > th && tw > maxDim) {
+            th = Math.round((th * maxDim) / tw);
+            tw = maxDim;
+          } else if (th > maxDim) {
+            tw = Math.round((tw * maxDim) / th);
+            th = maxDim;
           }
-        } catch (_) {}
-        finish();
+          const canvas = document.createElement('canvas');
+          canvas.width = tw;
+          canvas.height = th;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, tw, th);
+          canvas.toBlob((blob) => {
+            if (!blob) return finish({ duration, width, height, thumb: null });
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const buf = reader.result ? new Uint8Array(reader.result) : null;
+              finish({ duration, width, height, thumb: buf });
+            };
+            reader.onerror = () => finish({ duration, width, height, thumb: null });
+            reader.readAsArrayBuffer(blob);
+          }, 'image/jpeg', 0.8);
+        } catch (_) {
+          finish({ duration, width, height, thumb: null });
+        }
       };
-      video.src = url;
-    } catch (_) {
-      finish();
-    }
+
+      video.onerror = () => finish({ duration, width, height, thumb: null });
+    };
+
+    video.onerror = () => {
+      clearTimeout(timer);
+      finish({ duration: 0, width: 0, height: 0, thumb: null });
+    };
+
+    video.src = url;
   });
 }
 
-function extractMessageId(sentMsg) {
-  if (!sentMsg || sentMsg.__sentWithNoise) return null;
-  return sentMsg.id ||
-    sentMsg.updates?.find?.(u => u.message?.id)?.message?.id ||
-    sentMsg.message?.id || null;
+export function fitTelegramCaption(caption, maxLen = 1024) {
+  const str = String(caption ?? '').trim();
+  if (str.length <= maxLen) return str;
+  const parts = str.split('\n\n');
+  let current = '';
+  for (const p of parts) {
+    const candidate = current ? `${current}\n\n${p}` : p;
+    if (candidate.length <= maxLen) current = candidate;
+    else break;
+  }
+  if (!current) current = str.slice(0, maxLen - 3) + '…';
+  return current;
+}
+
+export async function sendFileSafe(client, peer, options) {
+  try {
+    return await client.sendFile(peer, options);
+  } catch (err) {
+    const msg = String(err?.errorMessage || err?.message || err || '');
+    if (msg.includes('RPCError 400') || msg.includes('CHANNEL_INVALID') || msg.includes('MEDIA_EMPTY')) {
+      if (!options.forceDocument) {
+        console.warn('[upload] sendFile falló con vídeo, reintentando como documento plano:', msg);
+        const docOpts = {
+          file: options.file,
+          caption: options.caption,
+          forceDocument: true,
+          attributes: options.attributes?.filter(a => a.className === 'DocumentAttributeFilename') || [],
+        };
+        return await client.sendFile(peer, docOpts);
+      }
+    }
+    throw err;
+  }
+}
+
+export function extractMessageId(sentMsg) {
+  if (!sentMsg) return null;
+  if (typeof sentMsg.id === 'number') return sentMsg.id;
+  if (Array.isArray(sentMsg)) {
+    const last = sentMsg[sentMsg.length - 1];
+    if (typeof last?.id === 'number') return last.id;
+  }
+  if (Array.isArray(sentMsg.updates)) {
+    for (const u of sentMsg.updates) {
+      if (typeof u.id === 'number') return u.id;
+      if (u.message && typeof u.message.id === 'number') return u.message.id;
+    }
+  }
+  return null;
 }
 
 export async function renderUploadTab({ mainPanel, client, tg }) {
@@ -123,16 +189,16 @@ export async function renderUploadTab({ mainPanel, client, tg }) {
     <div class="admin-panel-header">
       <div class="admin-panel-title">
         <h2>Subir archivos</h2>
-        <p>Sube archivos de vídeo desde tu dispositivo directamente a tus canales ::tgstorage de Telegram, con metadatos de TMDB y subida en segundo plano.</p>
+        <p>Sube archivos de vídeo desde tu dispositivo directamente a tus canales ::tgstorage de Telegram, con metadatos de TMDB y subida concurrente en segundo plano.</p>
       </div>
       <div>
-        <input type="file" id="upload-file-input" accept="video/*" style="display:none;" />
-        <button class="btn-primary" data-focusable id="btn-select-file">Cargar vídeo del disco</button>
+        <input type="file" id="upload-file-input" accept="video/*,.mkv,.mp4,.avi,.mov,.m4v,.webm,.ts,.m2ts" multiple style="display:none;" />
+        <button class="btn-primary" data-focusable id="btn-select-file">Cargar vídeo(s) del disco</button>
       </div>
     </div>
 
     <div id="admin-upload-workspace">
-      <p style="color:#aaa;">Selecciona un archivo de vídeo de tu disco para configurar su ficha técnica y canal de destino.</p>
+      <p style="color:#aaa;">Selecciona uno o varios archivos de vídeo de tu disco para configurar su ficha técnica y canal de destino.</p>
     </div>
   `;
 
@@ -143,230 +209,454 @@ export async function renderUploadTab({ mainPanel, client, tg }) {
   selectFileBtn?.addEventListener('click', () => fileInput?.click());
 
   fileInput?.addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
 
-    const rawName = file.name;
-    const parsedInfo = extractTitleAndYear(rawName);
-    const cleanName = parsedInfo.title || cleanSearchName(rawName);
-    const detectedYear = parsedInfo.year || '';
+    if (files.length === 1) {
+      renderSingleFileUploadForm({ workspace, file: files[0], client, tg });
+    } else {
+      renderMultiFileUploadForm({ workspace, files, client, tg });
+    }
+  });
+}
 
-    workspace.innerHTML = `
-      <div class="admin-upload-form">
-        <div style="background:rgba(56,189,248,0.1);padding:0.9rem 1.2rem;border-radius:8px;border:1px solid rgba(56,189,248,0.25);display:flex;align-items:center;justify-content:space-between;">
-          <div>
-            <strong style="color:#38bdf8;font-size:1.05rem;">${esc(file.name)}</strong>
-            <div style="color:#aaa;font-size:0.85rem;margin-top:0.2rem;">Tamaño: ${formatBytes(file.size)}</div>
-          </div>
-          <button class="btn-secondary admin-btn-sm" id="btn-change-file">Cambiar archivo</button>
+/** Formulario para un único archivo */
+async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
+  const rawName = file.name;
+  const parsedInfo = extractTitleAndYear(rawName);
+  const cleanName = parsedInfo.title || cleanSearchName(rawName);
+  const detectedYear = parsedInfo.year || '';
+
+  workspace.innerHTML = `
+    <div class="admin-upload-form">
+      <div style="background:rgba(56,189,248,0.1);padding:0.9rem 1.2rem;border-radius:8px;border:1px solid rgba(56,189,248,0.25);display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <strong style="color:#38bdf8;font-size:1.05rem;">${esc(file.name)}</strong>
+          <div style="color:#aaa;font-size:0.85rem;margin-top:0.2rem;">Tamaño: ${formatBytes(file.size)}</div>
         </div>
+        <button class="btn-secondary admin-btn-sm" id="btn-change-file">Cambiar selección</button>
+      </div>
 
-        <div class="admin-field-group">
-          <label>Buscar e identificar en TMDB:</label>
-          <div style="display:flex;gap:0.6rem;">
-            <select class="admin-select" id="upload-tmdb-type" style="width:140px;flex:0 0 auto;">
-              <option value="movie" selected>Película</option>
-              <option value="tv">Serie / TV</option>
-              <option value="collection">Colección</option>
-            </select>
-            <input type="text" class="admin-input" id="upload-tmdb-query" value="${esc(cleanName)}" placeholder="Título o ID de TMDB (ej. Matrix o 603)" />
-            <button class="btn-primary" data-focusable id="btn-run-tmdb-search" style="flex:0 0 auto;">Buscar</button>
-          </div>
-        </div>
-
-        <div id="upload-tmdb-results" style="display:none;"></div>
-
-        <div class="admin-grid-2col">
-          <div class="admin-field-group">
-            <label>ID de TMDB:</label>
-            <input type="text" class="admin-input" id="meta-tmdb-id" placeholder="Ej. 603" />
-          </div>
-          <div class="admin-field-group">
-            <label>Puntuación TMDB (0 - 10):</label>
-            <input type="number" step="0.1" class="admin-input" id="meta-rating" placeholder="Ej. 8.2" />
-          </div>
-        </div>
-
-        <div class="admin-grid-2col">
-          <div class="admin-field-group">
-            <label>Clasificación por edad:</label>
-            <select class="admin-select" id="meta-age-rating">
-              <option value="APTA">APTA (Todos los públicos)</option>
-              <option value="7">+7 años</option>
-              <option value="12" selected>+12 años</option>
-              <option value="16">+16 años</option>
-              <option value="18">+18 años</option>
-            </select>
-          </div>
-          <div class="admin-field-group">
-            <label>Nombre de archivo final:</label>
-            <input type="text" class="admin-input" id="meta-filename" value="${esc(file.name)}" />
-          </div>
-        </div>
-
-        <div class="admin-field-group">
-          <label>Sinopsis:</label>
-          <textarea class="admin-textarea" id="meta-synopsis" rows="3"></textarea>
-        </div>
-
-        <!-- Canal tgstorage colocado de última opción antes del botón de subida -->
-        <div class="admin-field-group">
-          <label>Canal destino en Telegram (canales ::tgstorage de biblioteca):</label>
-          <select class="admin-select" id="upload-target-channel">
-            <option value="">Cargando canales tgstorage…</option>
+      <div class="admin-field-group">
+        <label>Buscar e identificar en TMDB:</label>
+        <div style="display:flex;gap:0.6rem;">
+          <select class="admin-select" id="upload-tmdb-type" style="width:140px;flex:0 0 auto;">
+            <option value="movie" selected>Película</option>
+            <option value="tv">Serie / TV</option>
+            <option value="collection">Colección</option>
           </select>
-        </div>
-
-        <div style="display:flex;justify-content:flex-end;margin-top:0.8rem;">
-          <button class="btn-primary" id="btn-submit-upload" style="padding:0.75rem 1.8rem;font-size:1rem;">
-            📤 Subir vídeo a Telegram
-          </button>
+          <input type="text" class="admin-input" id="upload-tmdb-query" value="${esc(cleanName)}" placeholder="Título o ID de TMDB (ej. Matrix o 603)" />
+          <button class="btn-primary" data-focusable id="btn-run-tmdb-search" style="flex:0 0 auto;">Buscar</button>
         </div>
       </div>
-    `;
 
-    workspace.querySelector('#btn-change-file')?.addEventListener('click', () => fileInput.click());
+      <div id="upload-tmdb-results" style="display:none;"></div>
 
-    const chSelect = workspace.querySelector('#upload-target-channel');
-    let loadedTgChannels = [];
-    try {
-      if (client) {
-        loadedTgChannels = await loadLibrary(client);
-      }
-      if (loadedTgChannels && loadedTgChannels.length > 0) {
-        loadedTgChannels = loadedTgChannels.filter(ch => ch.category && ['Películas', 'Series', 'Deportes', 'Música'].includes(ch.category) && !ch.isExternal);
-        chSelect.innerHTML = loadedTgChannels.map(ch => `
-          <option value="${esc(ch.id)}">[${esc(ch.category)}] ${esc(ch.title || ch.name)}</option>
-        `).join('');
-      } else {
-        chSelect.innerHTML = `<option value="">No hay canales tgstorage disponibles</option>`;
-      }
-    } catch (e) {
-      console.warn('Error cargando canales tgstorage para subida', e);
-      chSelect.innerHTML = `<option value="">Error cargando canales</option>`;
+      <div class="admin-grid-2col">
+        <div class="admin-field-group">
+          <label>ID de TMDB:</label>
+          <input type="text" class="admin-input" id="meta-tmdb-id" placeholder="Ej. 603" />
+        </div>
+        <div class="admin-field-group">
+          <label>Puntuación TMDB (0 - 10):</label>
+          <input type="number" step="0.1" class="admin-input" id="meta-rating" placeholder="Ej. 8.2" />
+        </div>
+      </div>
+
+      <div class="admin-grid-2col">
+        <div class="admin-field-group">
+          <label>Clasificación por edad:</label>
+          <select class="admin-select" id="meta-age-rating">
+            <option value="APTA">APTA (Todos los públicos)</option>
+            <option value="7">+7 años</option>
+            <option value="12" selected>+12 años</option>
+            <option value="16">+16 años</option>
+            <option value="18">+18 años</option>
+          </select>
+        </div>
+        <div class="admin-field-group">
+          <label>Temporada / Episodio (si es serie):</label>
+          <input type="text" class="admin-input" id="meta-episode" placeholder="Ej. T1·E01 o 1x01" />
+        </div>
+      </div>
+
+      <div class="admin-field-group">
+        <label>Nombre final del archivo que verá Telegram:</label>
+        <input type="text" class="admin-input" id="meta-final-filename" value="${esc(detectedYear ? `${cleanName} (${detectedYear}).mp4` : file.name)}" />
+      </div>
+
+      <div class="admin-field-group">
+        <label>Sinopsis:</label>
+        <textarea class="admin-textarea" id="meta-synopsis" rows="3" placeholder="Sinopsis del título…"></textarea>
+      </div>
+
+      <div class="admin-field-group">
+        <label>Canal tgstorage de destino:</label>
+        <select class="admin-select" id="upload-target-channel">
+          <option value="">Cargando canales tgstorage…</option>
+        </select>
+      </div>
+
+      <div style="margin-top:1.5rem;display:flex;gap:1rem;justify-content:flex-end;">
+        <button class="btn-primary" data-focusable id="btn-start-upload" style="font-size:1rem;padding:0.6rem 1.6rem;">
+          Iniciar subida a Telegram
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btn-change-file')?.addEventListener('click', () => {
+    document.getElementById('upload-file-input')?.click();
+  });
+
+  setupTmdbSearch(cleanName);
+  await populateChannelSelect('upload-target-channel', client, 'Películas');
+
+  document.getElementById('btn-start-upload')?.addEventListener('click', () => {
+    const finalFilename = document.getElementById('meta-final-filename')?.value?.trim() || file.name;
+    const targetSelect = document.getElementById('upload-target-channel');
+    const targetChannelId = targetSelect?.value;
+    const targetTitle = targetSelect?.selectedOptions?.[0]?.text || 'tgstorage';
+
+    if (!targetChannelId) {
+      alert('Por favor, selecciona un canal de destino.');
+      return;
     }
 
-    const searchBtn = workspace.querySelector('#btn-run-tmdb-search');
-    const resultsWrap = workspace.querySelector('#upload-tmdb-results');
-
-    searchBtn?.addEventListener('click', async () => {
-      const rawQ = workspace.querySelector('#upload-tmdb-query').value.trim();
-      const type = workspace.querySelector('#upload-tmdb-type').value;
-      if (!rawQ) return;
-
-      searchBtn.disabled = true;
-      searchBtn.textContent = 'Buscando…';
-      resultsWrap.style.display = 'block';
-      resultsWrap.innerHTML = `<p style="color:#aaa;padding:0.5rem;">Consultando TMDB…</p>`;
-
-      try {
-        const directId = parseTmdbId(rawQ);
-        const results = await searchTmdbManual({
-          query: rawQ,
-          type,
-          year: detectedYear,
-          directId: directId || null,
-        });
-
-        if (!results || !results.length) {
-          resultsWrap.innerHTML = `<p style="color:#aaa;padding:0.5rem;">No se encontraron resultados en TMDB para "${esc(rawQ)}". Revisa el término o introduce el ID directo.</p>`;
-        } else {
-          resultsWrap.innerHTML = `
-            <div class="admin-tmdb-results">
-              ${results.map(r => `
-                <div class="admin-tmdb-item"
-                  data-tmdb-id="${esc(r.id)}"
-                  data-tmdb-title="${esc(r.name)}"
-                  data-tmdb-synopsis="${esc(r.overview || '')}"
-                  data-tmdb-rating="${esc(r.rating || '')}">
-                  ${r.poster ? `<img src="${esc(r.poster)}" class="admin-tmdb-poster" alt="" />` : `<div style="width:80px;height:120px;background:#333;margin-bottom:0.4rem;border-radius:4px;"></div>`}
-                  <strong style="font-size:0.82rem;line-height:1.2;color:#fff;">${esc(r.name)}</strong>
-                  <small style="color:#888;">${esc((r.date || '').slice(0, 4))}${r.rating ? ` · ★ ${r.rating}` : ''}</small>
-                </div>
-              `).join('')}
-            </div>
-          `;
-
-          resultsWrap.querySelectorAll('.admin-tmdb-item').forEach(item => {
-            item.addEventListener('click', () => {
-              resultsWrap.querySelectorAll('.admin-tmdb-item').forEach(el => el.classList.remove('is-selected'));
-              item.classList.add('is-selected');
-
-              workspace.querySelector('#meta-tmdb-id').value = item.dataset.tmdbId;
-              workspace.querySelector('#meta-synopsis').value = item.dataset.tmdbSynopsis;
-              workspace.querySelector('#meta-rating').value = item.dataset.tmdbRating;
-            });
-          });
-        }
-      } catch (err) {
-        console.error('Error buscando en TMDB', err);
-        const msg = err.message || String(err);
-        resultsWrap.innerHTML = `<p style="color:#f87171;padding:0.5rem;">Error buscando en TMDB: ${esc(msg)}</p>`;
-      } finally {
-        searchBtn.disabled = false;
-        searchBtn.textContent = 'Buscar';
-      }
+    const caption = buildStandardCaption({
+      fileName: finalFilename,
+      tmdbId: document.getElementById('meta-tmdb-id')?.value?.trim() || '',
+      rating: document.getElementById('meta-rating')?.value?.trim() || '',
+      ageRating: document.getElementById('meta-age-rating')?.value || '',
+      synopsis: document.getElementById('meta-synopsis')?.value?.trim() || '',
+      section: document.getElementById('meta-episode')?.value?.trim() || '',
     });
 
-    workspace.querySelector('#btn-submit-upload')?.addEventListener('click', async () => {
-      const targetChannelId = workspace.querySelector('#upload-target-channel').value;
-      if (!targetChannelId) {
-        alert('Por favor selecciona un canal tgstorage de destino.');
-        return;
-      }
+    const isMp4 = isMp4File(file, finalFilename);
 
-      const tmdbId = workspace.querySelector('#meta-tmdb-id').value.trim();
-      const rating = workspace.querySelector('#meta-rating').value.trim();
-      const synopsis = workspace.querySelector('#meta-synopsis').value.trim();
-      const ageRating = workspace.querySelector('#meta-age-rating').value;
-      const finalFilename = workspace.querySelector('#meta-filename').value.trim() || file.name;
-
-      const caption = buildStandardCaption({
-        fileName: finalFilename,
-        synopsis,
-        tmdbId,
-        rating,
-        ageRating,
-      });
-
-      const targetChannel = loadedTgChannels.find(c => String(c.id) === String(targetChannelId));
-      const targetTitle = targetChannel?.title || targetChannel?.name || `Canal ${targetChannelId}`;
-
-      startBackgroundUpload({
-        client,
-        tg,
-        file,
-        finalFilename,
-        targetChannelId,
-        targetChannel,
-        targetTitle,
-        caption,
-        tmdbId,
-        rating,
-        ageRating,
-        synopsis,
-        // Los MP4 se envían como vídeo de Telegram (reproducible/streaming); el resto como documento.
-        videoAsDocument: !isMp4File(file, finalFilename),
-      });
+    startBackgroundUpload({
+      file,
+      finalFilename,
+      caption,
+      targetChannelId,
+      targetTitle,
+      videoAsDocument: !isMp4,
+      client,
+      tg
     });
   });
 }
 
-function startBackgroundUpload({
-  client,
-  tg,
+/** Formulario para múltiples archivos (series / sagas) */
+async function renderMultiFileUploadForm({ workspace, files, client, tg }) {
+  const totalSize = files.reduce((acc, f) => acc + (f.size || 0), 0);
+  const firstParsed = extractTitleAndYear(files[0].name);
+  const cleanName = firstParsed.title || cleanSearchName(files[0].name);
+
+  // Ordenar archivos por nombre / número de episodio natural
+  files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+  workspace.innerHTML = `
+    <div class="admin-upload-form">
+      <div style="background:rgba(56,189,248,0.1);padding:0.9rem 1.2rem;border-radius:8px;border:1px solid rgba(56,189,248,0.25);display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <strong style="color:#38bdf8;font-size:1.05rem;">${files.length} archivos seleccionados</strong>
+          <div style="color:#aaa;font-size:0.85rem;margin-top:0.2rem;">Tamaño total: ${formatBytes(totalSize)}</div>
+        </div>
+        <button class="btn-secondary admin-btn-sm" id="btn-change-file">Cambiar selección</button>
+      </div>
+
+      <div class="admin-field-group">
+        <label>Buscar serie o título en TMDB para todos los archivos:</label>
+        <div style="display:flex;gap:0.6rem;">
+          <select class="admin-select" id="upload-tmdb-type" style="width:140px;flex:0 0 auto;">
+            <option value="tv" selected>Serie / TV</option>
+            <option value="movie">Película</option>
+            <option value="collection">Colección</option>
+          </select>
+          <input type="text" class="admin-input" id="upload-tmdb-query" value="${esc(cleanName)}" placeholder="Título de la serie en TMDB" />
+          <button class="btn-primary" data-focusable id="btn-run-tmdb-search" style="flex:0 0 auto;">Buscar</button>
+        </div>
+      </div>
+
+      <div id="upload-tmdb-results" style="display:none;"></div>
+
+      <div class="admin-grid-2col">
+        <div class="admin-field-group">
+          <label>ID de TMDB común:</label>
+          <input type="text" class="admin-input" id="meta-tmdb-id" placeholder="Ej. 1399 (Game of Thrones)" />
+        </div>
+        <div class="admin-field-group">
+          <label>Puntuación TMDB (0 - 10):</label>
+          <input type="number" step="0.1" class="admin-input" id="meta-rating" placeholder="Ej. 8.4" />
+        </div>
+      </div>
+
+      <div class="admin-grid-2col">
+        <div class="admin-field-group">
+          <label>Clasificación por edad:</label>
+          <select class="admin-select" id="meta-age-rating">
+            <option value="APTA">APTA (Todos los públicos)</option>
+            <option value="7">+7 años</option>
+            <option value="12">+12 años</option>
+            <option value="16" selected>+16 años</option>
+            <option value="18">+18 años</option>
+          </select>
+        </div>
+        <div class="admin-field-group">
+          <label>Temporada común (si aplica):</label>
+          <input type="number" class="admin-input" id="meta-default-season" value="1" min="1" />
+        </div>
+      </div>
+
+      <div class="admin-field-group">
+        <label>Sinopsis común:</label>
+        <textarea class="admin-textarea" id="meta-synopsis" rows="2" placeholder="Sinopsis general de la serie…"></textarea>
+      </div>
+
+      <div class="admin-field-group">
+        <label>Canal tgstorage de destino:</label>
+        <select class="admin-select" id="upload-target-channel">
+          <option value="">Cargando canales tgstorage…</option>
+        </select>
+      </div>
+
+      <div class="admin-field-group" style="margin-top:1.2rem;">
+        <label>Lista de archivos a procesar (${files.length}):</label>
+        <div style="max-height: 220px; overflow-y: auto; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 0.5rem 0.8rem;">
+          ${files.map((f, idx) => {
+            const ep = parseEpisodeHelper(f.name, idx + 1);
+            return `
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.85rem;">
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; color: #e2e8f0;">
+                  ${idx + 1}. ${esc(f.name)}
+                </span>
+                <span style="color: #38bdf8; font-weight: 600;">
+                  T${ep.season}·E${String(ep.episode).padStart(2, '0')} · ${formatBytes(f.size)}
+                </span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <div style="margin-top:1.5rem;display:flex;gap:1rem;justify-content:flex-end;">
+        <button class="btn-primary" data-focusable id="btn-start-multi-upload" style="font-size:1rem;padding:0.6rem 1.6rem;">
+          Iniciar subida en paralelo (${files.length} archivos)
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('btn-change-file')?.addEventListener('click', () => {
+    document.getElementById('upload-file-input')?.click();
+  });
+
+  setupTmdbSearch(cleanName);
+  await populateChannelSelect('upload-target-channel', client, 'Series');
+
+  document.getElementById('btn-start-multi-upload')?.addEventListener('click', () => {
+    const targetSelect = document.getElementById('upload-target-channel');
+    const targetChannelId = targetSelect?.value;
+    const targetTitle = targetSelect?.selectedOptions?.[0]?.text || 'tgstorage';
+
+    if (!targetChannelId) {
+      alert('Por favor, selecciona un canal de destino.');
+      return;
+    }
+
+    const seriesName = document.getElementById('upload-tmdb-query')?.value?.trim() || cleanName;
+    const tmdbId = document.getElementById('meta-tmdb-id')?.value?.trim() || '';
+    const rating = document.getElementById('meta-rating')?.value?.trim() || '';
+    const ageRating = document.getElementById('meta-age-rating')?.value || '';
+    const synopsis = document.getElementById('meta-synopsis')?.value?.trim() || '';
+    const defaultSeason = parseInt(document.getElementById('meta-default-season')?.value || '1', 10);
+
+    alert(`Se ha iniciado la subida de ${files.length} archivos en segundo plano con control de concurrencia.\nPuedes seguir navegando mientras se procesan.`);
+
+    // Subida concurrente en paralelo (máx 2 tareas simultáneas para proteger Telegram y memoria)
+    startConcurrentUploads({
+      files,
+      seriesName,
+      defaultSeason,
+      tmdbId,
+      rating,
+      ageRating,
+      synopsis,
+      targetChannelId,
+      targetTitle,
+      client,
+      tg
+    });
+  });
+}
+
+function setupTmdbSearch(initialQuery) {
+  const queryInput = document.getElementById('upload-tmdb-query');
+  const typeSelect = document.getElementById('upload-tmdb-type');
+  const resultsDiv = document.getElementById('upload-tmdb-results');
+  const searchBtn = document.getElementById('btn-run-tmdb-search');
+
+  async function executeSearch() {
+    const q = queryInput?.value?.trim();
+    if (!q) return;
+
+    if (resultsDiv) {
+      resultsDiv.style.display = 'block';
+      resultsDiv.innerHTML = '<p style="color:#aaa;padding:0.5rem;">Buscando en TMDB…</p>';
+    }
+
+    const type = typeSelect?.value || 'movie';
+    const res = await searchTmdbManual(q, type);
+
+    if (!res || !res.results || !res.results.length) {
+      if (resultsDiv) resultsDiv.innerHTML = '<p style="color:#aaa;padding:0.5rem;">No se encontraron resultados en TMDB.</p>';
+      return;
+    }
+
+    if (resultsDiv) {
+      resultsDiv.innerHTML = `
+        <div style="max-height:240px;overflow-y:auto;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:0.5rem;">
+          ${res.results.map(item => {
+            const title = item.title || item.name || '';
+            const year = (item.release_date || item.first_air_date || '').slice(0, 4);
+            const poster = item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : '';
+            return `
+              <div class="tmdb-search-item" data-id="${item.id}" data-title="${esc(title)}" data-year="${esc(year)}" data-overview="${esc(item.overview || '')}" data-vote="${item.vote_average || ''}" style="display:flex;align-items:center;gap:0.8rem;padding:0.4rem;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;">
+                ${poster ? `<img src="${poster}" style="width:36px;height:52px;object-fit:cover;border-radius:4px;" />` : '<div style="width:36px;height:52px;background:#333;border-radius:4px;"></div>'}
+                <div style="flex:1;">
+                  <strong style="color:#fff;font-size:0.9rem;">${esc(title)}</strong>
+                  <span style="color:#aaa;font-size:0.8rem;">(${year || 'N/A'}) · ⭐ ${item.vote_average ? item.vote_average.toFixed(1) : '-'}</span>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+
+      resultsDiv.querySelectorAll('.tmdb-search-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const id = el.dataset.id;
+          const title = el.dataset.title;
+          const year = el.dataset.year;
+          const overview = el.dataset.overview;
+          const vote = el.dataset.vote;
+
+          const tmdbIdInput = document.getElementById('meta-tmdb-id');
+          if (tmdbIdInput) tmdbIdInput.value = id;
+
+          const ratingInput = document.getElementById('meta-rating');
+          if (ratingInput && vote) ratingInput.value = Number(vote).toFixed(1);
+
+          const synopsisInput = document.getElementById('meta-synopsis');
+          if (synopsisInput) synopsisInput.value = overview;
+
+          const filenameInput = document.getElementById('meta-final-filename');
+          if (filenameInput) {
+            const ext = filenameInput.value.match(/\.([a-zA-Z0-9]{2,5})$/)?.[0] || '.mp4';
+            filenameInput.value = year ? `${title} (${year})${ext}` : `${title}${ext}`;
+          }
+
+          resultsDiv.style.display = 'none';
+        });
+      });
+    }
+  }
+
+  searchBtn?.addEventListener('click', executeSearch);
+  queryInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      executeSearch();
+    }
+  });
+}
+
+async function populateChannelSelect(selectId, client, preferredCat = 'Películas') {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+
+  try {
+    const channels = await loadLibrary(client);
+    const tgChannels = (channels || []).filter(c => !c.isExternal && c.category && ['Películas', 'Series', 'Deportes', 'Música'].includes(c.category));
+
+    if (!tgChannels.length) {
+      select.innerHTML = '<option value="">No se encontraron canales ::tgstorage</option>';
+      return;
+    }
+
+    select.innerHTML = tgChannels.map(c => `
+      <option value="${c.id}" ${c.category === preferredCat ? 'selected' : ''}>${esc(c.title)} (${c.category})</option>
+    `).join('');
+  } catch (err) {
+    console.warn('[adminUpload] Error cargando canales', err);
+    select.innerHTML = '<option value="">Error cargando canales</option>';
+  }
+}
+
+/** Ejecuta subidas concurrentes en paralelo */
+async function startConcurrentUploads({ files, seriesName, defaultSeason, tmdbId, rating, ageRating, synopsis, targetChannelId, targetTitle, client, tg }) {
+  const concurrency = 2; // 2 subidas simultáneas
+  let nextIdx = 0;
+
+  async function worker() {
+    while (nextIdx < files.length) {
+      const idx = nextIdx++;
+      const file = files[idx];
+      const epInfo = parseEpisodeHelper(file.name, idx + 1);
+      const s = epInfo.season || defaultSeason;
+      const e = epInfo.episode;
+      const epCode = `T${s}·E${String(e).padStart(2, '0')}`;
+      const extMatch = file.name.match(/\.([a-zA-Z0-9]{2,5})$/);
+      const ext = extMatch ? `.${extMatch[1]}` : '.mp4';
+      const finalFilename = `${seriesName} - ${s}x${String(e).padStart(2, '0')}${ext}`;
+
+      const caption = buildStandardCaption({
+        fileName: finalFilename,
+        tmdbId,
+        rating,
+        ageRating,
+        synopsis,
+        section: epCode,
+      });
+
+      const isMp4 = isMp4File(file, finalFilename);
+
+      await startBackgroundUpload({
+        file,
+        finalFilename,
+        caption,
+        targetChannelId,
+        targetTitle,
+        videoAsDocument: !isMp4,
+        client,
+        tg
+      });
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, files.length) }, () => worker());
+  await Promise.allSettled(workers);
+}
+
+/**
+ * Inicia la subida de un vídeo a Telegram en segundo plano.
+ * Usa workers: 1 (como en TGComic) para máxima velocidad de arranque y evitar que se quede en 'Preparando subida'.
+ */
+export async function startBackgroundUpload({
   file,
   finalFilename,
-  targetChannelId,
-  targetChannel,
-  targetTitle,
   caption,
-  tmdbId,
-  rating,
-  ageRating,
-  synopsis,
-  videoAsDocument = true,
+  targetChannelId,
+  targetTitle,
+  videoAsDocument = false,
+  client,
+  tg
 }) {
+  if (!client) {
+    if (tg?.getClient) client = tg.getClient();
+    else if (window.tg?.getClient) client = window.tg.getClient();
+  }
   if (!client) {
     alert('Cliente de Telegram no disponible para realizar la subida.');
     return;
@@ -379,161 +669,108 @@ function startBackgroundUpload({
     updateUploadTask(taskId, { title: `Subiendo: ${finalFilename}`, status, percent: currentPercent });
   };
 
-  alert(`La subida de "${finalFilename}" ha comenzado en segundo plano.
-Puedes seguir navegando mientras avanza la barra inferior.`);
+  try {
+    let peer = null;
+    // 1. Resolución directa si tg dispone de peerOf
+    if (tg?.peerOf && typeof targetChannelId === 'object') {
+      try { peer = tg.peerOf(targetChannelId); } catch (_) {}
+    }
 
-  (async () => {
-    try {
-      let peer = null;
-      if (client?.getInputEntity) {
+    // 2. Intento con getInputEntity
+    if (!peer && client?.getInputEntity) {
+      try {
+        peer = await client.getInputEntity(targetChannelId);
+      } catch (_) {
         try {
-          peer = await client.getInputEntity(targetChannel?.entity || targetChannelId);
-        } catch (_) {
-          try {
-            const clean = String(targetChannelId).replace(/^-100/, '').replace(/^-/, '');
-            peer = await client.getInputEntity(`-100${clean}`);
-          } catch (_) {}
-        }
+          const clean = String(targetChannelId).replace(/^-100/, '').replace(/^-/, '');
+          peer = await client.getInputEntity(`-100${clean}`);
+        } catch (_) {}
       }
-      if (!peer && tg?.peerOf && targetChannel) {
-        peer = tg.peerOf(targetChannel);
+    }
+    if (!peer) {
+      peer = targetChannelId;
+    }
+
+    // Subida con workers: 1 (patrón robusto y rápido de TGComic que evita cuelgues)
+    setTaskStatus(`Iniciando transferencia de ${formatBytes(file.size)}…`, 1);
+
+    const inputFile = await client.uploadFile({
+      file,
+      workers: 1,
+      onProgress: (progress) => {
+        const pct = Math.min(100, Math.round(progress * 100));
+        const uploadedBytes = Math.round(progress * file.size);
+        setTaskStatus(`Subiendo partes: ${formatBytes(uploadedBytes)} / ${formatBytes(file.size)} (${pct}%)`, pct);
       }
-      if (!peer) {
-        peer = targetChannel?.entity || targetChannelId;
-      }
+    });
 
-      const inputFile = await client.uploadFile({
-        file,
-        workers: 3,
-        onProgress: (progress) => {
-          const pct = Math.min(100, Math.round(progress * 100));
-          const uploadedBytes = Math.round(progress * file.size);
-          setTaskStatus(`Subiendo partes: ${formatBytes(uploadedBytes)} / ${formatBytes(file.size)} (${pct}%)`, pct);
-        }
-      });
+    setTaskStatus('Registrando mensaje y metadatos en Telegram…', 100);
 
-      setTaskStatus('Registrando mensaje y metadatos en Telegram…', 100);
+    const safeCaption = fitTelegramCaption(caption, 1024);
+    if (safeCaption.length < String(caption || '').length) {
+      console.warn(`[upload] Caption recortado a ${safeCaption.length}/1024 caracteres (límite Telegram)`);
+    }
+    const filenameAttr = new Api.DocumentAttributeFilename({ fileName: finalFilename });
 
-      const safeCaption = fitTelegramCaption(caption, 1024);
-      if (safeCaption.length < String(caption || '').length) {
-        console.warn(`[upload] Caption recortado a ${safeCaption.length}/1024 caracteres (límite Telegram)`);
-      }
-      const filenameAttr = new Api.DocumentAttributeFilename({ fileName: finalFilename });
+    let sentMsg = null;
+    let sentAsVideo = false;
+    let videoInfo = { duration: 0, width: 0, height: 0, thumb: null };
 
-      let sentMsg = null;
-      let sentAsVideo = false;
-      let videoInfo = { duration: 0, width: 0, height: 0, thumb: null };
-
-      if (!videoAsDocument) {
-        // MP4: se envía como vídeo nativo con streaming, duración, resolución y miniatura.
-        try {
-          setTaskStatus('Preparando vídeo (duración y miniatura)…');
-          videoInfo = await probeVideo(file);
-          console.log('[upload] vídeo detectado', { duration: videoInfo.duration, width: videoInfo.width, height: videoInfo.height, thumb: !!videoInfo.thumb });
-          setTaskStatus('Publicando como vídeo en Telegram…');
-          const opts = {
-            file: inputFile,
-            caption: safeCaption,
-            forceDocument: false,
-            supportsStreaming: true,
-            attributes: [
-              new Api.DocumentAttributeVideo({
-                duration: videoInfo.duration || 0,
-                w: videoInfo.width || 0,
-                h: videoInfo.height || 0,
-                supportsStreaming: true,
-              }),
-              filenameAttr,
-            ],
-          };
-          if (videoInfo.thumb) opts.thumb = videoInfo.thumb;
-          sentMsg = await sendFileSafe(client, peer, opts);
-          sentAsVideo = true;
-        } catch (e) {
-          console.warn('[upload] Envío como vídeo rechazado, se reintenta como documento:', e?.message || e);
-          setTaskStatus('Telegram rechazó el vídeo; reintentando como documento…');
-        }
-      }
-
-      if (!sentAsVideo) {
-        // Documento: evita 400 CHANNEL_INVALID con códecs no estándar (MKV, AVI…)
-        sentMsg = await sendFileSafe(client, peer, {
+    if (!videoAsDocument) {
+      // MP4: se envía como vídeo nativo con streaming, duración, resolución y miniatura.
+      try {
+        setTaskStatus('Preparando vídeo (duración y miniatura)…');
+        videoInfo = await probeVideo(file);
+        setTaskStatus('Publicando como vídeo en Telegram…');
+        const opts = {
           file: inputFile,
           caption: safeCaption,
-          forceDocument: true,
-          attributes: [filenameAttr],
-        });
-      }
-
-      const messageId = extractMessageId(sentMsg);
-      if (!messageId && !sentMsg?.__sentWithNoise) {
-        throw new Error('Telegram no devolvió el identificador del mensaje; no se puede confirmar que el archivo se publicara en el canal');
-      }
-
-      if (messageId) {
-        const newFileEntry = {
-          key: `${targetChannelId}:${messageId}`,
-          channelId: String(targetChannelId),
-          messageId: messageId,
-          channel: targetChannel || { id: targetChannelId, name: targetTitle, group: targetTitle, category: 'Películas' },
-          fileName: finalFilename,
-          captionFileName: finalFilename,
-          rawFileName: finalFilename,
-          rawCaption: safeCaption,
-          label: prettyName(finalFilename),
-          section: null,
-          synopsis: synopsis || null,
-          tmdbId: tmdbId || null,
-          imdbId: null,
-          rating: rating ? Number(rating) : null,
-          ageRating: ageRating || null,
-          season: 0,
-          episode: 0,
-          size: file.size,
-          duration: videoInfo.duration || 0,
-          mimeType: file.type || 'video/mp4',
-          date: Math.floor(Date.now() / 1000),
+          forceDocument: false,
+          supportsStreaming: true,
+          attributes: [
+            new Api.DocumentAttributeVideo({
+              duration: videoInfo.duration || 0,
+              w: videoInfo.width || 0,
+              h: videoInfo.height || 0,
+              supportsStreaming: true,
+            }),
+            filenameAttr,
+          ],
         };
-        await addEntryToLibraryCache(targetChannelId, targetChannel, messageId, newFileEntry);
-      } else {
-        // Enviado pero sin id: invalidar la caché del canal para que se reescanee en la próxima actualización.
-        await addEntryToLibraryCache(targetChannelId, targetChannel, null, null);
+        if (videoInfo.thumb) opts.thumb = videoInfo.thumb;
+        sentMsg = await sendFileSafe(client, peer, opts);
+        sentAsVideo = true;
+      } catch (e) {
+        console.warn('[upload] Envío como vídeo rechazado, se reintenta como documento:', e?.message || e);
+        setTaskStatus('Telegram rechazó el vídeo; reintentando como documento…');
       }
+    }
 
-      finishUploadTask(taskId, `✓ Subida completada (${sentAsVideo ? 'como vídeo' : 'como documento'}) en ${targetTitle} (Mensaje #${messageId || 'OK'})`, 100);
-    } catch (err) {
-      console.error('Error durante la subida en segundo plano', err);
-      failUploadTask(taskId, `Error en la subida: ${err.message || String(err)}`);
+    if (!sentAsVideo) {
+      // Documento: evita 400 CHANNEL_INVALID con códecs no estándar (MKV, AVI…)
+      sentMsg = await sendFileSafe(client, peer, {
+        file: inputFile,
+        caption: safeCaption,
+        forceDocument: true,
+        attributes: [filenameAttr],
+      });
     }
-  })();
-}
 
-/**
- * Inserta el nuevo archivo en la caché local library_v2.
- * Estructura real de la caché (ver library/titles.js → buildTitles):
- *   cache[channelId] = { top, title, files: [...] }
- * (El error "unshift is not a function" venía de tratar esa entrada como un array.)
- */
-async function addEntryToLibraryCache(channelId, channel, messageId, entry) {
-  try {
-    const savedObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
-    savedObj.cache = savedObj.cache || {};
-    const key = String(channelId);
-    let slot = savedObj.cache[key];
-    if (Array.isArray(slot)) slot = { top: null, title: channel?.title || null, files: slot };
-    if (!slot || typeof slot !== 'object' || !Array.isArray(slot.files)) {
-      slot = { top: null, title: channel?.title || null, files: [] };
+    const messageId = extractMessageId(sentMsg);
+    if (!messageId && !sentMsg?.__sentWithNoise) {
+      throw new Error('Telegram no devolvió el identificador del mensaje; no se puede confirmar que el archivo se publicara en el canal');
     }
-    if (entry && messageId) {
-      slot.files = [entry, ...slot.files.filter(f => String(f.messageId) !== String(messageId))];
-      // El nuevo mensaje es ahora el último del canal: así la actualización rápida no reescanea.
-      slot.top = messageId;
-    } else {
-      slot.top = null; // fuerza reescaneo
-    }
-    savedObj.cache[key] = slot;
-    await kv.set(LIB_KEY, savedObj);
-  } catch (e) {
-    console.warn('[upload] No se pudo actualizar la caché local de la biblioteca', e);
+
+    finishUploadTask(taskId, `✅ Subida completada con éxito en ${targetTitle}`);
+    console.log('[upload] Subida finalizada:', { finalFilename, messageId, targetTitle });
+
+    // Invalidar caché de biblioteca para que aparezca el nuevo archivo en la app
+    try {
+      await kv.del(LIB_KEY);
+    } catch (_) {}
+
+  } catch (err) {
+    console.error('[upload] Error en la subida en segundo plano:', err);
+    failUploadTask(taskId, `Error: ${err?.errorMessage || err?.message || 'Error en subida'}`);
   }
 }

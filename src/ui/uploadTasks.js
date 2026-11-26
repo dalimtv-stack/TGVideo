@@ -76,7 +76,7 @@ function render() {
     if (bar) bar.style.display = 'none';
     const btn = ensureShowButton();
     btn.style.display = 'flex';
-    btn.innerHTML = `<span>⏳ Tareas (${activeCount > 0 ? activeCount : list.length})</span> <strong style="background: rgba(255,255,255,0.25); padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.75rem;">Mostrar</strong>`;
+    btn.innerHTML = `<span>Mostrar</span>`;
     return;
   }
 
@@ -90,9 +90,9 @@ function render() {
   // Contenedor principal limitado a un máximo de 3 líneas con scroll
   root.innerHTML = `
     <div class="admin-uploads-container" style="max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 0.5rem;">
-      <div class="admin-uploads-list" style="max-height: 142px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 4px;">
+      <div class="admin-uploads-list" style="max-height: 135px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 0.45rem; padding-right: 4px;">
         ${list.map(t => `
-          <div class="admin-upload-bar-inner" data-task-id="${esc(t.id)}" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 40px;">
+          <div class="admin-upload-bar-inner" data-task-id="${esc(t.id)}" style="display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 38px;">
             <div class="admin-upload-bar-left" style="display: flex; align-items: center; gap: 0.7rem; min-width: 0; flex: 1;">
               <span class="admin-upload-bar-icon" style="color: ${t.error ? '#f87171' : t.done ? '#34d399' : '#38bdf8'}; font-size: 1.05rem;">
                 ${t.error ? '⚠️' : t.done ? '✓' : '<span class="admin-upload-spinner"></span>'}
@@ -124,7 +124,7 @@ function render() {
       <!-- Barra inferior de control: Botón Ocultar abajo a la izquierda y resumen / limpiar a la derecha -->
       <div style="display: flex; justify-content: space-between; align-items: center; color: #94a3b8; font-size: 0.78rem; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.4rem; margin-top: 0.1rem;">
         <button type="button" id="upload-bar-btn-hide" data-focusable style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: #cbd5e1; padding: 0.22rem 0.65rem; font-size: 0.78rem; cursor: pointer; display: flex; align-items: center; gap: 0.3rem;">
-          <span>👁️ Ocultar</span>
+          <span>Ocultar</span>
         </button>
         <div style="display: flex; align-items: center; gap: 0.8rem;">
           <span>${activeCount} activas · ${list.length} total</span>

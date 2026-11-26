@@ -1228,7 +1228,10 @@ html.is-tv .settings-dialog {
 
 /* Punto 6: En cuadrícula, separación ligera hacia abajo y letra en negrita */
 .grid-cards .lib-card-name,
-.category-grid .lib-card-name {
-  margin-top: 0.72rem;
-  font-weight: 700;
+.category-grid .lib-card-name,
+.category-view--grid .lib-card-name,
+.grid-screen .lib-card-name,
+.screen.grid-screen .lib-card-name {
+  margin-top: 0.65rem !important;
+  font-weight: 700 !important;
 }
