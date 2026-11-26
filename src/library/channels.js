@@ -23,12 +23,15 @@ function normalizeCategory(cat) {
 /**
  * Parsea el título de un canal Telegram según la convención tgstorage.
  * Soporta espacios variables, mayúsculas/minúsculas y chats/canales.
- * Ejemplos:
+ * Ejemplos válidos:
  *   1988:Por año::Películas::tgstorage
  *   Puñales por la espalda:Sagas::Películas::tgstorage
  *   Green Lantern:HBO::Series::tgstorage
  *   HBO::Series::tgstorage
  *   2000-2010::Películas::tgstorage
+ *
+ * Requiere OBLIGATORIAMENTE una subdivisión previa a la categoría (cadena, año, saga, stream...).
+ * Canales desnudos sin subdivisión (ej: "Películas::tgstorage" o "Series::tgstorage") NO son válidos.
  */
 export function parseChannelTitle(title) {
   if (!title) return null;
@@ -37,20 +40,18 @@ export function parseChannelTitle(title) {
 
   const body = rawTitle.replace(TGSTORAGE_SUFFIX_RE, '').trim();
   const parts = body.split(SEP_RE);
-  if (parts.length === 0) return null;
+  // Requisito indispensable: Debe tener AL MENOS 2 partes antes de ::tgstorage
+  // [Subdivisión]::Categoría::tgstorage o [Nombre]:[Subdivisión]::Categoría::tgstorage
+  if (parts.length < 2) return null;
 
-  let category = '';
-  let head = '';
-  if (parts.length === 1) {
-    category = normalizeCategory(parts[0]);
-    head = category;
-  } else {
-    category = normalizeCategory(parts[parts.length - 1]);
-    head = parts.slice(0, -1).join('::');
-  }
-
+  const category = normalizeCategory(parts[parts.length - 1]);
   if (!VALID_CATEGORIES.includes(category.toLowerCase()) &&
       !['Series', 'Películas', 'Deportes', 'Música'].includes(category)) {
+    return null;
+  }
+
+  const head = parts.slice(0, -1).join('::').trim();
+  if (!head || head.toLowerCase() === category.toLowerCase()) {
     return null;
   }
 
@@ -98,7 +99,9 @@ export function parseChannelTitle(title) {
 }
 
 /**
- * Escanea los diálogos del usuario y devuelve los canales de vídeo.
+ * Escanea los diálogos del usuario y devuelve los canales de vídeo de tgstorage.
+ * Solo escanea canales/grupos a los que el usuario está unido o propios.
+ * Nunca busca globalmente en Telegram para evitar añadir canales ajenos.
  */
 export async function loadLibrary(client) {
   const found = new Map();
@@ -107,6 +110,8 @@ export async function loadLibrary(client) {
     if (!entity) return;
     // Soporte tanto para canales broadcast ('Channel') como grupos privados ('Chat' o supergrupos)
     if (entity.className !== 'Channel' && entity.className !== 'Chat') return;
+    // Solo canales a los que el usuario está unido o propios (nunca canales donde no es miembro)
+    if (entity.left === true) return;
     const info = parseChannelTitle(entity.title || '');
     if (!info) return;
 
@@ -125,17 +130,7 @@ export async function loadLibrary(client) {
     });
   };
 
-  // Búsqueda por el sufijo
-  try {
-    const res = await client.invoke(
-      new Api.contacts.Search({ q: 'tgstorage', limit: 100 })
-    );
-    (res.chats || []).forEach(add);
-  } catch (e) {
-    console.warn('[library] search failed', e);
-  }
-
-  // Recorrer diálogos activos
+  // Recorrer diálogos activos del usuario
   try {
     for await (const dialog of client.iterDialogs({})) {
       add(dialog.entity, dialog.message?.id || 0);

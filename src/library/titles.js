@@ -520,7 +520,11 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     // Recupera las banderas derivadas también de la caché local creada antes de esta mejora.
     const ch = { ...rawChannel };
     const parsed = parseChannelTitle(ch.title);
-    if (parsed) Object.assign(ch, { name: parsed.name, group: parsed.group, category: parsed.category, macro: !!parsed.macro, isYearContainer: !!parsed.isYearContainer, isSaga: !!parsed.isSaga });
+    if (!parsed) {
+      onProgress?.(++done, channels.length);
+      return;
+    }
+    Object.assign(ch, { name: parsed.name, group: parsed.group, category: parsed.category, macro: !!parsed.macro, isYearContainer: !!parsed.isYearContainer, isSaga: !!parsed.isSaga });
     const prev = cache[ch.id];
     let files = [];
     if (prev && (!client || (prev.top === ch.top && prev.title === ch.title && ch.top))) {

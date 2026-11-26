@@ -390,7 +390,13 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
     }
   }
 
-  await kv.set(LIB_KEY, { cache: combinedCache, channels: allChannels, sig, metadataMap, episodeOverrides, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
+  const validChannelIds = new Set(allChannels.map(c => String(c.id)));
+  const cleanedCache = {};
+  for (const [chId, data] of Object.entries(combinedCache)) {
+    if (validChannelIds.has(String(chId))) cleanedCache[chId] = data;
+  }
+
+  await kv.set(LIB_KEY, { cache: cleanedCache, channels: allChannels, sig, metadataMap, episodeOverrides, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
   return { titles, sig };
 }
 
