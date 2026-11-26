@@ -358,6 +358,12 @@
   margin-top: 0.8rem;
 }
 
+.detail-no-videos {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.95rem;
+  margin: 0;
+}
+
 .btn-icon-action {
   position: relative;
   width: calc(44px * var(--ui-scale, 1.12));

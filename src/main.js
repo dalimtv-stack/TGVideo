@@ -223,12 +223,15 @@ const fmtSize = (b) => b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixe
 const fmtDur = (s) => s ? `${Math.floor(s / 3600) ? Math.floor(s / 3600) + 'h ' : ''}${Math.floor(s % 3600 / 60)}min` : '';
 
 function formatPlayButtonLabel(t, st, progress) {
-  if (!st?.next) return '';
-  const isContinue = st.continueWatching && progress[st.next.key] && !progress[st.next.key].is_completed;
-  const actionPrefix = isContinue ? '▶ Continuar' : '▶ Reproducir';
+  const targetFile = st?.next || t?.archivos?.[0];
+  if (!targetFile) return '';
+  const p = progress?.[targetFile.key];
+  const isContinue = Boolean(st?.continueWatching && p && !p.is_completed);
+  const isCompleted = Boolean(p?.is_completed);
+  const actionPrefix = isContinue ? '▶ Continuar' : (isCompleted ? '▶ Volver a ver' : '▶ Reproducir');
 
   if (t.tipo === 'serie') {
-    const nextFile = st.next;
+    const nextFile = targetFile;
     const epNum = (nextFile.season || nextFile.episode)
       ? `T${nextFile.season || 1}·E${String(nextFile.episode || 1).padStart(2, '0')}`
       : '';
@@ -237,7 +240,7 @@ function formatPlayButtonLabel(t, st, progress) {
   }
 
   if (t.isSaga) {
-    const nextFile = st.next;
+    const nextFile = targetFile;
     const filmName = nextFile.metadata?.name || nextFile.sagaName || nextFile.label;
     return `${actionPrefix} ${filmName}`;
   }

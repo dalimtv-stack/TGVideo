@@ -828,7 +828,8 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   setBackHandler(back);
   const progress = loadProgress(profile.id);
   const st = titleState(t, progress);
-  const nextLabel = formatPlayButtonLabel(t, st, progress);
+  const targetFileToPlay = st.next || t.archivos?.[0] || null;
+  const nextLabel = formatPlayButtonLabel(t, st, progress) || (targetFileToPlay ? (progress?.[targetFileToPlay.key]?.is_completed ? "▶ Volver a ver" : "▶ Reproducir") : "");
 
   if (t.tipo === "serie" && Array.isArray(t.archivos)) {
     const isExt = Boolean(t._isExternalContext || fromGrid?.isExternal || String(fromGrid?.id || "").startsWith("ext-") || t.origen?.tipo === "externo");
@@ -881,7 +882,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
             <button class="btn-syn-toggle" type="button" hidden data-focusable>más</button>
           </div>
           <div class="detail-actions-row">
-            ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
+            ${targetFileToPlay ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p class="detail-no-videos">No hay archivos de vídeo disponibles para este título.</p>'}
             <button class="btn-icon-action" data-focusable id="d-fav" type="button" title="Añadir a favoritos" aria-label="Añadir a favoritos">
               <span class="btn-action-icon" aria-hidden="true">★</span>
               <span class="btn-action-tooltip">Añadir a favoritos</span>
@@ -1322,7 +1323,10 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     observer.observe(track);
   }
   document.getElementById('d-back').onclick = back;
-  document.getElementById('d-play')?.addEventListener('click', () => play(st.next));
+  document.getElementById('d-play')?.addEventListener('click', () => {
+    const toPlay = st.next || t.archivos?.[0];
+    if (toPlay) play(toPlay);
+  });
 
   const favBtn = document.getElementById('d-fav');
   const watchedBtn = document.getElementById('d-watched');
@@ -1372,7 +1376,8 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       const newSt = titleState(t, prg);
       const playBtnEl = document.getElementById('d-play');
       if (playBtnEl) {
-        const lbl = formatPlayButtonLabel(t, newSt, prg);
+        const fileToPlay = newSt.next || t.archivos?.[0];
+        const lbl = formatPlayButtonLabel(t, newSt, prg) || (fileToPlay && prg[fileToPlay.key]?.is_completed ? "▶ Volver a ver" : "▶ Reproducir");
         if (lbl) playBtnEl.textContent = lbl;
       }
       renderEpisodes(currentSeason);

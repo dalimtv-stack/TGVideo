@@ -20,20 +20,26 @@ export function saveProgress(pid, fileKey, current_time, duration, forceDone = f
 
 /** Estado de un título: siguiente archivo a ver y si va en "Seguir viendo" */
 export function titleState(title, progress) {
-  const files = title.archivos;
+  const files = title?.archivos || [];
+  if (!files.length) return { started: false, next: null, continueWatching: false, updatedAt: 0 };
   let lastIdx = -1, lastAt = 0, started = false;
   files.forEach((f, i) => {
-    const p = progress[f.key];
+    const p = progress?.[f.key];
     if (p) { started = true; if (p.updated_at > lastAt) { lastAt = p.updated_at; lastIdx = i; } }
   });
   if (!started) return { started: false, next: files[0] || null, continueWatching: false, updatedAt: 0 };
   const last = files[lastIdx];
-  const lp = progress[last.key];
-  if (!lp.is_completed) return { started, next: last, resumeAt: lp.current_time, continueWatching: true, updatedAt: lastAt };
+  const lp = progress?.[last?.key];
+  if (lp && !lp.is_completed) return { started, next: last, resumeAt: lp.current_time, continueWatching: true, updatedAt: lastAt };
   // Último visto completado → buscar siguiente no completado (p.ej. episodio nuevo subido)
-  const next = files.slice(lastIdx + 1).find(f => !progress[f.key]?.is_completed)
-    || (title.tipo === 'serie' ? files.find(f => !progress[f.key]?.is_completed) : null);
-  return { started, next: next || null, continueWatching: !!next && title.tipo === 'serie', updatedAt: lastAt };
+  const uncompleted = files.slice(lastIdx + 1).find(f => !progress?.[f.key]?.is_completed)
+    || (title.tipo === 'serie' ? files.find(f => !progress?.[f.key]?.is_completed) : null);
+  return {
+    started,
+    next: uncompleted || files[0] || null,
+    continueWatching: Boolean(uncompleted && title.tipo === 'serie'),
+    updatedAt: lastAt
+  };
 }
 
 // Funciones de Favoritos y Visto por perfil
