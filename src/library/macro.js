@@ -1,3 +1,4 @@
+// src/library/macro.js
 // Canales macro: agrupa archivos por "Sección:" del caption
 export const SEP = '::';
 export const TSEP = ':';
