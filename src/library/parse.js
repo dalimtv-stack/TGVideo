@@ -72,16 +72,26 @@ export function buildStandardCaption({
   return base.slice(0, 1024);
 }
 
-/** S01E02, 1x02, "Episodio 3", "Cap 3", o número suelto */
+/** S01E02, 1x02, T7 C14, T07C14, "Episodio 3", "Cap 3", o número suelto */
 export function parseEpisode(name = '') {
-  let m = name.match(/[ST](\d{1,2})[\s._-]*E(\d{1,3})/i);
+  const clean = String(name || '').replace(/[._]+/g, ' ');
+
+  // 1. S01E02, T01E02, T7 C14, T07C14, S7 C14, Temp 7 Cap 14, Temporada 7 Capitulo 14, etc.
+  let m = clean.match(/\b(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s-]*(\d{1,2})[\s-]*(?:[EC]|ep(?:isodio)?|cap(?:[ií]tulo)?)[\s-]*(\d{1,3})(?!\d)/i);
   if (m) return { season: +m[1], episode: +m[2] };
-  m = name.match(/(\d{1,2})\s*x\s*(\d{1,3})/i);
+
+  // 2. 7x14, 07x14, 1x02
+  m = clean.match(/\b(\d{1,2})\s*x\s*(\d{1,3})(?!\d)/i);
   if (m) return { season: +m[1], episode: +m[2] };
-  m = name.match(/T(?:emp(?:orada)?)?[\s._-]*(\d{1,2})[\s._-]+(?:ep|cap(?:[ií]tulo)?)?[\s._-]*(\d{1,3})/i);
+
+  // 3. T7 - 14 (sin letra en el episodio si viene precedido de T/Temp claro)
+  m = clean.match(/\bT(?:emp(?:orada)?)?[\s-]*(\d{1,2})[\s-]+(\d{1,3})(?!\d)/i);
   if (m) return { season: +m[1], episode: +m[2] };
-  m = name.match(/(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*(\d{1,3})/i);
+
+  // 4. Solo episodio: Episodio 3, Cap 3, Capitulo 14
+  m = clean.match(/\b(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s-]*(\d{1,3})(?!\d)/i);
   if (m) return { season: 1, episode: +m[1] };
+
   return { season: 0, episode: 0 };
 }
 
@@ -99,7 +109,7 @@ export function prettyEpisodeName(fileName = '', showName = '') {
     label = label.replace(new RegExp(`\\s*[-–—:]*\\s*${escaped}\\s*$`, 'i'), '');
   }
   label = label
-    .replace(/^\s*(?:S\s*\d{1,2}\s*E\s*\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|T(?:emp(?:orada)?)?\s*\d{1,2}\s*(?:E|ep|cap(?:[ií]tulo)?)?\s*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\s*\d{1,3})\s*[-–—:]*\s*/i, '')
+    .replace(/^\s*(?:[ST]\s*\d{1,2}[\s._-]*[EC]\s*\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\s*\d{1,2}[\s._-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?\s*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\s*\d{1,3})\s*[-–—:]*\s*/i, '')
     .replace(/\[[^\]]*\]|\([^)]*\)/g, (part) => /(?:2160|1080|720|480|4k|uhd|bluray|blu\s*ray|hdtv|web[- ]?dl|webrip|brrip|dual|castellano|latino|dts|ac3|x26[45]|h26[45]|hevc)/i.test(part) ? '' : part)
     .replace(/\b(?:2160p|1080p|720p|480p|4k|uhd|bluray|blu\s*ray|hdtv|web[- ]?dl|webrip|brrip|dual|castellano|latino|dts|ac3|x26[45]|h26[45]|hevc)\b.*$/i, '')
     .replace(/[._]+/g, ' ')
@@ -170,7 +180,7 @@ export function extractTrailingSeriesCandidate(fileName = '') {
   base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
 
   // Detectar código de episodio al inicio (1x01, S01E01, etc.) seguido del nombre de la serie
-  const m = base.match(/^\s*(?:[ST]\d{1,2}[\s._-]*E\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|T(?:emp(?:orada)?)?[\s._-]*\d{1,2}[\s._-]*(?:ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*\d{1,3})\s*[-–—:._]*\s*(.+)$/i);
+  const m = base.match(/^\s*(?:[ST]\d{1,2}[\s._-]*[EC]\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s._-]*\d{1,2}[\s._-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*\d{1,3})\s*[-–—:._]*\s*(.+)$/i);
   if (!m) return null;
 
   return cleanTrailingCandidate(m[1]);

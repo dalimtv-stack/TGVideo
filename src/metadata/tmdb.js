@@ -39,11 +39,11 @@ export function extractTitleAndYear(name = "") {
   const parenQualityRe = new RegExp("\\([^\\)]*" + qualityKw + "[^\\)]*\\)", "gi");
   str = str.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
 
-  // 4. Eliminar códigos de episodios: S01E02, 1x02
-  // Si está al INICIO: eliminar solo el prefijo del episodio para conservar el título que viene detrás (ej: 1x01 - Castle Rock)
-  str = str.replace(/^\s*(?:[ST]\d{1,2}[\s._-]*E\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|T(?:emp(?:orada)?)?[\s._-]*\d{1,2}[\s._-]*(?:ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*\d{1,3})\s*[-–—:._]*\s*/i, " ");
+  // 4. Eliminar códigos de episodios: S01E02, 1x02, T7 C14
+  // Si está al INICIO: eliminar solo el prefijo del episodio para conservar el título que viene detrás (ej: 1x01 - Castle Rock, T7 C14 - Aida)
+  str = str.replace(/^\s*(?:[ST]\d{1,2}[\s._-]*[EC]\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s._-]*\d{1,2}[\s._-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*\d{1,3})\s*[-–—:._]*\s*/i, " ");
   // Si está en medio o al final: eliminar desde el código del episodio hasta el final
-  str = str.replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, " ");
+  str = str.replace(/(?:[ST]\d{1,2}[\s._-]*[EC]\d{1,3}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s._-]*\d{1,2}[\s._-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?[\s._-]*\d{1,3}).*/i, " ");
   str = str.replace(/\d{1,2}x\d{1,3}.*/i, " ");
 
   // 5. Eliminar desde la primera palabra clave suelta de calidad hasta el final

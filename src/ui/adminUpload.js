@@ -2,7 +2,7 @@
 // Módulo para configurar y realizar la subida de vídeos a canales ::tgstorage en segundo plano con barra inferior.
 import { Api } from 'telegram';
 import { loadLibrary } from '../library/channels.js';
-import { buildStandardCaption, prettyName } from '../library/parse.js';
+import { buildStandardCaption, prettyName, parseEpisode } from '../library/parse.js';
 import { searchTmdbManual, cleanSearchName, extractTitleAndYear, parseTmdbId } from '../metadata/tmdb.js';
 import { createKV } from '../core/kv.js';
 import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
@@ -34,13 +34,8 @@ export function isMp4File(file, fileName = '') {
 }
 
 function parseEpisodeHelper(name = '', fallbackIdx = 1) {
-  const m = name.match(/(\d+)[xX](\d+)/);
-  if (m) return { season: parseInt(m[1], 10), episode: parseInt(m[2], 10) };
-  const s = name.match(/[sS](\d+)/);
-  const e = name.match(/[eE](\d+)/);
-  if (s || e) return { season: s ? parseInt(s[1], 10) : 1, episode: e ? parseInt(e[1], 10) : fallbackIdx };
-  const epSolo = name.match(/\b(?:ep|episodio|cap|capitulo)\s*(\d+)\b/i);
-  if (epSolo) return { season: 1, episode: parseInt(epSolo[1], 10) };
+  const ep = parseEpisode(name);
+  if (ep.season > 0 || ep.episode > 0) return ep;
   const numSolo = name.match(/\b(\d{1,3})\b/);
   if (numSolo) return { season: 1, episode: parseInt(numSolo[1], 10) };
   return { season: 1, episode: fallbackIdx };

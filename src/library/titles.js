@@ -87,7 +87,7 @@ export function seriesNameFromFile(fileName = '', trailingMap = null) {
   let base = String(fileName).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, '').replace(/[._]+/g, ' ');
   // Quitar etiquetas iniciales de canal: [Canal], (Canal), @Canal
   base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
-  const m = base.match(/^(.*?)[\s\-–—\[(]*(?:[ST]\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|temp(?:orada)?\s*\d)/i);
+  const m = base.match(/^(.*?)[\s\-–—\[(]*(?:(?:[ST]|temp(?:orada)?|season)\s*\d{1,2}[\s-]*(?:[EC]|ep|cap(?:[ií]tulo)?)?\s*\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\s*\d{1,3})/i);
   let name = (m ? m[1] : base).replace(/[\s\-–—:]+$/, '').replace(/\s+/g, ' ').trim();
   // Quitar año al final entre paréntesis si existe (ej. "Breaking Bad (2008)" -> "Breaking Bad")
   name = name.replace(/\s*[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$/, '').trim();

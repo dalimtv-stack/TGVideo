@@ -6,6 +6,7 @@
 
 import { EXT_CHANNEL_TITLES_CACHE, hideExternalFiles, unhideExternalFiles, isExternalFileHiddenSync } from './externalTitlesCache.js';
 import { isExternalTitle } from '../library/titles.js';
+import { parseEpisode } from '../library/parse.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
 import { extractTitleAndYear } from '../metadata/tmdb.js';
 import { showMetadataModal } from './metadataModal.js';
@@ -222,15 +223,7 @@ function extractYear(titleData, file) {
  * Helper para detectar temporada y episodio de un string de forma segura.
  */
 function parseEpisodeHelper(name = '') {
-  let m = name.match(/[ST](\d{1,2})[\s._-]*E(\d{1,3})/i);
-  if (m) return { season: +m[1], episode: +m[2] };
-  m = name.match(/(\d{1,2})\s*x\s*(\d{1,3})/i);
-  if (m) return { season: +m[1], episode: +m[2] };
-  m = name.match(/T(?:emp(?:orada)?)?[\s._-]*(\d{1,2})[\s._-]+(?:ep|cap(?:[ií]tulo)?)[\s._-]*(\d{1,3})/i);
-  if (m) return { season: +m[1], episode: +m[2] };
-  m = name.match(/(?:ep(?:isodio)?|cap(?:[ií]tulo)?)[\s._-]*(\d{1,3})/i);
-  if (m) return { season: 1, episode: +m[1] };
-  return { season: 0, episode: 0 };
+  return parseEpisode(name);
 }
 
 /**
@@ -247,6 +240,9 @@ function isSeriesTitle(titleData, file) {
   if (isSeriesCat || titleData?.tipo === 'serie') return true;
   if (titleData?.metadata?.tipo === 'tv' || titleData?.metadata?.type === 'tv') return true;
   if (file?.season > 0 && file?.episode > 0) return true;
+  const origName = file?.fileName || file?.captionFileName || file?.label || '';
+  const parsed = parseEpisodeHelper(origName);
+  if (parsed.season > 0 || parsed.episode > 0) return true;
   return false;
 }
 
