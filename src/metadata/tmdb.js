@@ -521,6 +521,9 @@ export async function fetchTmdbFullDetails(type, id, signal) {
 async function searchTmdbCandidates(type, query, year, signal) {
   if (!query || !query.trim()) return null;
   const q = query.trim();
+  if (/^serie\s+desconocida/i.test(q) || /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|video|file|input|\d+)$/i.test(q)) {
+    return null;
+  }
 
   const trySearch = async (searchQuery, searchYear) => {
     if (!searchQuery || !searchQuery.trim()) return null;
@@ -541,9 +544,19 @@ async function searchTmdbCandidates(type, query, year, signal) {
     }
     if (!res?.results || res.results.length === 0) return null;
     const match = res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(cleanQ)))
-      || res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && (normalize(n).includes(normalize(cleanQ)) || normalize(cleanQ).includes(normalize(n)))))
-      || res.results[0];
-    return match?.id || null;
+      || res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && (normalize(n).includes(normalize(cleanQ)) || normalize(cleanQ).includes(normalize(n)))));
+    if (match) return match.id || null;
+
+    if (cleanQ.length >= 3 && !/^(?:serie|video|file|\d+)$/i.test(cleanQ)) {
+      const words = cleanQ.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+      const first = res.results[0];
+      const firstNames = [first.name, first.title, first.original_name, first.original_title].filter(Boolean).map(s => s.toLowerCase());
+      const hasWordMatch = words.some(w => firstNames.some(fn => fn.includes(w)));
+      if (hasWordMatch || res.results.length === 1) {
+        return first.id || null;
+      }
+    }
+    return null;
   };
 
   // 1. Intento original con el término extraído
@@ -606,6 +619,9 @@ async function searchTmdbCandidates(type, query, year, signal) {
 const CAPTION_MISS = new Set();
 
 async function searchByCaptions(type, title, alreadyTried, signal) {
+  if (title?.isUnknownSeries || /^serie\s+desconocida/i.test(title?.nombre || '')) {
+    return null;
+  }
   const captions = [...new Set((title.archivos || []).map(f => f.rawCaption || f.caption).filter(c => c && c.trim()))].slice(0, 5);
   for (const caption of captions) {
     const cands = extractTitlesFromCaption(caption);
@@ -753,6 +769,10 @@ async function enrichSaga(title, { signal } = {}) {
 
 export async function enrichTitle(title, { signal } = {}) {
   if (!["pelicula", "serie"].includes(title?.tipo)) return null;
+  if (title.isUnknownSeries || /^serie\s+desconocida/i.test(title.nombre || '') || /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|\d+)$/i.test((title.nombre || '').trim())) {
+    const ov = getOverride(title.id);
+    if (!ov) return null;
+  }
   const ov = getOverride(title.id);
   if (ov) {
     if (ov.id && !ov.ageRating && getTmdbKey()) {

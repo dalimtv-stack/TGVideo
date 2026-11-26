@@ -84,14 +84,17 @@ export function seriesNameFromFile(fileName = '', trailingMap = null) {
     const trailingInfo = getTrailingSeriesForFile(fileName, trailingMap);
     if (trailingInfo?.candidate) return trailingInfo.candidate;
   }
-  let base = String(fileName).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '').replace(/[._]+/g, ' ');
+  let base = String(fileName).replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, '').replace(/[._]+/g, ' ');
   // Quitar etiquetas iniciales de canal: [Canal], (Canal), @Canal
   base = base.replace(/^\s*(?:\[[^\]]+\]|\([^)]+\)|@[A-Za-z0-9_]+)\s*/i, '');
   const m = base.match(/^(.*?)[\s\-–—\[(]*(?:[ST]\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|temp(?:orada)?\s*\d)/i);
   let name = (m ? m[1] : base).replace(/[\s\-–—:]+$/, '').replace(/\s+/g, ' ').trim();
   // Quitar año al final entre paréntesis si existe (ej. "Breaking Bad (2008)" -> "Breaking Bad")
   name = name.replace(/\s*[\(\[]?(?:19|20)\d{2}[\)\]]?\s*$/, '').trim();
-  return name || '(Sin sección)';
+  if (!name || name.length < 2 || /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|video|file|input|\d+)$/i.test(name)) {
+    return null;
+  }
+  return name;
 }
 
 function movieName(file) {
@@ -631,50 +634,126 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
     } else if (ch.macro) {
       if (ch.category === 'Series') {
         // En canales macro de Series (ej. Clásicas::Series::tgstorage), el canal agrupa múltiples series distintas.
-        // La "Sección:" del caption (ej. "Sección: Clásicas") es el grupo/categoría del canal, NO el nombre de la serie.
-        // Agrupamos cada serie por su TMDB ID o por el nombre individual extraído del archivo (delante o detrás con varios episodios).
+        // Agrupamos cada serie por su TMDB ID o por el nombre individual extraído del archivo.
+        // Si no se sabe de qué serie son, los episodios van todos seguidos y se agrupan como "Serie desconocida [N]".
         const trailingSeriesMap = detectTrailingSeriesMap(files);
         const seriesTmdbMap = new Map();
         const seriesNameMap = new Map();
+        const unknownGroups = [];
 
-        for (const f of files) {
+        let currentUnknownGroup = null;
+        let unknownCounter = 0;
+        let lastEpNumber = null;
+        let lastSeasonNumber = null;
+        let lastMsgId = null;
+
+        const isValidSeriesCandidate = (name) => {
+          if (!name || typeof name !== 'string') return false;
+          const trimmed = name.trim();
+          if (trimmed.length < 2) return false;
+          if (/^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|video|file|input|\d+)$/i.test(trimmed)) return false;
+          return true;
+        };
+
+        const sortedFiles = [...files].sort((a, b) => (Number(a.messageId) || 0) - (Number(b.messageId) || 0) || ((a.date || 0) - (b.date || 0)));
+
+        for (const f of sortedFiles) {
           const trailingInfo = getTrailingSeriesForFile(f.captionFileName || f.fileName, trailingSeriesMap);
-          const sName = trailingInfo?.candidate || seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap) || (f.section && !/^(cl[aá]sicas|series|general|sin secci[oó]n)$/i.test(f.section) && f.section !== ch.group ? f.section : null) || ch.name || 'Serie';
-          const cleanBase = normalizeMovieKey(sName).replace(/(?:19|20)\d{2}/g, '');
-          const fileYear = trailingInfo?.year || f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year || null;
+          const prefixName = seriesNameFromFile(f.captionFileName || f.fileName, trailingSeriesMap);
+          const sectionName = (f.section && !/^(cl[aá]sicas|series|general|sin secci[oó]n)$/i.test(f.section) && f.section !== ch.group) ? f.section : null;
           const fileTmdb = f.tmdbId ? String(f.tmdbId).trim() : null;
 
-          let grp = null;
-          if (fileTmdb && seriesTmdbMap.has(fileTmdb)) {
-            grp = seriesTmdbMap.get(fileTmdb);
-          } else if (cleanBase && seriesNameMap.has(cleanBase)) {
-            grp = seriesNameMap.get(cleanBase);
+          let sName = null;
+          if (isValidSeriesCandidate(trailingInfo?.candidate)) sName = trailingInfo.candidate;
+          else if (isValidSeriesCandidate(prefixName)) sName = prefixName;
+          else if (isValidSeriesCandidate(sectionName)) sName = sectionName;
+
+          if (fileTmdb || sName) {
+            currentUnknownGroup = null;
+            lastEpNumber = null;
+            lastSeasonNumber = null;
+            lastMsgId = null;
+
+            const finalName = sName || `Serie TMDB ${fileTmdb}`;
+            const cleanBase = normalizeMovieKey(finalName).replace(/(?:19|20)\d{2}/g, '');
+            const fileYear = trailingInfo?.year || f.yearHint || extractTitleAndYear(f.captionFileName || f.fileName || f.label).year || null;
+
+            let grp = null;
+            if (fileTmdb && seriesTmdbMap.has(fileTmdb)) {
+              grp = seriesTmdbMap.get(fileTmdb);
+            } else if (cleanBase && seriesNameMap.has(cleanBase)) {
+              grp = seriesNameMap.get(cleanBase);
+            }
+
+            if (!grp) {
+              grp = {
+                id: `${ch.id}#${finalName}`,
+                name: finalName,
+                yearHint: fileYear,
+                files: [f],
+                tmdbId: fileTmdb,
+                imdbId: f.imdbId || null,
+              };
+              if (fileTmdb) seriesTmdbMap.set(fileTmdb, grp);
+              if (cleanBase) seriesNameMap.set(cleanBase, grp);
+            } else {
+              grp.files.push(f);
+              if (!grp.tmdbId && fileTmdb) {
+                grp.tmdbId = fileTmdb;
+                seriesTmdbMap.set(fileTmdb, grp);
+              }
+              if (cleanBase && !seriesNameMap.has(cleanBase)) {
+                seriesNameMap.set(cleanBase, grp);
+              }
+              if (!grp.imdbId && f.imdbId) grp.imdbId = f.imdbId;
+              if (!grp.yearHint && fileYear) grp.yearHint = fileYear;
+              if (finalName.length > grp.name.length && grp.name === 'Serie') grp.name = finalName;
+            }
+            continue;
           }
 
-          if (!grp) {
-            grp = {
-              id: `${ch.id}#${sName}`,
-              name: sName,
-              yearHint: fileYear,
-              files: [f],
-              tmdbId: fileTmdb,
-              imdbId: f.imdbId || null,
-            };
-            if (fileTmdb) seriesTmdbMap.set(fileTmdb, grp);
-            if (cleanBase) seriesNameMap.set(cleanBase, grp);
-          } else {
-            grp.files.push(f);
-            if (!grp.tmdbId && fileTmdb) {
-              grp.tmdbId = fileTmdb;
-              seriesTmdbMap.set(fileTmdb, grp);
-            }
-            if (!grp.imdbId && f.imdbId) grp.imdbId = f.imdbId;
-            if (!grp.yearHint && fileYear) grp.yearHint = fileYear;
-            if (sName.length > grp.name.length && grp.name === 'Serie') grp.name = sName;
+          // Serie desconocida: van todos seguidos
+          const ep = parseEpisode(f.captionFileName || f.fileName || f.label);
+          const currentSeason = ep.season || 1;
+          const currentEpisode = ep.episode || 0;
+          const currentMsgId = Number(f.messageId) || 0;
+
+          let startNewUnknown = false;
+          if (!currentUnknownGroup) {
+            startNewUnknown = true;
+          } else if (currentSeason < (lastSeasonNumber || 1)) {
+            startNewUnknown = true;
+          } else if (currentEpisode === 1 && (lastEpNumber || 0) > 1 && currentSeason <= (lastSeasonNumber || 1)) {
+            startNewUnknown = true;
+          } else if (currentSeason === (lastSeasonNumber || 1) && currentEpisode > 0 && (lastEpNumber || 0) > 0 && currentEpisode < (lastEpNumber || 0)) {
+            startNewUnknown = true;
+          } else if (lastMsgId && (currentMsgId - lastMsgId > 150)) {
+            startNewUnknown = true;
           }
+
+          if (startNewUnknown) {
+            unknownCounter++;
+            const unknownName = `Serie desconocida ${unknownCounter}`;
+            currentUnknownGroup = {
+              id: `${ch.id}#desconocida_${unknownCounter}`,
+              name: unknownName,
+              yearHint: null,
+              files: [f],
+              tmdbId: null,
+              imdbId: null,
+              isUnknownSeries: true,
+            };
+            unknownGroups.push(currentUnknownGroup);
+          } else {
+            currentUnknownGroup.files.push(f);
+          }
+
+          if (currentEpisode > 0) lastEpNumber = currentEpisode;
+          if (currentSeason > 0) lastSeasonNumber = currentSeason;
+          lastMsgId = currentMsgId;
         }
 
-        const uniqueGroups = new Set([...seriesTmdbMap.values(), ...seriesNameMap.values()]);
+        const uniqueGroups = new Set([...seriesTmdbMap.values(), ...seriesNameMap.values(), ...unknownGroups]);
         for (const grp of uniqueGroups) {
           const t = makeTitle({
             id: grp.id,
@@ -687,6 +766,7 @@ export async function buildTitles(client, channels, peerOf, onProgress, cache = 
           if (grp.yearHint) t.yearHint = grp.yearHint;
           if (grp.tmdbId) t.tmdbId = grp.tmdbId;
           if (grp.imdbId) t.imdbId = grp.imdbId;
+          if (grp.isUnknownSeries) t.isUnknownSeries = true;
           titles.push(t);
         }
       } else {
