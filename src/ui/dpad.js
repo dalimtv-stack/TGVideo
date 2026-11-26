@@ -1,6 +1,7 @@
 // src/ui/dpad.js
 // Navegación espacial D-Pad (Android TV / Fire TV / teclado)
 import { App } from '@capacitor/app';
+import { removeActiveMenu, openContextMenuForFocusedElement, isMenuKey } from './contextMenu.js';
 
 let onBack = null;
 let initialized = false;
@@ -19,10 +20,14 @@ export function unregisterPlayerController() {
 }
 
 export function handleBack() {
-  // 0. Menús contextuales de PC
+  // 0. Menús contextuales de PC / Android TV
   const contextMenu = document.querySelector('.pc-context-menu');
   if (contextMenu) {
-    contextMenu.remove();
+    if (typeof removeActiveMenu === 'function') {
+      removeActiveMenu();
+    } else {
+      contextMenu.remove();
+    }
     return true;
   }
 
@@ -145,7 +150,7 @@ function focusAndReveal(el) {
 
 function move(dir) {
   // Si hay un modal abierto, limitar la navegación a los elementos dentro del modal
-  const modalEl = document.querySelector('.admin-modal-overlay, .modal-overlay, .settings-overlay, .player-tracks-overlay, .player-next-up, .carousel-trailer-modal');
+  const modalEl = document.querySelector('.pc-context-menu, .admin-modal-overlay, .modal-overlay, .settings-overlay, .player-tracks-overlay, .player-next-up, .carousel-trailer-modal');
   const scope = modalEl || document;
   const items = [...scope.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
   if (!items.length) return;
@@ -169,6 +174,26 @@ function move(dir) {
       : items[0];
     first?.focus({ preventScroll: true });
     first?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+    return;
+  }
+
+  // 0. Navegación vertical directa en menú contextual (.pc-context-menu)
+  const curMenu = cur?.closest('.pc-context-menu');
+  if (curMenu) {
+    const menuItems = [...curMenu.querySelectorAll('.pc-menu-item[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+    if (menuItems.length) {
+      const idx = menuItems.indexOf(cur);
+      if (dir === 'up') {
+        const next = idx > 0 ? menuItems[idx - 1] : menuItems[menuItems.length - 1];
+        next?.focus({ preventScroll: true });
+        return;
+      }
+      if (dir === 'down') {
+        const next = idx < menuItems.length - 1 ? menuItems[idx + 1] : menuItems[0];
+        next?.focus({ preventScroll: true });
+        return;
+      }
+    }
     return;
   }
 
@@ -1266,6 +1291,18 @@ export function initDpad() {
         e.stopPropagation();
         return;
       }
+    }
+
+    // Tecla Menú físico (tres rayas / ContextMenu / KEYCODE_MENU 82) en Android TV
+    if (typeof isMenuKey === 'function' && isMenuKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (document.querySelector('.pc-context-menu')) {
+        handleBack();
+      } else if (typeof openContextMenuForFocusedElement === 'function') {
+        openContextMenuForFocusedElement();
+      }
+      return;
     }
 
     if (e.defaultPrevented) return;

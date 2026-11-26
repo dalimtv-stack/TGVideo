@@ -288,42 +288,68 @@ function formatSuggestedFileName(file, titleData) {
 }
 
 let activeMenuEl = null;
+let prevFocusedEl = null;
 let activeContextConfig = null;
 let contextMenuInitialized = false;
 
-function removeActiveMenu() {
+export function isMenuKey(e) {
+  return Boolean(
+    e.key === 'ContextMenu' ||
+    e.key === 'Menu' ||
+    e.keyCode === 82 ||
+    e.keyCode === 93 ||
+    (e.key === 'F10' && e.shiftKey)
+  );
+}
+
+export function isContextMenuOpen() {
+  return Boolean(activeMenuEl && document.body.contains(activeMenuEl));
+}
+
+export function removeActiveMenu() {
   if (activeMenuEl) {
     activeMenuEl.remove();
     activeMenuEl = null;
+    if (prevFocusedEl && typeof prevFocusedEl.focus === 'function' && document.body.contains(prevFocusedEl)) {
+      try {
+        prevFocusedEl.focus({ preventScroll: true });
+        prevFocusedEl.classList.add('dpad-focused');
+      } catch (_) {}
+    }
+    prevFocusedEl = null;
+    return true;
   }
+  return false;
 }
 
-/**
- * Inicializa el listener global de clic derecho en PC.
- */
-export function initContextMenu(config) {
-  activeContextConfig = config;
-  // Solo instalar listeners una vez, incluso si la app renueva la sesión Telegram.
-  if (contextMenuInitialized) return;
-  // Solo en navegadores de escritorio (evita interferir en Smart TV o móvil).
-  const isTouchOnly = 'ontouchstart' in window && !window.matchMedia('(pointer: fine)').matches;
-  if (isTouchOnly) return;
-  contextMenuInitialized = true;
+export function openContextMenuForFocusedElement() {
+  if (document.querySelector('.player:not([style*="display: none"])') && !document.querySelector('.settings-overlay, .player-tracks-overlay, .player-next-up')) {
+    return false;
+  }
+  let candidate = document.activeElement;
+  if (!candidate || candidate === document.body) {
+    candidate = document.querySelector('.dpad-focused');
+  }
+  let target = candidate?.closest?.('.ep, .lib-card, .carousel-item, .admin-video-row, .detail');
+  if (!target) {
+    const detailEl = document.querySelector('.detail');
+    if (detailEl && detailEl.offsetParent) {
+      target = detailEl;
+    }
+  }
+  if (!target) return false;
+  return showContextMenuForElement(target, null);
+}
 
-  document.addEventListener('click', () => removeActiveMenu());
-  window.addEventListener('blur', () => removeActiveMenu());
-  window.addEventListener('resize', () => removeActiveMenu());
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') removeActiveMenu();
-  });
+export function showContextMenuForElement(sourceEl, coords = null) {
+  if (!sourceEl) return false;
 
-  document.addEventListener('contextmenu', (e) => {
-    const epEl = e.target.closest('.ep');
-    const cardEl = e.target.closest('.lib-card, .carousel-item');
-    const adminRow = e.target.closest('.admin-video-row');
-    const detailEl = e.target.closest('.detail');
+  const epEl = sourceEl.closest('.ep');
+  const cardEl = sourceEl.closest('.lib-card, .carousel-item');
+  const adminRow = sourceEl.closest('.admin-video-row');
+  const detailEl = sourceEl.closest('.detail') || (sourceEl.classList?.contains('detail') ? sourceEl : null);
 
-    if (!epEl && !cardEl && !adminRow && !detailEl) return;
+  if (!epEl && !cardEl && !adminRow && !detailEl) return false;
 
     let targetFile = null;
     let targetTitle = null;
@@ -403,10 +429,9 @@ export function initContextMenu(config) {
       if (!targetFile.channelId) targetFile.channelId = targetTitle.channel?.id || targetTitle.origen?.channelId;
     }
 
-    if (!targetFile || !targetFile.messageId) return;
+    if (!targetFile || !targetFile.messageId) return false;
 
-    e.preventDefault();
-    e.stopPropagation();
+    prevFocusedEl = document.activeElement || document.querySelector('.dpad-focused');
     removeActiveMenu();
 
     const menu = document.createElement('div');
@@ -439,15 +464,15 @@ export function initContextMenu(config) {
         <strong style="color: #e2e8f0; display: block; overflow: hidden; text-overflow: ellipsis;">${esc(displayName)}</strong>
         <span>${esc(sizeStr)}</span>
       </div>
-      <div class="pc-menu-item" id="pc-menu-forward" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
+      <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-forward" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem;">⚡</span>
         <span>${targetTitle?.tipo === 'serie' && (targetTitle?.archivos?.length || 1) > 1 ? 'Enviar serie completa / episodio a tgstorage' : 'Enviar / Subir archivo a canal tgstorage'}</span>
       </div>
-      <div class="pc-menu-item" id="pc-menu-identify" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
+      <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-identify" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem; color: #c084fc;">✨</span>
         <span>Identificar / Corregir en TMDB</span>
       </div>
-      <div class="pc-menu-item" id="pc-menu-clear-meta" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #fca5a5;">
+      <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-clear-meta" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #fca5a5;">
         <span style="font-size: 1.1rem;">🗑️</span>
         <span>Borrar identificación guardada</span>
       </div>
@@ -456,7 +481,7 @@ export function initContextMenu(config) {
           const isSeries = targetTitle?.tipo === 'serie';
           const singleLabel = isSeries ? 'Editar caption/datos de este episodio' : 'Editar caption/datos de esta versión';
           let html = `
-            <div class="pc-menu-item" id="pc-menu-edit-caption-single" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #38bdf8;">
+            <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-edit-caption-single" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #38bdf8;">
               <span style="font-size: 1.1rem;">📝</span>
               <span>${singleLabel}</span>
             </div>
@@ -464,7 +489,7 @@ export function initContextMenu(config) {
           if (allMovieFiles.length > 1) {
             const commonLabel = isSeries ? 'Editar datos comunes de la serie' : 'Editar datos comunes (todas las versiones)';
             html += `
-              <div class="pc-menu-item" id="pc-menu-edit-caption-common" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #7dd3fc;">
+              <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-edit-caption-common" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #7dd3fc;">
                 <span style="font-size: 1.1rem;">📋</span>
                 <span>${commonLabel}</span>
               </div>
@@ -478,14 +503,14 @@ export function initContextMenu(config) {
               ? `Editar datos comunes de la serie (${allMovieFiles.length} eps)`
               : `Editar datos comunes (${allMovieFiles.length} versiones)`;
             return `
-              <div class="pc-menu-item" id="pc-menu-edit-caption-common" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #38bdf8;">
+              <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-edit-caption-common" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #38bdf8;">
                 <span style="font-size: 1.1rem;">📝</span>
                 <span>${commonLabel}</span>
               </div>
             `;
           } else {
             return `
-              <div class="pc-menu-item" id="pc-menu-edit-caption-single" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #38bdf8;">
+              <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-edit-caption-single" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s; color: #38bdf8;">
                 <span style="font-size: 1.1rem;">📝</span>
                 <span>Editar caption/datos Telegram</span>
               </div>
@@ -493,11 +518,11 @@ export function initContextMenu(config) {
           }
         }
       })()}
-      <div class="pc-menu-item" id="pc-menu-download" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
+      <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-download" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem;">⬇️</span>
         <span>Descargar archivo</span>
       </div>
-      <div class="pc-menu-item" id="pc-menu-telegram" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
+      <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-telegram" style="display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.9rem; transition: background 0.15s;">
         <span style="font-size: 1.1rem;">✈️</span>
         <span>Mostrar en Telegram</span>
       </div>
@@ -506,11 +531,11 @@ export function initContextMenu(config) {
           const hidden = isExternalFileHiddenSync(targetFile);
           const allHidden = allMovieFiles.every(f => isExternalFileHiddenSync(f));
           return `
-            <div class="pc-menu-item" id="pc-menu-toggle-hidden-single" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${hidden ? '#86efac' : '#fca5a5'};">
+            <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-toggle-hidden-single" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${hidden ? '#86efac' : '#fca5a5'};">
               <span style="font-size:1.1rem;">${hidden ? '👁️' : '🙈'}</span>
               <span>${hidden ? 'Mostrar esta versión' : 'Ocultar solo esta versión'}</span>
             </div>
-            <div class="pc-menu-item" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${allHidden ? '#86efac' : '#f87171'};border-top:1px solid rgba(255,255,255,.08);">
+            <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${allHidden ? '#86efac' : '#f87171'};border-top:1px solid rgba(255,255,255,.08);">
               <span style="font-size:1.1rem;">${allHidden ? '👁️' : '🙈'}</span>
               <span>${allHidden ? 'Mostrar película completa' : 'Ocultar película completa'}</span>
             </div>
@@ -519,7 +544,7 @@ export function initContextMenu(config) {
         if (hasMultipleVersions) {
           const allHidden = allMovieFiles.every(f => isExternalFileHiddenSync(f));
           return `
-            <div class="pc-menu-item" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${allHidden ? '#86efac' : '#fca5a5'};">
+            <div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${allHidden ? '#86efac' : '#fca5a5'};">
               <span style="font-size:1.1rem;">${allHidden ? '👁️' : '🙈'}</span>
               <span>${allHidden ? 'Mostrar película completa' : 'Ocultar película completa'}</span>
             </div>
@@ -527,7 +552,7 @@ export function initContextMenu(config) {
             ${allMovieFiles.map((f, index) => {
               const hidden = isExternalFileHiddenSync(f);
               const label = f.label || f.fileName || `Versión ${index + 1}`;
-              return `<div class="pc-menu-item pc-menu-toggle-version-item" data-msg-id="${esc(f.messageId)}" data-version-index="${index}" style="display:flex;align-items:center;gap:.5rem;padding:.45rem .9rem;cursor:pointer;font-size:.84rem;color:${hidden ? '#86efac' : '#cbd5e1'};"><span>${hidden ? '👁️' : '🙈'}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${hidden ? 'Mostrar' : 'Ocultar'} ${esc(label)}</span></div>`;
+              return `<div class="pc-menu-item pc-menu-toggle-version-item" data-focusable tabindex="0" role="button" data-msg-id="${esc(f.messageId)}" data-version-index="${index}" style="display:flex;align-items:center;gap:.5rem;padding:.45rem .9rem;cursor:pointer;font-size:.84rem;color:${hidden ? '#86efac' : '#cbd5e1'};"><span>${hidden ? '👁️' : '🙈'}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${hidden ? 'Mostrar' : 'Ocultar'} ${esc(label)}</span></div>`;
             }).join('')}
           `;
         }
@@ -537,24 +562,42 @@ export function initContextMenu(config) {
         const labelText = fullyHidden
           ? (isSeries ? 'Mostrar serie oculta' : 'Mostrar archivo oculto')
           : (isSeries ? 'Ocultar serie ya gestionada' : 'Ocultar archivo ya gestionado');
-        return `<div class="pc-menu-item" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${fullyHidden ? '#86efac' : '#fca5a5'};"><span style="font-size:1.1rem;">${fullyHidden ? '👁️' : '🙈'}</span><span>${labelText}</span></div>`;
+        return `<div class="pc-menu-item" data-focusable tabindex="0" role="button" id="pc-menu-toggle-hidden-all" style="display:flex;align-items:center;gap:.6rem;padding:.6rem .9rem;cursor:pointer;font-size:.9rem;color:${fullyHidden ? '#86efac' : '#fca5a5'};"><span style="font-size:1.1rem;">${fullyHidden ? '👁️' : '🙈'}</span><span>${labelText}</span></div>`;
       })() : ''}
     `;
 
-    // Posicionamiento inteligente para no salir de pantalla
+    // Posicionamiento inteligente para no salir de pantalla (ratón en PC o mando en TV)
     document.body.appendChild(menu);
     const rect = menu.getBoundingClientRect();
-    let left = e.clientX;
-    let top = e.clientY;
+    let left = 0;
+    let top = 0;
 
-    if (left + rect.width > window.innerWidth) {
-      left = window.innerWidth - rect.width - 8;
+    if (coords && typeof coords.clientX === 'number') {
+      left = coords.clientX;
+      top = coords.clientY;
+    } else {
+      const anchorEl = epEl || cardEl || adminRow || detailEl || sourceEl;
+      const anchorRect = anchorEl?.getBoundingClientRect?.() || { left: 40, top: 40, width: 200, height: 100, right: 240, bottom: 140 };
+      if (anchorRect.right + rect.width + 12 <= window.innerWidth) {
+        left = anchorRect.right + 12;
+        top = anchorRect.top;
+      } else if (anchorRect.left - rect.width - 12 >= 16) {
+        left = anchorRect.left - rect.width - 12;
+        top = anchorRect.top;
+      } else {
+        left = Math.max(16, anchorRect.left + (anchorRect.width - rect.width) / 2);
+        top = anchorRect.bottom + 8;
+      }
     }
-    if (top + rect.height > window.innerHeight) {
-      top = window.innerHeight - rect.height - 8;
+
+    if (left + rect.width > window.innerWidth - 12) {
+      left = window.innerWidth - rect.width - 12;
     }
-    menu.style.left = `${Math.max(8, left)}px`;
-    menu.style.top = `${Math.max(8, top)}px`;
+    if (top + rect.height > window.innerHeight - 12) {
+      top = window.innerHeight - rect.height - 12;
+    }
+    menu.style.left = `${Math.max(12, left)}px`;
+    menu.style.top = `${Math.max(12, top)}px`;
 
     menu.querySelectorAll('.pc-menu-item').forEach(item => {
       item.addEventListener('mouseenter', () => {
@@ -563,7 +606,23 @@ export function initContextMenu(config) {
       item.addEventListener('mouseleave', () => {
         item.style.backgroundColor = 'transparent';
       });
+      item.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ' || ev.keyCode === 13 || ev.keyCode === 23) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          item.click();
+        }
+      });
     });
+
+    // Enfocar automáticamente la primera opción al abrir en TV / teclado
+    setTimeout(() => {
+      const first = menu.querySelector('.pc-menu-item[data-focusable]');
+      if (first) {
+        first.focus({ preventScroll: true });
+        first.classList.add('dpad-focused');
+      }
+    }, 40);
 
     menu.querySelector('#pc-menu-forward')?.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -881,5 +940,52 @@ export function initContextMenu(config) {
     });
 
     activeMenuEl = menu;
+    return true;
+}
+
+/**
+ * Inicializa el listener global de clic derecho en PC y botón Menú (tres rayas) en Android TV.
+ */
+export function initContextMenu(config) {
+  activeContextConfig = config;
+  if (contextMenuInitialized) return;
+  contextMenuInitialized = true;
+
+  document.addEventListener('click', (e) => {
+    if (activeMenuEl && !activeMenuEl.contains(e.target)) {
+      removeActiveMenu();
+    }
+  });
+
+  window.addEventListener('blur', () => removeActiveMenu());
+  window.addEventListener('resize', () => removeActiveMenu());
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (activeMenuEl) {
+        e.preventDefault();
+        e.stopPropagation();
+        removeActiveMenu();
+      }
+      return;
+    }
+
+    if (isMenuKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (activeMenuEl) {
+        removeActiveMenu();
+      } else {
+        openContextMenuForFocusedElement();
+      }
+    }
+  }, true);
+
+  document.addEventListener('contextmenu', (e) => {
+    const handled = showContextMenuForElement(e.target, { clientX: e.clientX, clientY: e.clientY });
+    if (handled) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   });
 }
