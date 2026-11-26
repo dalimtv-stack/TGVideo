@@ -7,6 +7,7 @@ import { getGlobalConfig, getTmdbKey, getFanartKey, getCacheMaxMb, saveGlobalCon
 import { validateFanartKey } from '../metadata/fanart.js';
 import { loadProgress } from '../player/progress.js';
 import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../metadata/posterCache.js';
+import { getDevicePosterSize, getDevicePosterQuality, setDevicePosterSettings } from '../settings/device.js';
 import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -156,6 +157,8 @@ export function getDeviceSettings(profile) {
     carouselLogosScale: normalizeScaleIndex(logosScale, 5),
     pixelZoom: devPixelZoom,
     pixelZoomIndex: resolvedPixelZoomIdx,
+    posterSize: getDevicePosterSize(),
+    posterQuality: getDevicePosterQuality(),
   };
 }
 
@@ -595,6 +598,8 @@ function deviceSettings(profile, sync, onChanged) {
   const currentSkip = devSettings.skipSeconds;
   const currentScale = devSettings.uiScale;
   const currentPixelZoomIdx = devSettings.pixelZoomIndex;
+  const currentPosterSize = devSettings.posterSize ?? 480;
+  const currentPosterQuality = devSettings.posterQuality ?? 0.72;
 
   const exoPlayerOption = isAndroidApp ? `
               <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
@@ -648,6 +653,39 @@ function deviceSettings(profile, sync, onChanged) {
             </div>
           </fieldset>
 
+          <fieldset class="settings-section">
+            <legend class="settings-legend">Portadas en Caché (este dispositivo)</legend>
+            <div class="settings-field-row">
+              <label class="settings-label-inline">
+                <span>Tamaño de carátula:</span>
+                <select name="posterSize" class="settings-select" data-focusable>
+                  <option value="320" ${currentPosterSize === 320 ? 'selected' : ''}>320 px (Compacto / Ligero)</option>
+                  <option value="480" ${currentPosterSize === 480 ? 'selected' : ''}>480 px (Predeterminado actual)</option>
+                  <option value="600" ${currentPosterSize === 600 ? 'selected' : ''}>600 px (Medio)</option>
+                  <option value="720" ${currentPosterSize === 720 ? 'selected' : ''}>720 px (Alto)</option>
+                  <option value="800" ${currentPosterSize === 800 ? 'selected' : ''}>800 px (Máxima nitidez)</option>
+                  ${![320, 480, 600, 720, 800].includes(currentPosterSize) ? `<option value="${currentPosterSize}" selected>${currentPosterSize} px (Personalizado)</option>` : ''}
+                </select>
+              </label>
+            </div>
+            <div class="settings-field-row" style="margin-top:0.45rem;">
+              <label class="settings-label-inline">
+                <span>Calidad de compresión:</span>
+                <select name="posterQuality" class="settings-select" data-focusable>
+                  <option value="0.55" ${currentPosterQuality === 0.55 ? 'selected' : ''}>55% (Baja - Ahorro espacio)</option>
+                  <option value="0.65" ${currentPosterQuality === 0.65 ? 'selected' : ''}>65% (Media)</option>
+                  <option value="0.72" ${currentPosterQuality === 0.72 ? 'selected' : ''}>72% (Predeterminada actual)</option>
+                  <option value="0.82" ${currentPosterQuality === 0.82 ? 'selected' : ''}>82% (Alta calidad)</option>
+                  <option value="0.92" ${currentPosterQuality === 0.92 ? 'selected' : ''}>92% (Muy alta)</option>
+                  ${![0.55, 0.65, 0.72, 0.82, 0.92].includes(currentPosterQuality) ? `<option value="${currentPosterQuality}" selected>${Math.round(currentPosterQuality * 100)}% (Personalizado)</option>` : ''}
+                </select>
+              </label>
+            </div>
+            <p class="settings-hint" style="margin-top:0.35rem;font-size:0.72rem;color:#94a3b8;line-height:1.2;">
+              Afecta a las nuevas carátulas optimizadas en este equipo.
+            </p>
+          </fieldset>
+
       <p class="settings-status" role="status"></p>
       <div class="settings-actions">
         <button class="btn" data-focusable type="submit">Guardar en este dispositivo</button>
@@ -684,8 +722,13 @@ function deviceSettings(profile, sync, onChanged) {
     const form = e.currentTarget;
     const player = form.elements.player?.value || 'artplayer';
     const skipSeconds = Number(form.elements.skipSeconds?.value) || 10;
+    const posterSize = Number(form.elements.posterSize?.value) || 480;
+    const posterQuality = Number(form.elements.posterQuality?.value) || 0.72;
 
     const deviceId = getDeviceId();
+
+    // Guardado exclusivo en este dispositivo (no en perfil ni sincronización global)
+    setDevicePosterSettings(posterSize, posterQuality);
 
 
     // Guardado local inmediato para este dispositivo

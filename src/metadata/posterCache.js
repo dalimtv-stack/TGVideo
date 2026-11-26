@@ -1,6 +1,8 @@
+// src/metadata/posterCache.js
 // Gestor de caché de portadas en IndexedDB con compresión WebP, redimensionado a 480px y política LRU
 import { createKV } from '../core/kv.js';
 import { getCacheMaxMb } from '../settings/global.js';
+import { getDevicePosterSize, getDevicePosterQuality, DEFAULT_POSTER_SIZE, DEFAULT_POSTER_QUALITY } from '../settings/device.js';
 
 const posterKV = createKV('tgvideo_posters', 'posters');
 export const MAX_MEMORY_POSTERS = 60;
@@ -27,7 +29,7 @@ function setMemoryPoster(url, src) {
  * Optimiza y redimensiona la imagen a un lado mayor de 480px (ideal para tarjetas de TV de 140-180px).
  * Produce WebP comprimido (~0.72, 15-20 KB) o JPEG como fallback.
  */
-export async function optimizeImageTo800px(blob, maxEdge = 480, quality = 0.72) {
+export async function optimizeImageTo800px(blob, maxEdge = getDevicePosterSize(), quality = getDevicePosterQuality()) {
   if (!blob || !blob.size) return null;
 
   let bmp = null;
@@ -226,8 +228,10 @@ async function cachePosterInBackground(url) {
     if (!res.ok) return null;
     const blob = await res.blob();
 
-    // Redimensionar a 480px máx y optimizar en WebP (calidad ~0.72)
-    const dataUrl = await optimizeImageTo800px(blob, 480, 0.72);
+    // Redimensionar al tamaño y calidad configurados para este dispositivo (por defecto 480px y 0.72)
+    const targetEdge = getDevicePosterSize();
+    const targetQuality = getDevicePosterQuality();
+    const dataUrl = await optimizeImageTo800px(blob, targetEdge, targetQuality);
     if (!dataUrl) return null;
 
     const approxSize = Math.round(dataUrl.length * 0.75);
