@@ -826,9 +826,9 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     if (!seasonsMap.has(s)) seasonsMap.set(s, []);
     seasonsMap.get(s).push(f);
   }
-  const seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
+  let seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
   let currentSeason = st.next?.season && seasonsMap.has(st.next.season) ? st.next.season : (seasons[0] || 1);
-  const hasSeasons = t.tipo === 'serie' && seasons.length > 1;
+  let hasSeasons = t.tipo === 'serie' && seasons.length > 1;
   const seasonsBarHtml = hasSeasons ? `
     <div class="seasons-bar"><div class="seasons-label">Temporadas</div>
       <div class="seasons-track">${seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('')}</div>
@@ -1058,6 +1058,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
         <div class="ep-state">
           ${p?.is_completed ? '<span class="ep-visto-badge">✓ Visto</span>' : pct ? Math.round(pct) + '%' : ''}
+          ${t.tipo === 'serie' ? `<button class="btn-icon-circle episode-identification-btn" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir temporada y episodio" aria-label="Corregir identificación del episodio">✎</button>` : ''}
           ${(t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1)) ? `<button class="btn-icon-circle saga-film-btn-meta" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>` : ''}
         </div>
       </div>`;
@@ -1065,6 +1066,88 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     container.querySelectorAll('.ep').forEach(el => {
       el.onclick = () => { const f = t.archivos.find(x => x.key === el.dataset.key); if (f) play(f); };
     });
+    if (t.tipo === 'serie') {
+      container.querySelectorAll('.episode-identification-btn').forEach(editBtn => {
+        editBtn.onclick = (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const f = t.archivos.find(x => x.key === editBtn.dataset.key);
+          if (!f) return;
+          const fileName = f.captionFileName || f.fileName || f.label || `Mensaje ${f.messageId || ''}`;
+          const { overlay, close } = modal(`Corregir identificación del episodio`, `
+            <div style="display:flex;flex-direction:column;gap:.8rem;color:#e2e8f0;">
+              <p style="margin:0;color:#cbd5e1;">Archivo: <strong>${esc(fileName)}</strong></p>
+              <p style="margin:0;color:#94a3b8;font-size:.86rem;">Introduce la temporada y el número correctos. Esta corrección se guardará localmente y no cambiará el nombre original del archivo en Telegram.</p>
+              <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+                <label style="display:flex;flex:1;min-width:120px;flex-direction:column;gap:.3rem;">Temporada
+                  <input id="episode-season-input" type="number" min="1" max="99" value="${Number(f.season) || 1}" data-focusable style="padding:.55rem .7rem;background:#11141a;border:1px solid rgba(255,255,255,.18);border-radius:5px;color:#fff;">
+                </label>
+                <label style="display:flex;flex:1;min-width:120px;flex-direction:column;gap:.3rem;">Episodio
+                  <input id="episode-number-input" type="number" min="1" max="999" value="${Number(f.episode) || 1}" data-focusable style="padding:.55rem .7rem;background:#11141a;border:1px solid rgba(255,255,255,.18);border-radius:5px;color:#fff;">
+                </label>
+              </div>
+              <div id="episode-edit-error" role="alert" style="min-height:1.2rem;color:#f87171;font-size:.84rem;"></div>
+              <div style="display:flex;justify-content:flex-end;gap:.6rem;">
+                <button type="button" class="btn btn-secondary" id="episode-edit-cancel" data-focusable>Cancelar</button>
+                <button type="button" class="btn btn-primary" id="episode-edit-save" data-focusable>Guardar identificación</button>
+              </div>
+            </div>
+          `, `Serie: <strong>${esc(t.metadata?.name || t.nombre || '')}</strong>`);
+          attachSpatialNav(overlay);
+          overlay.querySelector('#episode-edit-cancel').onclick = close;
+          overlay.querySelector('#episode-edit-save').onclick = () => {
+            const seasonInput = overlay.querySelector('#episode-season-input');
+            const episodeInput = overlay.querySelector('#episode-number-input');
+            const errorEl = overlay.querySelector('#episode-edit-error');
+            const season = Number(seasonInput.value);
+            const episode = Number(episodeInput.value);
+            if (!Number.isInteger(season) || season < 1 || season > 99 || !Number.isInteger(episode) || episode < 1 || episode > 999) {
+              errorEl.textContent = 'Temporada: 1–99. Episodio: 1–999.';
+              return;
+            }
+            const oldSeason = Number(f.season) || 1;
+            const oldList = seasonsMap.get(oldSeason);
+            if (oldList) {
+              const oldIndex = oldList.indexOf(f);
+              if (oldIndex >= 0) oldList.splice(oldIndex, 1);
+              if (oldList.length === 0) seasonsMap.delete(oldSeason);
+            }
+            f.season = season;
+            f.episode = episode;
+            f.episodeOverride = { season, episode };
+            if (!seasonsMap.has(season)) seasonsMap.set(season, []);
+            if (!seasonsMap.get(season).includes(f)) seasonsMap.get(season).push(f);
+            t.archivos.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
+            seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
+            hasSeasons = seasons.length > 1;
+            currentSeason = season;
+            persistMetadata?.();
+            close();
+            const track = document.querySelector('.seasons-track');
+            if (hasSeasons) {
+              if (track) {
+                track.innerHTML = seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('');
+                track.querySelectorAll('.season-btn').forEach(btn => { btn.onclick = () => changeSeason(Number(btn.dataset.season)); });
+              } else {
+                const listTitle = document.getElementById('d-list-title');
+                if (listTitle) {
+                  const seasonBar = document.createElement('div');
+                  seasonBar.className = 'seasons-bar';
+                  seasonBar.innerHTML = `<div class="seasons-label">Temporadas</div><div class="seasons-track">${seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('')}</div>`;
+                  listTitle.before(seasonBar);
+                  seasonBar.querySelectorAll('.season-btn').forEach(btn => { btn.onclick = () => changeSeason(Number(btn.dataset.season)); });
+                }
+              }
+            } else {
+              document.querySelector('.seasons-bar')?.remove();
+            }
+            renderEpisodes(currentSeason);
+            loadSeasonMeta(currentSeason);
+          };
+          overlay.querySelector('#episode-season-input').focus();
+        };
+      });
+    }
     if (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1)) {
       container.querySelectorAll('.saga-film-btn-meta').forEach(metaBtn => {
         metaBtn.onclick = (e) => {

@@ -27,6 +27,28 @@ function esc(value) {
     .replace(/"/g, '&quot;');
 }
 
+function getSagaCaptionSection(title, file, existingCaption) {
+  const channel = title?.channel || file?.channel || {};
+  const candidates = [
+    file?.metadata?.collection?.name,
+    file?.metadata?.belongs_to_collection?.name,
+    title?.metadata?.collection?.name,
+    title?.metadata?.belongs_to_collection?.name,
+    title?.isSaga ? title?.metadata?.name : null,
+    title?.isSaga ? title?.nombre : null,
+    channel?.isSaga ? channel?.name : null,
+  ];
+  const collectionName = candidates.find(value => String(value || '').trim());
+  if (collectionName) return String(collectionName).trim();
+  return file?.section || title?.origen?.seccion || existingCaption?.section || '';
+}
+
+function describeTelegramError(error) {
+  const message = String(error?.errorMessage || error?.message || error || 'Error desconocido').trim();
+  const code = error?.code || error?.errorCode;
+  return code && !message.includes(String(code)) ? `${code}: ${message}` : message;
+}
+
 async function resolvePeer(client, tg, target) {
   if (!target) throw new Error('Canal no especificado para resolver peer');
   if (target.className?.startsWith('InputPeer') || target._ === 'inputPeerChannel' || target._ === 'inputPeerChat') {
@@ -109,7 +131,7 @@ export function showEditCaptionModal({
       const cap = parseCaption(firstF.rawCaption || firstF.caption || '');
       return {
         fileName: '',
-        section: cap.section || title.origen?.seccion || '',
+        section: getSagaCaptionSection(title, firstF, cap),
         tmdbId: cap.tmdbId || title.tmdbId || title.metadata?.id || '',
         imdbId: cap.imdbId || title.imdbId || title.metadata?.imdbId || '',
         director: cap.director || title.metadata?.director || '',
@@ -123,7 +145,7 @@ export function showEditCaptionModal({
     }
     const cap = parseCaption(f?.rawCaption || f?.caption || '');
     const fileName = cap.fileName || f?.captionFileName || f?.fileName || f?.label || '';
-    const section = cap.section || f?.section || title.origen?.seccion || '';
+    const section = getSagaCaptionSection(title, f, cap);
     const tmdbId = cap.tmdbId || f?.tmdbId || title.tmdbId || title.metadata?.id || '';
     const imdbId = cap.imdbId || f?.imdbId || title.imdbId || title.metadata?.imdbId || '';
     const director = cap.director || title.metadata?.director || '';
@@ -488,6 +510,7 @@ export function showEditCaptionModal({
     let successCount = 0;
     let failedCount = 0;
     let lastError = null;
+    const failedDetails = [];
     const taskId = filesToUpdate.length > 1
       ? startUploadTask(`📝 Editando captions (${filesToUpdate.length} archivos)`, 'Iniciando edición…', 0)
       : null;
@@ -591,6 +614,14 @@ export function showEditCaptionModal({
             console.warn('[editCaptionModal] Error editando mensaje en Telegram:', file.messageId, mErr);
             failedCount++;
             lastError = mErr;
+            const failedChannel = file.channel || file.channelId || title.channel || title.origen?.channelId;
+            failedDetails.push({
+              index: i + 1,
+              name: file.captionFileName || file.fileName || file.label || `Archivo ${i + 1}`,
+              channel: failedChannel?.title || failedChannel?.name || failedChannel?.id || failedChannel || 'Canal desconocido',
+              messageId: file.messageId,
+              reason: describeTelegramError(mErr),
+            });
             break;
           }
         }
@@ -635,7 +666,10 @@ export function showEditCaptionModal({
         if (cancelRequested) {
           alert(`Proceso detenido por el usuario. Se actualizaron ${successCount} mensaje${successCount === 1 ? '' : 's'} en Telegram.`);
         } else if (failedCount > 0) {
-          alert(`Se actualizaron ${successCount} mensajes en Telegram, pero ${failedCount} fallaron: ${lastError?.message || lastError}`);
+          const details = failedDetails.map(item =>
+            `${item.index}. ${item.name} · canal ${item.channel} · mensaje ${item.messageId || 'sin ID'} · ${item.reason}`
+          ).join('\n');
+          alert(`Se actualizaron ${successCount} mensajes en Telegram, pero ${failedCount} fallaron.\n\nDetalle de los fallos:\n${details || describeTelegramError(lastError)}`);
         } else {
           alert(`✅ Caption y datos de Telegram actualizados con éxito (${successCount} mensaje${successCount === 1 ? '' : 's'}).`);
         }
@@ -644,7 +678,10 @@ export function showEditCaptionModal({
         if (/CHAT_ADMIN_REQUIRED|CHAT_WRITE_FORBIDDEN/i.test(em)) {
           alert('No tienes permisos de administrador en este canal de Telegram para editar los mensajes.');
         } else {
-          alert(`No se pudo actualizar el mensaje en Telegram: ${em}`);
+          const details = failedDetails.map(item =>
+            `${item.index}. ${item.name} · canal ${item.channel} · mensaje ${item.messageId || 'sin ID'} · ${item.reason}`
+          ).join('\n');
+          alert(`No se pudieron actualizar los mensajes en Telegram.\n\n${details || em}`);
         }
         btnSave.disabled = false;
         if (btnCancel) { btnCancel.disabled = false; btnCancel.textContent = 'Cancelar'; btnCancel.onclick = () => close(); }

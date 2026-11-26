@@ -273,7 +273,18 @@ async function persistTitlesMetadata() {
     const saved = await kv.get(LIB_KEY).catch(() => null);
     if (!saved) return;
     saved.metadataMap = saved.metadataMap || {};
+    saved.episodeOverrides = saved.episodeOverrides || {};
     for (const t of (TITLES_CACHE || [])) {
+      if (t.tipo === 'serie' && Array.isArray(t.archivos)) {
+        for (const f of t.archivos) {
+          if (!f.episodeOverride) continue;
+          const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+          saved.episodeOverrides[fKey] = {
+            season: Number(f.season) || 1,
+            episode: Number(f.episode) || 1,
+          };
+        }
+      }
       const meta = metadataForPersist(t);
       if (meta) saved.metadataMap[t.id] = meta;
       if (Array.isArray(t.archivos) && (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1))) {
@@ -309,6 +320,7 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const savedObj = force ? null : previousObj;
   const saved = savedObj?.cache || {};
   const savedMeta = previousObj?.metadataMap || {};
+  const savedEpisodeOverrides = previousObj?.episodeOverrides || {};
   const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
 
   // Conservar canales externos persistidos en external_sources_v1 sin escanearlos en el arranque
@@ -319,6 +331,16 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   if (savedMeta) {
     for (const t of titles) {
       if (savedMeta[t.id]) t.metadata = savedMeta[t.id];
+      if (t.tipo === 'serie' && Array.isArray(t.archivos)) {
+        for (const f of t.archivos) {
+          const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+          const override = savedEpisodeOverrides[fKey];
+          if (!override) continue;
+          f.season = Number(override.season) || 1;
+          f.episode = Number(override.episode) || 1;
+          f.episodeOverride = { season: f.season, episode: f.episode };
+        }
+      }
       if (Array.isArray(t.archivos) && (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1))) {
         for (const f of t.archivos) {
           const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
@@ -333,8 +355,19 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   }
   const sig = channels.map(c => `${c.id}:${c.top}:${c.title}`).sort().join('|');
   const metadataMap = { ...savedMeta };
+  const episodeOverrides = { ...savedEpisodeOverrides };
   for (const t of titles) {
     if (t.metadata) metadataMap[t.id] = metadataForPersist(t);
+    if (t.tipo === 'serie' && Array.isArray(t.archivos)) {
+      for (const f of t.archivos) {
+        if (!f.episodeOverride) continue;
+        const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+        episodeOverrides[fKey] = {
+          season: Number(f.season) || 1,
+          episode: Number(f.episode) || 1,
+        };
+      }
+    }
     if (t.isSaga && Array.isArray(t.archivos)) {
       for (const f of t.archivos) {
         if (f.metadata) {
@@ -355,7 +388,7 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
     }
   }
 
-  await kv.set(LIB_KEY, { cache: combinedCache, channels: allChannels, sig, metadataMap, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
+  await kv.set(LIB_KEY, { cache: combinedCache, channels: allChannels, sig, metadataMap, episodeOverrides, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
   return { titles, sig };
 }
 

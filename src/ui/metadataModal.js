@@ -19,6 +19,24 @@ const segButtons = (name, options, current) => options.map(([value, label]) =>
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+function getSagaCaptionSection(title, file, metadata, existingCaption) {
+  const channel = title?.channel || file?.channel || {};
+  const candidates = [
+    metadata?.collection?.name,
+    metadata?.belongs_to_collection?.name,
+    file?.metadata?.collection?.name,
+    file?.metadata?.belongs_to_collection?.name,
+    title?.metadata?.collection?.name,
+    title?.metadata?.belongs_to_collection?.name,
+    title?.isSaga ? metadata?.name : null,
+    title?.isSaga ? title?.nombre : null,
+    channel?.isSaga ? channel?.name : null,
+  ];
+  const collectionName = candidates.find(value => String(value || '').trim());
+  if (collectionName) return String(collectionName).trim();
+  return file?.section || title?.origen?.seccion || existingCaption?.section || null;
+}
+
 export function showMetadataModal(title, onUpdated, { client, peerOf, profile, sync } = {}) {
   const currentMeta = title.metadata;
   const parsed = extractTitleAndYear(title.nombre);
@@ -391,7 +409,7 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
 
                       const newCap = buildStandardCaption({
                         fileName: preservedFileName,
-                        section: file.section || title.origen?.seccion || existingCap.section || null,
+                        section: getSagaCaptionSection(title, file, selected, existingCap),
                         tmdbId: fileTmdbId,
                         imdbId: isCollection ? (file.imdbId || existingCap.imdbId || '') : (selected.imdbId || existingCap.imdbId || ''),
                         director: selected.director || existingCap.director || '',
