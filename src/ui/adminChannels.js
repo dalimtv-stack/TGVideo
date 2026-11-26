@@ -1,7 +1,7 @@
 // src/ui/adminChannels.js
 // Módulo para escanear, integrar y desvincular canales, grupos y temas externos en la biblioteca.
 import { Api } from 'telegram';
-import { clearExternalChannelCache } from './externalTitlesCache.js';
+import { clearExternalChannelCache, applyEpisodeOverrides } from './externalTitlesCache.js';
 import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
 import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../metadata/tmdb.js';
 import { seriesNameFromFile, normalizeMovieKey } from '../library/titles.js';
@@ -184,7 +184,8 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
       if (savedMeta?.background || savedMeta?.backdrop) titleObj.backdrop = savedMeta.background || savedMeta.backdrop;
       generatedTitles.push(titleObj);
     }
-  } else if (category === 'Series') {
+} else if (category === 'Series') {
+    applyEpisodeOverrides(detectedFiles);
     const seriesTmdbMap = new Map();
     const seriesNameMap = new Map();
 
@@ -225,7 +226,7 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
 
     const uniqueGroups = new Set([...seriesTmdbMap.values(), ...seriesNameMap.values()]);
     for (const grp of uniqueGroups) {
-      grp.files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
+      grp.files.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
       const savedMeta = grp.metadata || resolveExternalMetadata(grp.id, grp.tmdbId, grp.files, virtualId, metadataMap);
       const titleObj = {
         id: String(grp.id),

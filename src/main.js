@@ -44,6 +44,7 @@ import { resolveTitleAgeRating } from './ui/ageRating.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
 import { createLibraryViews } from './ui/libraryViews.js';
+import { getEpisodeOverride, saveEpisodeOverride } from './ui/externalTitlesCache.js';
 import { setupTvPlatform, isAndroidApp } from './core/platform.js';
 
 setupTvPlatform();
@@ -279,10 +280,10 @@ async function persistTitlesMetadata() {
         for (const f of t.archivos) {
           if (!f.episodeOverride) continue;
           const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
-          saved.episodeOverrides[fKey] = {
-            season: Number(f.season) || 1,
-            episode: Number(f.episode) || 1,
-          };
+          const s = Number.isInteger(f.season) ? f.season : (Number(f.season) || 1);
+          const ep = Number.isInteger(f.episode) ? f.episode : (Number(f.episode) || 1);
+          saved.episodeOverrides[fKey] = { season: s, episode: ep, name: f.episodeOverride.name || null };
+          saveEpisodeOverride({ title: t, file: f, season: s, episode: ep, name: f.episodeOverride.name || null });
         }
       }
       const meta = metadataForPersist(t);
@@ -334,10 +335,11 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
       if (t.tipo === 'serie' && Array.isArray(t.archivos)) {
         for (const f of t.archivos) {
           const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
-          const override = savedEpisodeOverrides[fKey];
+          const override = savedEpisodeOverrides[fKey] || getEpisodeOverride(fKey) || getEpisodeOverride(f);
           if (!override) continue;
           f.season = Number(override.season) || 1;
-          f.episode = Number(override.episode) || 1;
+          f.episodeOverride = override;
+          if (override.name) f.metadata = { ...(f.metadata || {}), name: override.name };
           f.episodeOverride = { season: f.season, episode: f.episode };
         }
       }

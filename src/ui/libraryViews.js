@@ -5,7 +5,8 @@ import { createKV } from "../core/kv.js";
 import { modal } from "./settings.js";
 import { prewarmPosterCache } from "../metadata/posterCache.js";
 import { identifyTitlesInBulk } from './adminChannels.js';
-import { EXT_CHANNEL_TITLES_CACHE, isExternalFileHiddenSync } from './externalTitlesCache.js';
+import { EXT_CHANNEL_TITLES_CACHE, isExternalFileHiddenSync, getEpisodeOverride, saveEpisodeOverride, applyEpisodeOverrides } from './externalTitlesCache.js';
+import { showEpisodeIdentificationModal } from './episodeIdentificationModal.js';
 import { groupTitles, unbundleTitles } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
@@ -638,8 +639,6 @@ export function createLibraryViews(deps) {
     }, 80);
   }
 
-
-
 function applySagaFilmMetadata(t) {
   const detail = document.querySelector('.detail');
   if (!detail || String(detail.dataset.title) !== String(t.id)) return;
@@ -776,7 +775,6 @@ function applyDetailMetadata(t, profile) {
     info.innerHTML = [yearStr, ratingWithAge].filter(Boolean).join(' · ');
   }
 
-
   // Actualizar botón de reproducir con el nombre TMDB si está disponible
   const playBtn = detail.querySelector('#d-play');
   if (playBtn && profile?.id) {
@@ -820,11 +818,17 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   const st = titleState(t, progress);
   const nextLabel = formatPlayButtonLabel(t, st, progress);
 
+  if (t.tipo === "serie" && Array.isArray(t.archivos)) {
+    applyEpisodeOverrides(t.archivos);
+    t.archivos.sort((a, b) => ((Number(a.season) || 1) - (Number(b.season) || 1)) || ((Number(a.episode) || 1) - (Number(b.episode) || 1)) || (a.date - b.date));
+  }
   const seasonsMap = new Map();
-  if (t.tipo === 'serie') for (const f of t.archivos) {
-    const s = f.season || 1;
-    if (!seasonsMap.has(s)) seasonsMap.set(s, []);
-    seasonsMap.get(s).push(f);
+  if (t.tipo === "serie" && Array.isArray(t.archivos)) {
+    for (const f of t.archivos) {
+      const s = Number.isInteger(f.season) ? f.season : (Number(f.season) || 1);
+      if (!seasonsMap.has(s)) seasonsMap.set(s, []);
+      seasonsMap.get(s).push(f);
+    }
   }
   let seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
   let currentSeason = st.next?.season && seasonsMap.has(st.next.season) ? st.next.season : (seasons[0] || 1);
@@ -1073,78 +1077,21 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           e.preventDefault();
           const f = t.archivos.find(x => x.key === editBtn.dataset.key);
           if (!f) return;
-          const fileName = f.captionFileName || f.fileName || f.label || `Mensaje ${f.messageId || ''}`;
-          const { overlay, close } = modal(`Corregir identificación del episodio`, `
-            <div style="display:flex;flex-direction:column;gap:.8rem;color:#e2e8f0;">
-              <p style="margin:0;color:#cbd5e1;">Archivo: <strong>${esc(fileName)}</strong></p>
-              <p style="margin:0;color:#94a3b8;font-size:.86rem;">Introduce la temporada y el número correctos. Esta corrección se guardará localmente y no cambiará el nombre original del archivo en Telegram.</p>
-              <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
-                <label style="display:flex;flex:1;min-width:120px;flex-direction:column;gap:.3rem;">Temporada
-                  <input id="episode-season-input" type="number" min="1" max="99" value="${Number(f.season) || 1}" data-focusable style="padding:.55rem .7rem;background:#11141a;border:1px solid rgba(255,255,255,.18);border-radius:5px;color:#fff;">
-                </label>
-                <label style="display:flex;flex:1;min-width:120px;flex-direction:column;gap:.3rem;">Episodio
-                  <input id="episode-number-input" type="number" min="1" max="999" value="${Number(f.episode) || 1}" data-focusable style="padding:.55rem .7rem;background:#11141a;border:1px solid rgba(255,255,255,.18);border-radius:5px;color:#fff;">
-                </label>
-              </div>
-              <div id="episode-edit-error" role="alert" style="min-height:1.2rem;color:#f87171;font-size:.84rem;"></div>
-              <div style="display:flex;justify-content:flex-end;gap:.6rem;">
-                <button type="button" class="btn btn-secondary" id="episode-edit-cancel" data-focusable>Cancelar</button>
-                <button type="button" class="btn btn-primary" id="episode-edit-save" data-focusable>Guardar identificación</button>
-              </div>
-            </div>
-          `, `Serie: <strong>${esc(t.metadata?.name || t.nombre || '')}</strong>`);
-          attachSpatialNav(overlay);
-          overlay.querySelector('#episode-edit-cancel').onclick = close;
-          overlay.querySelector('#episode-edit-save').onclick = () => {
-            const seasonInput = overlay.querySelector('#episode-season-input');
-            const episodeInput = overlay.querySelector('#episode-number-input');
-            const errorEl = overlay.querySelector('#episode-edit-error');
-            const season = Number(seasonInput.value);
-            const episode = Number(episodeInput.value);
-            if (!Number.isInteger(season) || season < 1 || season > 99 || !Number.isInteger(episode) || episode < 1 || episode > 999) {
-              errorEl.textContent = 'Temporada: 1–99. Episodio: 1–999.';
-              return;
-            }
-            const oldSeason = Number(f.season) || 1;
-            const oldList = seasonsMap.get(oldSeason);
-            if (oldList) {
-              const oldIndex = oldList.indexOf(f);
-              if (oldIndex >= 0) oldList.splice(oldIndex, 1);
-              if (oldList.length === 0) seasonsMap.delete(oldSeason);
-            }
-            f.season = season;
-            f.episode = episode;
-            f.episodeOverride = { season, episode };
-            if (!seasonsMap.has(season)) seasonsMap.set(season, []);
-            if (!seasonsMap.get(season).includes(f)) seasonsMap.get(season).push(f);
-            t.archivos.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
-            seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
-            hasSeasons = seasons.length > 1;
-            currentSeason = season;
-            persistMetadata?.();
-            close();
-            const track = document.querySelector('.seasons-track');
-            if (hasSeasons) {
-              if (track) {
-                track.innerHTML = seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('');
-                track.querySelectorAll('.season-btn').forEach(btn => { btn.onclick = () => changeSeason(Number(btn.dataset.season)); });
-              } else {
-                const listTitle = document.getElementById('d-list-title');
-                if (listTitle) {
-                  const seasonBar = document.createElement('div');
-                  seasonBar.className = 'seasons-bar';
-                  seasonBar.innerHTML = `<div class="seasons-label">Temporadas</div><div class="seasons-track">${seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('')}</div>`;
-                  listTitle.before(seasonBar);
-                  seasonBar.querySelectorAll('.season-btn').forEach(btn => { btn.onclick = () => changeSeason(Number(btn.dataset.season)); });
-                }
-              }
-            } else {
-              document.querySelector('.seasons-bar')?.remove();
-            }
-            renderEpisodes(currentSeason);
-            loadSeasonMeta(currentSeason);
-          };
-          overlay.querySelector('#episode-season-input').focus();
+          showEpisodeIdentificationModal({
+            title: t,
+            file: f,
+            seasonsMap,
+            persistMetadata,
+            renderEpisodes,
+            loadSeasonMeta,
+            centerCurrentSeason,
+            changeSeason,
+            profile,
+            loadProgress,
+            formatPlayButtonLabel,
+            titleState,
+            esc,
+          });
         };
       });
     }
@@ -1441,7 +1388,6 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
 
   focusFirst('#d-play, .season-btn.active, #ep-list .ep[data-focusable]');
 }
-
 
   return { showGroupGrid, showDetail, applyDetailMetadata, applySagaFilmMetadata };
 }
