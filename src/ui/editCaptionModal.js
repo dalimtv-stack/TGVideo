@@ -3,6 +3,7 @@ import { Api } from 'telegram';
 import { modal } from './settings.js';
 import { parseCaption, buildStandardCaption } from '../library/parse.js';
 import { attachSpatialNav } from './spatialNav.js';
+import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
 
 
 function getFloodWaitSeconds(err) {
@@ -487,6 +488,9 @@ export function showEditCaptionModal({
     let successCount = 0;
     let failedCount = 0;
     let lastError = null;
+    const taskId = filesToUpdate.length > 1
+      ? startUploadTask(`📝 Editando captions (${filesToUpdate.length} archivos)`, 'Iniciando edición…', 0)
+      : null;
 
     try {
       for (let i = 0; i < filesToUpdate.length; i++) {
@@ -516,6 +520,20 @@ export function showEditCaptionModal({
               fileName: singleFileName || file.captionFileName || file.fileName || file.label,
               ...commonData,
             });
+        }
+
+        if (taskId) {
+          updateUploadTask(taskId, {
+            status: `Actualizando archivo ${i + 1}/${filesToUpdate.length}…`,
+            percent: Math.round((i / filesToUpdate.length) * 100)
+          });
+        }
+
+        // Si el caption es idéntico al actual, saltar llamada innecesaria para prevenir flood
+        const currentCap = String(file.rawCaption || file.caption || '').trim();
+        if (currentCap && currentCap === String(finalCaption).trim()) {
+          successCount++;
+          continue;
         }
 
         let fileSaved = false;
@@ -551,9 +569,17 @@ export function showEditCaptionModal({
               console.warn(`[editCaptionModal] FloodWait detectado (${waitSec}s) para mensaje ${file.messageId}`);
               let remaining = waitSec + 1;
               while (remaining > 0 && !cancelRequested) {
+                const floodMsg = `⏳ Límite de Telegram (FloodWait): esperando ${remaining}s antes de reanudar (${successCount}/${filesToUpdate.length} completados)…`;
                 if (statusEl) {
                   statusEl.style.color = "#f59e0b";
-                  statusEl.textContent = `⏳ Límite de Telegram (FloodWait): esperando ${remaining}s antes de reanudar (${successCount}/${filesToUpdate.length} completados)…`;
+                  statusEl.textContent = floodMsg;
+                }
+                if (taskId) {
+                  updateUploadTask(taskId, {
+                    title: `📝 Editando captions (${successCount}/${filesToUpdate.length})`,
+                    status: floodMsg,
+                    percent: Math.round((successCount / filesToUpdate.length) * 100),
+                  });
                 }
                 await new Promise(r => setTimeout(r, 1000));
                 remaining--;
@@ -571,8 +597,17 @@ export function showEditCaptionModal({
 
         if (cancelRequested) break;
 
+        // Pausa preventiva entre ediciones para evitar FloodWait (como en TGComic)
         if (filesToUpdate.length > 1 && !cancelRequested) {
-          await new Promise(r => setTimeout(r, 800));
+          await new Promise(r => setTimeout(r, 1200));
+        }
+      }
+
+      if (taskId) {
+        if (failedCount > 0) {
+          failUploadTask(taskId, `Completado con incidencias: ${successCount} guardados, ${failedCount} fallidos`);
+        } else {
+          finishUploadTask(taskId, `✅ ${successCount} captions actualizados`);
         }
       }
 

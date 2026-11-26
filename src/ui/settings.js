@@ -1,8 +1,8 @@
+// src/ui/settings.js
 import { isAndroidTV, isAndroidApp, applyDevicePixelZoom } from '../core/platform.js';
 import { startAppUpdate } from '../core/updater.js';
 import { checkForUpdate, CURRENT_VERSION } from '../core/updateCheck.js';
 import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
-// src/ui/settings.js
 import { getGlobalConfig, getTmdbKey, getFanartKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
 import { validateFanartKey } from '../metadata/fanart.js';
 import { loadProgress } from '../player/progress.js';
@@ -845,17 +845,18 @@ function showSkinSettings(profile, sync, onChanged) {
     applyDevicePixelZoom(pixelZoom);
     applyProfileScale(profile);
     close();
-    onChanged();
 
-    // Enfocar el botón "Guardar en este dispositivo" del modal anterior (Ajustes de dispositivo)
-    setTimeout(() => {
+    // Enfocar de forma estable el botón del modal anterior (Ajustes de dispositivo) sin recargar la pantalla detrás
+    const focusPrevModal = () => {
       const prevForm = document.querySelector('.device-settings-form');
-      const saveBtn = prevForm?.querySelector('button[type="submit"]');
-      if (saveBtn) {
-        saveBtn.focus({ preventScroll: true });
-        saveBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      const targetBtn = prevForm?.querySelector('button[type="submit"]') || prevForm?.querySelector('#btn-device-skin');
+      if (targetBtn) {
+        targetBtn.focus({ preventScroll: true });
+        targetBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }
-    }, 60);
+    };
+    focusPrevModal();
+    setTimeout(focusPrevModal, 50);
     (async () => {
       try {
         const remote = await sync.pullProfile(profile.id);

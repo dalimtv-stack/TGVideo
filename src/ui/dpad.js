@@ -98,36 +98,31 @@ export function handleBack() {
 
 /** Centra verticalmente una fila en el área desplazable de la home (la primera fila va al tope). */
 export function centerRowInView(row, behavior = 'smooth') {
-  const scroller = document.querySelector('.home-main');
   if (!row) return;
-  if (!scroller) {
-    row.scrollIntoView({ block: 'center', behavior });
-    return;
-  }
-  const isFirst = !row.previousElementSibling?.matches?.('.row');
-  let top = 0;
-  if (!isFirst) {
-    const s = scroller.getBoundingClientRect();
-    const r = row.getBoundingClientRect();
-    const delta = (r.top + r.height / 2) - (s.top + s.height / 2);
-    top = scroller.scrollTop + delta;
-  }
-  const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-  if (max > 0) {
-    top = Math.max(0, Math.min(max, top));
-    if (Math.abs(top - scroller.scrollTop) > 1) scroller.scrollTo({ top, behavior });
-  } else {
-    row.scrollIntoView({ block: isFirst ? 'start' : 'center', behavior });
+  try {
+    row.scrollIntoView({ block: 'center', inline: 'nearest', behavior });
+  } catch (_) {
+    const scroller = document.querySelector('.home-main');
+    if (scroller) {
+      const s = scroller.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      const delta = (r.top + r.height / 2) - (s.top + s.height / 2);
+      scroller.scrollTo({ top: scroller.scrollTop + delta, behavior });
+    }
   }
 }
 
 /** Centra horizontalmente un elemento dentro de su carrusel. */
 function centerInTrack(track, el, behavior = 'smooth') {
   if (!track || !el) return;
-  const t = track.getBoundingClientRect();
-  const e = el.getBoundingClientRect();
-  const left = Math.max(0, track.scrollLeft + (e.left + e.width / 2) - (t.left + t.width / 2));
-  if (Math.abs(left - track.scrollLeft) > 1) track.scrollTo({ left, behavior });
+  try {
+    el.scrollIntoView({ block: 'nearest', inline: 'center', behavior });
+  } catch (_) {
+    const t = track.getBoundingClientRect();
+    const e = el.getBoundingClientRect();
+    const left = Math.max(0, track.scrollLeft + (e.left + e.width / 2) - (t.left + t.width / 2));
+    if (Math.abs(left - track.scrollLeft) > 1) track.scrollTo({ left, behavior });
+  }
 }
 
 /** Da el foco a un elemento de una fila y lo deja centrado (horizontal en su carrusel, vertical en pantalla). */
@@ -535,38 +530,93 @@ function move(dir) {
     return;
   }
 
-  // 2.5 Si está dentro de la cuadrícula de categoría (.category-grid)
-  const curCatGrid = cur.closest('.category-grid');
-  if (curCatGrid) {
-    const cards = [...curCatGrid.querySelectorAll('.lib-card[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
+  // 2.5 Navegación dedicada para cuadrículas (.category-grid y .grid-cards de los "+")
+  const curGrid = cur.closest('.category-grid, .grid-cards');
+  if (curGrid) {
+    const cards = [...curGrid.querySelectorAll('.lib-card[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
     const idx = cards.indexOf(cur);
-    if (idx !== -1 && dir === 'up') {
+    if (idx !== -1) {
       const curRect = cur.getBoundingClientRect();
-      const isTopRow = !cards.some(other => {
-        if (other === cur) return false;
-        const oRect = other.getBoundingClientRect();
-        return oRect.bottom <= curRect.top + 10;
-      });
-      if (isTopRow) {
-        const sortToggle = document.querySelector('.category-sort-bar .category-sort-btn.active') || document.querySelector('.category-sort-bar [data-focusable], .category-sort-toggle');
-        if (sortToggle && sortToggle.offsetParent && !sortToggle.disabled) {
-          sortToggle.focus();
-          sortToggle.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+
+      // Mapear elementos de la misma fila visual (mismo centro vertical)
+      const sameRowCards = cards.filter(c => {
+        const r = c.getBoundingClientRect();
+        return Math.abs((r.top + r.height / 2) - (curRect.top + curRect.height / 2)) < curRect.height * 0.45;
+      }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+
+      const colIdx = sameRowCards.indexOf(cur);
+
+      if (dir === 'left') {
+        if (colIdx > 0) {
+          const target = sameRowCards[colIdx - 1];
+          target.focus({ preventScroll: true });
+          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
           return;
         }
-        const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
-        if (viewBtn && viewBtn.offsetParent && !viewBtn.disabled) {
-          viewBtn.focus();
-          viewBtn.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      } else if (dir === 'right') {
+        if (colIdx !== -1 && colIdx < sameRowCards.length - 1) {
+          const target = sameRowCards[colIdx + 1];
+          target.focus({ preventScroll: true });
+          target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
           return;
         }
-        const activeNav = document.querySelector('.home-nav-item.active') || document.querySelector('.home-nav-item');
-        if (activeNav) {
-          activeNav.focus();
-          activeNav.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-          return;
+      } else if (dir === 'up') {
+        const aboveCards = cards.filter(c => c.getBoundingClientRect().bottom <= curRect.top + 15);
+        if (aboveCards.length === 0) {
+          // Primera fila: subir a las herramientas o cabecera
+          const screen = cur.closest('.grid-screen, .home-screen') || document;
+          const target = screen.querySelector('.grid-sort-bar [data-focusable].active, .category-sort-bar [data-focusable].active')
+            || screen.querySelector('.grid-sort-bar [data-focusable], .category-sort-bar [data-focusable]')
+            || screen.querySelector('#grid-btn-back, .home-nav-item.active, .home-nav-item');
+          if (target && target.offsetParent && !target.disabled) {
+            target.focus();
+            target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+            return;
+          }
+        } else {
+          const curMidX = (curRect.left + curRect.right) / 2;
+          const maxBottomAbove = Math.max(...aboveCards.map(c => c.getBoundingClientRect().bottom));
+          const immediateRowAbove = aboveCards.filter(c => Math.abs(c.getBoundingClientRect().bottom - maxBottomAbove) < curRect.height * 0.45);
+          let bestCard = immediateRowAbove[0];
+          let bestDist = Infinity;
+          for (const c of immediateRowAbove) {
+            const r = c.getBoundingClientRect();
+            const dist = Math.abs((r.left + r.right) / 2 - curMidX);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestCard = c;
+            }
+          }
+          if (bestCard) {
+            bestCard.focus({ preventScroll: true });
+            bestCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+            return;
+          }
+        }
+      } else if (dir === 'down') {
+        const belowCards = cards.filter(c => c.getBoundingClientRect().top >= curRect.bottom - 15);
+        if (belowCards.length > 0) {
+          const curMidX = (curRect.left + curRect.right) / 2;
+          const minTopBelow = Math.min(...belowCards.map(c => c.getBoundingClientRect().top));
+          const immediateRowBelow = belowCards.filter(c => Math.abs(c.getBoundingClientRect().top - minTopBelow) < curRect.height * 0.45);
+          let bestCard = immediateRowBelow[0];
+          let bestDist = Infinity;
+          for (const c of immediateRowBelow) {
+            const r = c.getBoundingClientRect();
+            const dist = Math.abs((r.left + r.right) / 2 - curMidX);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestCard = c;
+            }
+          }
+          if (bestCard) {
+            bestCard.focus({ preventScroll: true });
+            bestCard.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+            return;
+          }
         }
       }
+      return;
     }
   }
 

@@ -279,14 +279,16 @@ export function createLibraryViews(deps) {
         <button type="button" class="grid-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}" title="Ordenar por fecha de estreno (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Estreno${currentSort === 'estreno' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
         ${row.isExternal ? `<button type="button" class="grid-sort-btn ${currentSort === 'tamano' ? 'active' : ''}" data-focusable data-sort="tamano" aria-pressed="${currentSort === 'tamano'}" title="Ordenar por tamaño total de los vídeos">Tamaño${currentSort === 'tamano' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>` : ''}
         ${row.isExternal ? `<button type="button" class="grid-filter-group-btn ${showHiddenExternal ? 'active' : ''}" data-focusable id="grid-filter-hidden-btn" role="checkbox" aria-checked="${showHiddenExternal}" title="Mostrar u ocultar archivos ya gestionados"><span class="grid-filter-icon" aria-hidden="true">${showHiddenExternal ? '☑' : '☐'}</span><span class="grid-filter-text">${showHiddenExternal ? 'Ocultos visibles' : 'Ver ocultos'}</span></button>` : ''}
-        <button type="button" class="grid-filter-group-btn ${isGrouped ? "active" : ""}" id="grid-filter-group-btn" data-focusable role="checkbox" aria-checked="${isGrouped}" title="Agrupar series y películas">
-          <span class="grid-filter-icon" aria-hidden="true">${isGrouped ? "☑" : "☐"}</span>
-          <span class="grid-filter-text">Agrupar</span>
-        </button>
-        <button type="button" class="grid-filter-unidentified-btn ${onlyUnidentified ? 'active' : ''}" data-focusable role="checkbox" aria-checked="${onlyUnidentified}" title="Mostrar solo títulos sin identificar en TMDB">
-          <span class="grid-filter-icon" aria-hidden="true">${onlyUnidentified ? '☑' : '☐'}</span>
-          <span class="grid-filter-text">No identificados</span>
-        </button>
+        ${row.isExternal ? `
+          <button type="button" class="grid-filter-group-btn ${isGrouped ? "active" : ""}" id="grid-filter-group-btn" data-focusable role="checkbox" aria-checked="${isGrouped}" title="Agrupar series y películas">
+            <span class="grid-filter-icon" aria-hidden="true">${isGrouped ? "☑" : "☐"}</span>
+            <span class="grid-filter-text">Agrupar</span>
+          </button>
+          <button type="button" class="grid-filter-unidentified-btn ${onlyUnidentified ? 'active' : ''}" data-focusable role="checkbox" aria-checked="${onlyUnidentified}" title="Mostrar solo títulos sin identificar en TMDB">
+            <span class="grid-filter-icon" aria-hidden="true">${onlyUnidentified ? '☑' : '☐'}</span>
+            <span class="grid-filter-text">No identificados</span>
+          </button>
+        ` : ''}
         ${row.isExternal ? `
           <button type="button" class="grid-filter-unidentified-btn" id="grid-btn-tools-identify" data-focusable title="Identificar vídeos de este canal con TMDB">
             <span class="grid-filter-icon" aria-hidden="true">✨</span>
@@ -308,11 +310,13 @@ export function createLibraryViews(deps) {
             <h1>${esc(row.title)}</h1>
             <span class="grid-count">${initialItems.length} ${initialItems.length === 1 ? "título" : "títulos"}</span>
           </div>
-          <div class="grid-search-container" style="display: flex; align-items: center; position: relative; min-width: 190px; max-width: 320px; flex: 1 1 auto; margin: 0 0.5rem;">
-            <span style="position: absolute; left: 0.75rem; color: #94a3b8; font-size: 0.9rem; pointer-events: none;">🔍</span>
-            <input type="search" id="grid-search-input" class="grid-search-input" data-focusable placeholder="Buscar archivo, título, TMDB..." value="${esc(searchTerm)}" style="width: 100%; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 9999px; padding: 0.4rem 2rem 0.4rem 2.2rem; color: #fff; font-size: 0.88rem; outline: none; transition: border-color 0.2s, background 0.2s;" />
-            <button type="button" id="grid-search-clear" style="position: absolute; right: 0.5rem; display: none; background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 0.85rem; padding: 0.2rem;" title="Limpiar búsqueda">✕</button>
-          </div>
+          ${row.isExternal ? `
+            <div class="grid-search-container" style="display: flex; align-items: center; position: relative; min-width: 190px; max-width: 320px; flex: 1 1 auto; margin: 0 0.5rem;">
+              <span style="position: absolute; left: 0.75rem; color: #94a3b8; font-size: 0.9rem; pointer-events: none;">🔍</span>
+              <input type="search" id="grid-search-input" class="grid-search-input" data-focusable placeholder="Buscar archivo, título, TMDB..." value="${esc(searchTerm)}" style="width: 100%; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 9999px; padding: 0.4rem 2rem 0.4rem 2.2rem; color: #fff; font-size: 0.88rem; outline: none; transition: border-color 0.2s, background 0.2s;" />
+              <button type="button" id="grid-search-clear" style="position: absolute; right: 0.5rem; display: none; background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 0.85rem; padding: 0.2rem;" title="Limpiar búsqueda">✕</button>
+            </div>
+          ` : ''}
           ${row.isExternal ? `
             <button class="btn-icon" data-focusable id="grid-btn-reload" title="Actualizar canal" aria-label="Actualizar canal" style="font-size: 1.2rem; margin-right: 0.4rem;">↻</button>
             <button class="btn-icon" data-focusable id="grid-btn-identify" title="Identificar vídeos sin metadatos en TMDB" aria-label="Identificar con TMDB" style="font-size: 1.1rem; margin-right: 0.4rem; color: #c084fc;">✨</button>
@@ -1024,7 +1028,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     container.innerHTML = files.map((f) => {
       const p = progress[f.key];
       const pct = p?.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
-      const ep = f.season || f.episode ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
+      const ep = (t.tipo === 'serie' && (f.season || f.episode)) ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
       const filmYear = f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || t.metadata?.date?.slice(0, 4) || '';
       const normalizedMovieName = t.metadata?.name || t.metadata?.title || t.nombre;
       const filmTitle = t.isSaga

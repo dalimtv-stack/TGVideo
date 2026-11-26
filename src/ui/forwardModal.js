@@ -67,18 +67,50 @@ function setProgressBar(_bar, { id, title, status, percent = 0, done = false, er
 }
 
 function extractYear(titleData, file) {
+  // 1. Metadatos directos o heredados de TMDB
+  const meta = titleData?.metadata || file?.metadata || null;
+  if (meta?.year) return String(meta.year);
+  if (meta?.release_date) {
+    const m = String(meta.release_date).match(/^(\d{4})/);
+    if (m) return m[1];
+  }
+  if (meta?.first_air_date) {
+    const m = String(meta.first_air_date).match(/^(\d{4})/);
+    if (m) return m[1];
+  }
   if (titleData?.metadata?.year) return String(titleData.metadata.year);
   if (titleData?.metadata?.release_date) {
     const m = String(titleData.metadata.release_date).match(/^(\d{4})/);
     if (m) return m[1];
   }
-  if (titleData?.year) return String(titleData.year);
+  if (titleData?.metadata?.first_air_date) {
+    const m = String(titleData.metadata.first_air_date).match(/^(\d{4})/);
+    if (m) return m[1];
+  }
+  if (file?.metadata?.year) return String(file.metadata.year);
+  if (file?.metadata?.release_date) {
+    const m = String(file.metadata.release_date).match(/^(\d{4})/);
+    if (m) return m[1];
+  }
 
-  const raw = `${titleData?.nombre || ''} ${file?.fileName || ''} ${file?.label || ''}`;
-  const m1 = raw.match(/\b((?:19|20)\d{2})\b/);
-  if (m1) return m1[1];
-  const m2 = raw.match(/AÑO\s*(\d{4})/i);
-  if (m2) return m2[1];
+  // 2. Propiedades year / yearHint comunes en pestaña Externos
+  if (titleData?.yearHint) return String(titleData.yearHint);
+  if (file?.yearHint) return String(file.yearHint);
+  if (titleData?.year) return String(titleData.year);
+  if (file?.year) return String(file.year);
+
+  // 3. Extracción robusta de nombres de archivo y captions de Telegram
+  const raw = `${titleData?.nombre || ''} ${file?.fileName || ''} ${file?.captionFileName || ''} ${file?.rawFileName || ''} ${file?.rawCaption || ''} ${file?.caption || ''} ${file?.label || ''} ${file?.synopsis || ''}`;
+
+  const mBracket = raw.match(/[\[\(]((?:19|20)\d{2})[\]\)]/);
+  if (mBracket) return mBracket[1];
+
+  const mYearTag = raw.match(/(?:AÑO|YEAR)\s*(\d{4})/i);
+  if (mYearTag) return mYearTag[1];
+
+  const mWord = raw.match(/\b((?:19|20)\d{2})\b/);
+  if (mWord) return mWord[1];
+
   return null;
 }
 
@@ -128,17 +160,28 @@ function formatSuggestedFileName(file, titleData) {
     return `${sName} - ${season}x${epStr}${ext}`;
   }
 
-  let mName = titleData?.metadata?.title || titleData?.metadata?.name || file?.metadata?.title || file?.metadata?.name || titleData?.nombre;
+  let mName = titleData?.metadata?.title || titleData?.metadata?.name || file?.metadata?.title || file?.metadata?.name || titleData?.nombre || cleanBase;
   let year = extractYear(titleData, file);
 
-  if (!mName) {
-    mName = cleanBase.replace(/\s*AÑO\s*\d{4}/i, '').replace(/\b((?:19|20)\d{2})\b/g, '').trim();
-  } else if (year) {
-    mName = mName.replace(new RegExp(`\\s*\\[?\\(?${year}\\]?\\)?\\s*$`, 'i'), '').trim();
-  }
-
   if (year) {
+    // Limpiar el año existente al final del título para evitar duplicados como "Gladiator (2000) (2000)"
+    mName = mName
+      .replace(new RegExp(`\\s*[\[\(]?${year}[\]\)]?\\s*$`, 'i'), '')
+      .replace(/\s*[\[\(]?(?:19|20)\d{2}[\]\)]?\s*$/i, '')
+      .replace(/\s*AÑO\s*\d{4}/i, '')
+      .trim();
     return `${mName} (${year})${ext}`;
+  } else {
+    // Si ya trae año entre paréntesis en el propio nombre, mantenerlo
+    const hasParen = mName.match(/[\[\(]((?:19|20)\d{2})[\]\)]/);
+    if (!hasParen) {
+      const matchYear = mName.match(/\b((?:19|20)\d{2})\b/);
+      if (matchYear) {
+        const y = matchYear[1];
+        mName = mName.replace(new RegExp(`\\s*[\[\(]?${y}[\]\)]?\\s*$`, 'i'), '').trim();
+        return `${mName} (${y})${ext}`;
+      }
+    }
   }
   return `${mName}${ext}`;
 }
@@ -830,6 +873,3 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     }
   });
 }
-
-
-

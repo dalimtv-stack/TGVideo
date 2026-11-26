@@ -210,12 +210,17 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
           selected.title = chosenName;
 
           // Asignar metadatos completos (la identidad cambia: se descartan los originales de imagen anteriores)
+          const isCollection = title.isSaga || selected.type === 'collection';
+          if (isCollection) {
+            title.isSaga = true;
+          }
           title.metadata = selected;
           title.tmdbId = selected.id;
           title.nombre = chosenName;
           title._origImages = {};
 
-          if (title.archivos && !title.isSaga) {
+          // Solo si NO es una saga/colección asignamos los metadatos y el tmdbId a cada archivo
+          if (title.archivos && !isCollection) {
             for (const f of title.archivos) {
               f.metadata = selected;
               f.tmdbId = selected.id;
@@ -238,14 +243,16 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
             const titleIdExt = titleIdRaw ? `ext-${titleIdRaw}` : "";
             const keysToOverride = new Set([titleIdStr, titleIdRaw, titleIdExt].filter(Boolean));
 
-            (title.archivos || []).forEach(f => {
-              if (f.key) keysToOverride.add(String(f.key));
-              if (f.messageId) {
-                if (virtualId) keysToOverride.add(`${virtualId}:${f.messageId}`);
-                if (rawChannelId) keysToOverride.add(`${rawChannelId}:${f.messageId}`);
-                if (extChannelId) keysToOverride.add(`${extChannelId}:${f.messageId}`);
-              }
-            });
+            if (!isCollection) {
+              (title.archivos || []).forEach(f => {
+                if (f.key) keysToOverride.add(String(f.key));
+                if (f.messageId) {
+                  if (virtualId) keysToOverride.add(`${virtualId}:${f.messageId}`);
+                  if (rawChannelId) keysToOverride.add(`${rawChannelId}:${f.messageId}`);
+                  if (extChannelId) keysToOverride.add(`${extChannelId}:${f.messageId}`);
+                }
+              });
+            }
 
             for (const k of keysToOverride) {
               await setOverride(k, selected, sync).catch(() => {});
@@ -378,11 +385,15 @@ export function showMetadataModal(title, onUpdated, { client, peerOf, profile, s
                       const existingCap = parseCaption(file.rawCaption || file.caption || '');
                       const preservedFileName = existingCap.fileName || file.captionFileName || file.fileName || file.label;
 
+                      const fileTmdbId = isCollection
+                        ? (file.tmdbId || existingCap.tmdbId || null)
+                        : selected.id;
+
                       const newCap = buildStandardCaption({
                         fileName: preservedFileName,
                         section: file.section || title.origen?.seccion || existingCap.section || null,
-                        tmdbId: selected.id,
-                        imdbId: selected.imdbId || existingCap.imdbId || '',
+                        tmdbId: fileTmdbId,
+                        imdbId: isCollection ? (file.imdbId || existingCap.imdbId || '') : (selected.imdbId || existingCap.imdbId || ''),
                         director: selected.director || existingCap.director || '',
                         writer: selected.writer || existingCap.writer || '',
                         cast: selected.cast || existingCap.cast || '',

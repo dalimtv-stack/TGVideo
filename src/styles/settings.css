@@ -825,3 +825,43 @@ html.is-tv .settings-dialog--fullscreen .ui-scale-setting {
 html.is-tv .settings-dialog--fullscreen .ui-scale-ticks {
   margin-top: 0.15rem !important;
 }
+
+/* ==========================================================================
+   Punto 9: Ajuste responsivo garantizado para modales de Skin y Novedades
+   ========================================================================== */
+.settings-overlay:has(.skin-settings-form) .settings-dialog,
+.settings-dialog:has(.skin-settings-form) {
+  width: min(860px, 95vw);
+  max-height: min(94vh, 94dvh);
+  display: flex;
+  flex-direction: column;
+  padding: clamp(0.75rem, 2vh, 1.25rem) clamp(0.9rem, 2.5vw, 1.5rem);
+  overflow: hidden;
+}
+
+.skin-settings-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  gap: 0.5rem;
+  padding-right: 0.3rem;
+}
+
+.settings-overlay:has(.news-settings-form) .settings-dialog,
+.settings-dialog:has(.news-settings-form) {
+  width: min(820px, 95vw);
+  max-height: min(94vh, 94dvh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.news-settings-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

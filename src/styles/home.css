@@ -159,9 +159,14 @@
 }
 
 .lib-card:focus,
-.lib-card:hover,
 .lib-card.dpad-focused {
   z-index: 10;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lib-card:hover {
+    z-index: 10;
+  }
 }
 
 .lib-card-poster {
@@ -182,12 +187,20 @@
 }
 
 .lib-card:focus .lib-card-poster,
-.lib-card:hover .lib-card-poster,
 .lib-card.dpad-focused .lib-card-poster {
   transform: scale(1.08);
   border-color: #fff;
   box-shadow: 0 0 22px rgba(255, 255, 255, 0.45);
   z-index: 12;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lib-card:hover .lib-card-poster {
+    transform: scale(1.08);
+    border-color: #fff;
+    box-shadow: 0 0 22px rgba(255, 255, 255, 0.45);
+    z-index: 12;
+  }
 }
 
 .lib-card-name {
@@ -1211,4 +1224,11 @@ html.is-tv .settings-overlay {
 }
 html.is-tv .settings-dialog {
   max-height: 97vh !important;
+}
+
+/* Punto 6: En cuadrícula, separación ligera hacia abajo y letra en negrita */
+.grid-cards .lib-card-name,
+.category-grid .lib-card-name {
+  margin-top: 0.72rem;
+  font-weight: 700;
 }

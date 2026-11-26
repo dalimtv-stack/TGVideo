@@ -1270,9 +1270,14 @@ async function showProfileSelector(tg, sync) {
   showScreen(`
     <div class="screen profiles-screen">
       <h1 class="profiles-title">¿Quién está ahí?</h1>
-      <div class="profiles-grid">
-        ${cards}
-        ${addCard}
+      <div class="profiles-centered-container">
+        <div class="profiles-side-spacer" aria-hidden="true"></div>
+        <div class="profiles-grid">
+          ${cards}
+        </div>
+        <div class="profiles-add-wrapper">
+          ${addCard}
+        </div>
       </div>
       <button id="btn-logout" data-focusable class="logout-btn">Cerrar sesión</button>
     </div>
