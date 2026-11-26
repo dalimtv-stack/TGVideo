@@ -292,14 +292,31 @@ let prevFocusedEl = null;
 let activeContextConfig = null;
 let contextMenuInitialized = false;
 
+function isEditableTarget(target) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  const tag = String(target.tagName || '').toUpperCase();
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag !== 'INPUT') return false;
+  const type = String(target.type || 'text').toLowerCase();
+  return !['button', 'checkbox', 'radio', 'range', 'submit', 'reset', 'file', 'color', 'image'].includes(type);
+}
+
+/**
+ * Detecta la tecla Menú (tres rayas) del mando o la tecla de menú contextual del teclado.
+ * IMPORTANTE: keyCode 82 es KEYCODE_MENU en Android, pero en un teclado de PC es la letra «R».
+ * Por eso solo se acepta keyCode 82 cuando el navegador NO lo reporta como un carácter imprimible,
+ * y nunca mientras se escribe en un campo de texto.
+ */
 export function isMenuKey(e) {
-  return Boolean(
-    e.key === 'ContextMenu' ||
-    e.key === 'Menu' ||
-    e.keyCode === 82 ||
-    e.keyCode === 93 ||
-    (e.key === 'F10' && e.shiftKey)
-  );
+  if (!e) return false;
+  if (e.key === 'ContextMenu' || e.key === 'Menu') return true;
+  if (isEditableTarget(e.target)) return false;
+  if (e.ctrlKey || e.altKey || e.metaKey) return false;
+  const isPrintable = typeof e.key === 'string' && e.key.length === 1;
+  if (e.keyCode === 82 && !isPrintable && e.code !== 'KeyR') return true;
+  if (e.keyCode === 93 && !isPrintable) return true;
+  return Boolean(e.key === 'F10' && e.shiftKey);
 }
 
 export function isContextMenuOpen() {

@@ -6,7 +6,7 @@ import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, upl
 import { getGlobalConfig, getTmdbKey, getFanartKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
 import { validateFanartKey } from '../metadata/fanart.js';
 import { loadProgress } from '../player/progress.js';
-import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../metadata/posterCache.js';
+import { getPosterCacheStats, optimizePosterCache, clearPosterCache, loadPoster } from '../metadata/posterCache.js';
 import { getDevicePosterSize, getDevicePosterQuality, setDevicePosterSettings } from '../settings/device.js';
 import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js';
 
@@ -684,6 +684,12 @@ function deviceSettings(profile, sync, onChanged) {
             <p class="settings-hint" style="margin-top:0.35rem;font-size:0.72rem;color:#94a3b8;line-height:1.2;">
               Afecta a las nuevas carátulas optimizadas en este equipo.
             </p>
+            <div class="settings-field-row" style="margin-top:0.55rem;">
+              <button type="button" class="btn-ghost" data-focusable id="btn-refresh-posters" style="width:100%;text-align:center;font-weight:600;padding:0.65rem 1rem;">Refrescar portadas</button>
+            </div>
+            <p class="settings-hint" style="margin-top:0.3rem;font-size:0.72rem;color:#94a3b8;line-height:1.2;">
+              Borra las portadas guardadas en este equipo y las vuelve a convertir con el tamaño y la calidad elegidos.
+            </p>
           </fieldset>
 
       <p class="settings-status" role="status"></p>
@@ -694,6 +700,35 @@ function deviceSettings(profile, sync, onChanged) {
   `, 'Estas preferencias se guardan para este equipo sin alterar otros dispositivos');
 
   overlay.querySelector('#btn-device-skin').onclick = () => showSkinSettings(profile, sync, onChanged);
+
+  overlay.querySelector('#btn-refresh-posters')?.addEventListener('click', async () => {
+    const btn = overlay.querySelector('#btn-refresh-posters');
+    const status = overlay.querySelector('.settings-status');
+    const form = overlay.querySelector('form');
+    if (!confirm('¿Borrar las portadas guardadas en este equipo y volver a convertirlas?')) return;
+    btn.disabled = true;
+    if (status) status.textContent = 'Borrando portadas en caché…';
+    try {
+      // Aplicar ya el tamaño y la calidad seleccionados para que la reconversión los use
+      const posterSize = Number(form?.elements.posterSize?.value) || 480;
+      const posterQuality = Number(form?.elements.posterQuality?.value) || 0.72;
+      setDevicePosterSettings(posterSize, posterQuality);
+      await clearPosterCache();
+      // Recargar las portadas visibles: se descargan de nuevo y se guardan convertidas
+      const imgs = [...document.querySelectorAll('img[data-poster-url]')];
+      for (const img of imgs) {
+        const url = img.dataset.posterUrl;
+        if (!url) continue;
+        img.src = url;
+        loadPoster(img, url);
+      }
+      if (status) status.textContent = `✓ Portadas borradas. Se están volviendo a convertir (${posterSize} px · ${Math.round(posterQuality * 100)}%).`;
+    } catch (err) {
+      if (status) status.textContent = 'Error al refrescar portadas: ' + (err?.message || err);
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   overlay.querySelectorAll('.settings-radio-label').forEach(label => {
     const radio = label.querySelector('input[type="radio"]');

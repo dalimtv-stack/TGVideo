@@ -2,6 +2,7 @@
 // Navegación espacial D-Pad (Android TV / Fire TV / teclado)
 import { App } from '@capacitor/app';
 import { removeActiveMenu, openContextMenuForFocusedElement, isMenuKey } from './contextMenu.js';
+import { openSelectPicker, closeSelectPicker, isSelectPickerOpen } from './tvSelect.js';
 
 let onBack = null;
 let initialized = false;
@@ -20,6 +21,12 @@ export function unregisterPlayerController() {
 }
 
 export function handleBack() {
+  // -1. Selector de opciones para mando (desplegables en Android TV)
+  if (isSelectPickerOpen()) {
+    closeSelectPicker();
+    return true;
+  }
+
   // 0. Menús contextuales de PC / Android TV
   const contextMenu = document.querySelector('.pc-context-menu');
   if (contextMenu) {
@@ -150,7 +157,7 @@ function focusAndReveal(el) {
 
 function move(dir) {
   // Si hay un modal abierto, limitar la navegación a los elementos dentro del modal
-  const modalEl = document.querySelector('.pc-context-menu, .admin-modal-overlay, .modal-overlay, .settings-overlay, .player-tracks-overlay, .player-next-up, .carousel-trailer-modal');
+  const modalEl = document.querySelector('.tv-select-overlay') || document.querySelector('.pc-context-menu, .admin-modal-overlay, .modal-overlay, .settings-overlay, .player-tracks-overlay, .player-next-up, .carousel-trailer-modal');
   const scope = modalEl || document;
   const items = [...scope.querySelectorAll('[data-focusable]')].filter(e => e.offsetParent && !e.disabled);
   if (!items.length) return;
@@ -1420,6 +1427,11 @@ export function initDpad() {
           if (submitBtn) submitBtn.click();
           else form.requestSubmit?.();
         }
+      } else if (document.activeElement?.tagName === 'SELECT') {
+        // Los <select> nativos no se abren con click() en Android TV: usamos un selector propio
+        e.preventDefault();
+        e.stopPropagation();
+        openSelectPicker(document.activeElement);
       } else if (document.activeElement?.hasAttribute('data-focusable') || document.activeElement?.getAttribute('role') === 'button') {
         e.preventDefault();
         document.activeElement.click();

@@ -1226,12 +1226,15 @@ html.is-tv .settings-dialog {
   max-height: 97vh !important;
 }
 
-/* Punto 6: En cuadrícula, separación ligera hacia abajo y letra en negrita */
+/* Cuadrículas: títulos bajo la portada algo más separados y en negrita.
+   Ajustable por skin con --grid-title-offset y --grid-title-weight (src/styles/theme.css). */
 .grid-cards .lib-card-name,
 .category-grid .lib-card-name,
 .category-view--grid .lib-card-name,
 .grid-screen .lib-card-name,
-.screen.grid-screen .lib-card-name {
-  margin-top: 0.65rem !important;
-  font-weight: 700 !important;
+.screen.grid-screen .lib-card-name,
+#search-results .lib-card-name {
+  margin-top: var(--grid-title-offset, 0.95rem) !important;
+  font-weight: var(--grid-title-weight, 700) !important;
+  color: var(--grid-title-color, #fff);
 }
