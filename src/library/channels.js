@@ -179,3 +179,56 @@ export function groupLibrary(lib) {
 
   return byCat;
 }
+
+
+/**
+ * Restaura instantáneamente la biblioteca completa desde IndexedDB (library_v2)
+ * para que el arranque y la pantalla Home se muestren en 0 ms sin esperar a la red.
+ */
+export async function restoreLocalLibraryCache(kv, libKey = 'library_v2', { buildTitles, getEpisodeOverride, applyOverridesAndUnbundle, attachAutoCollections, mergeMoviesByTmdb } = {}) {
+  try {
+    const savedObj = await kv.get(libKey).catch(() => null);
+    if (!savedObj) return null;
+    if (Array.isArray(savedObj.titles) && savedObj.titles.length > 0) {
+      return { titles: savedObj.titles, channels: savedObj.channels || [] };
+    }
+    if (savedObj.channels && savedObj.cache && typeof buildTitles === 'function') {
+      const savedMeta = savedObj.metadataMap || {};
+      const savedEpisodeOverrides = savedObj.episodeOverrides || {};
+      const { titles } = await buildTitles(null, savedObj.channels, () => null, null, savedObj.cache);
+      if (savedMeta) {
+        for (const t of titles) {
+          if (savedMeta[t.id]) t.metadata = savedMeta[t.id];
+          if (t.tipo === 'serie' && Array.isArray(t.archivos)) {
+            for (const f of t.archivos) {
+              const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+              const override = savedEpisodeOverrides[fKey] || getEpisodeOverride?.(fKey) || getEpisodeOverride?.(f);
+              if (!override) continue;
+              f.season = Number(override.season) || 1;
+              f.episodeOverride = override;
+              if (override.name) f.metadata = { ...(f.metadata || {}), name: override.name };
+            }
+          }
+          if (Array.isArray(t.archivos) && (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1))) {
+            for (const f of t.archivos) {
+              const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+              if (savedMeta[fKey]) {
+                f.metadata = savedMeta[fKey];
+                f.tmdbId = savedMeta[fKey].id;
+                if (savedMeta[fKey].name && t.isSaga) f.sagaName = savedMeta[fKey].name;
+              }
+            }
+          }
+        }
+      }
+      let processed = applyOverridesAndUnbundle ? applyOverridesAndUnbundle(titles) : titles;
+      if (attachAutoCollections && mergeMoviesByTmdb) {
+        processed = attachAutoCollections(mergeMoviesByTmdb(processed));
+      }
+      return { titles: processed, channels: savedObj.channels || [] };
+    }
+  } catch (err) {
+    console.warn('[cache] Error restaurando biblioteca local:', err);
+  }
+  return null;
+}

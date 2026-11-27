@@ -13,13 +13,12 @@ if (typeof window !== 'undefined') {
     return _origAlert ? _origAlert.apply(this, [msg, ...args]) : undefined;
   };
 }
-
 let LAST_OPENED_TITLE_ID = null;
 import { searchViewHtml, mountSearchView } from './ui/searchView.js';
 import './style.css';
 import { createTelegramClient } from './core/telegram.js';
 import { createTelegramSync, getCachedProfiles } from './sync/telegramSync.js';
-import { loadLibrary } from './library/channels.js';
+import { loadLibrary, restoreLocalLibraryCache } from './library/channels.js';
 import { buildTitles, mergeMoviesByTmdb, attachAutoCollections } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
 import { getNewsPrefs } from './library/newsPrefs.js';
@@ -47,9 +46,7 @@ import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
 import { createLibraryViews } from './ui/libraryViews.js';
 import { getEpisodeOverride, saveEpisodeOverride } from './ui/externalTitlesCache.js';
 import { setupTvPlatform, isAndroidApp } from './core/platform.js';
-
 setupTvPlatform();
-
 const kv = createKV();
 const LIB_KEY = 'library_v2';
 // Pestaña "Externos" oculta temporalmente (planteamiento en revisión).
@@ -61,7 +58,6 @@ const TMDB_ATTEMPTED = new Set();
 let BG_ENRICH = null;
 const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 const perfLog = (msg) => console.log(`[perf] ${msg}`);
-
 const app = document.getElementById('app');
 
 function isTitleAllowedByProfileAge(title, profile) {
@@ -84,22 +80,11 @@ function showScreen(html) {
 }
 
 function showLoading(msg = 'Cargando…') {
-  showScreen(`
-    <div class="screen center">
-      <div class="loader"></div>
-      <p>${msg}</p>
-    </div>
-  `);
+  showScreen(`<div class="screen center"><div class="loader"></div><p>${msg}</p></div>`);
 }
 
 function showError(msg) {
-  showScreen(`
-    <div class="screen center">
-      <h2>Error</h2>
-      <p style="color:#f88;margin:1rem 0;">${msg}</p>
-      <button id="btn-retry" class="btn">Reintentar</button>
-    </div>
-  `);
+  showScreen(`<div class="screen center"><h2>Error</h2><p style="color:#f88;margin:1rem 0;">${msg}</p><button id="btn-retry" class="btn">Reintentar</button></div>`);
   document.getElementById('btn-retry')?.addEventListener('click', start);
 }
 
@@ -141,7 +126,6 @@ function promptPhoneUI() {
     const numInput = document.getElementById('prompt-phone-num');
     const btn = document.getElementById('prompt-ok');
     numInput?.focus();
-
     const submit = () => {
       let pref = prefixInput?.value?.trim() || '+34';
       if (!pref.startsWith('+')) pref = '+' + pref;
@@ -149,7 +133,6 @@ function promptPhoneUI() {
       if (!num) return;
       resolve(pref + num);
     };
-
     btn?.addEventListener('click', submit);
     numInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
     prefixInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') numInput?.focus(); });
@@ -198,14 +181,12 @@ function promptApiCredentialsUI() {
     const hashInput = document.getElementById('prompt-api-hash');
     const btn = document.getElementById('prompt-api-ok');
     idInput?.focus();
-
     const submit = () => {
       const id = idInput?.value?.trim();
       const hash = hashInput?.value?.trim();
       if (!id || !hash) return;
       resolve({ apiId: id, apiHash: hash });
     };
-
     btn?.addEventListener('click', submit);
     hashInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
     idInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') hashInput?.focus(); });
@@ -228,7 +209,6 @@ function formatPlayButtonLabel(t, st, progress) {
   const isContinue = Boolean(st?.continueWatching && p && !p.is_completed);
   const isCompleted = Boolean(p?.is_completed);
   const actionPrefix = isContinue ? '▶ Continuar' : (isCompleted ? '▶ Volver a ver' : '▶ Reproducir');
-
   if (t.tipo === 'serie') {
     const nextFile = targetFile;
     const epNum = (nextFile.season || nextFile.episode)
@@ -237,13 +217,11 @@ function formatPlayButtonLabel(t, st, progress) {
     const epName = nextFile.metadata?.name || prettyEpisodeName(nextFile.fileName || nextFile.label, t.metadata?.name || t.nombre);
     return `${actionPrefix} ${epNum ? epNum + ' - ' : ''}${epName}`;
   }
-
   if (t.isSaga) {
     const nextFile = targetFile;
     const filmName = nextFile.metadata?.name || nextFile.sagaName || nextFile.label;
     return `${actionPrefix} ${filmName}`;
   }
-
   return actionPrefix;
 }
 
@@ -255,7 +233,6 @@ function cardHtml(t, progress) {
   const metaBadge = t.tipo === 'serie' ? `${t.archivos.length} ep.` : t.isSaga ? `${t.archivos.length} películas` : t.tipo === 'deporte' ? 'Deporte' : t.tipo === 'musica' ? 'Música' : t.archivos.length > 1 ? `${t.archivos.length} vers.` : 'Película';
   const posterUrl = t.metadata?.poster;
   const localPoster = posterUrl ? (memoryCache.get(posterUrl) || posterUrl) : '';
-
   return `
     <div class="lib-card" tabindex="0" data-focusable data-title="${esc(t.id)}">
       <div class="lib-card-poster ${posterUrl ? 'has-poster' : ''}" style="--pc:${posterColor(t.grupo + t.nombre)}">
@@ -302,7 +279,6 @@ async function persistTitlesMetadata() {
     await kv.set(LIB_KEY, saved);
   } catch (_) {}
 }
-
 const libraryViews = createLibraryViews({
   applyProfileScale, setBackHandler, getTitles: () => TITLES_CACHE, setTitles: value => { TITLES_CACHE = value; },
   loadProgress, titleState, formatPlayButtonLabel, esc, posterColor, memoryCache, showScreen, cardHtml,
@@ -311,6 +287,20 @@ const libraryViews = createLibraryViews({
   centerSeason, firstUncompleted, adjacentSeason, isFavorite, toggleFavorite, toggleAllWatched,
   focusFirst, showHome, app, persistMetadata: persistTitlesMetadata,
 });
+
+// Carga instantánea de la biblioteca desde IndexedDB en el arranque para navegación en 0 ms
+async function loadLocalLibraryCache() {
+  if (TITLES_CACHE && TITLES_CACHE.length > 0) return TITLES_CACHE;
+  const res = await restoreLocalLibraryCache(kv, LIB_KEY, {
+    buildTitles, getEpisodeOverride, applyOverridesAndUnbundle, attachAutoCollections, mergeMoviesByTmdb,
+  });
+  if (res?.titles?.length > 0) {
+    TITLES_CACHE = res.titles;
+    CHANNELS_CACHE = res.channels || [];
+    return TITLES_CACHE;
+  }
+  return null;
+}
 
 // Lee los canales y solo vuelve a escanear los que han cambiado (o todos si force)
 async function refreshLibrary(tg, { force = false, onProgress } = {}) {
@@ -330,7 +320,6 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   // (los títulos de canales externos se cargan bajo demanda en su pestaña dedicada sin ralentizar el inicio)
   const extSources = (await kv.get('external_sources_v1').catch(() => [])) || [];
   const combinedCache = { ...(force ? (previousObj?.cache || {}) : saved), ...cache };
-
   if (savedMeta) {
     for (const t of titles) {
       if (savedMeta[t.id]) t.metadata = savedMeta[t.id];
@@ -391,14 +380,13 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
       allChannels.push(existingRec);
     }
   }
-
   const validChannelIds = new Set(allChannels.map(c => String(c.id)));
   const cleanedCache = {};
   for (const [chId, data] of Object.entries(combinedCache)) {
     if (validChannelIds.has(String(chId))) cleanedCache[chId] = data;
   }
-
-  await kv.set(LIB_KEY, { cache: cleanedCache, channels: allChannels, sig, metadataMap, episodeOverrides, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
+  const titlesForCache = titles.map(t => ({ ...t, channel: t.channel ? { id: t.channel.id, name: t.channel.name, title: t.channel.title, category: t.channel.category, group: t.channel.group } : null }));
+  await kv.set(LIB_KEY, { titles: titlesForCache, cache: cleanedCache, channels: allChannels, sig, metadataMap, episodeOverrides, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
   return { titles, sig };
 }
 
@@ -418,15 +406,12 @@ function showUpdateDialog({ onQuick, onFull }) {
       </div>
     </div>
   `, "Comprueba nuevos vídeos o reescanea canales");
-
   overlay.querySelector("#btn-update-quick").onclick = () => { close(); onQuick(); };
   overlay.querySelector("#btn-update-full").onclick = () => { close(); onFull(); };
-
   setTimeout(() => {
     overlay.querySelector("#btn-update-quick")?.focus();
   }, 50);
 }
-
 export function isExternalTitle(t) {
   return Boolean(
     t?.origen?.tipo === 'externo' ||
@@ -435,7 +420,6 @@ export function isExternalTitle(t) {
     (typeof t?.channel?.id === 'string' && t.channel.id.includes('_top_'))
   );
 }
-
 let CHECKED = false;
 function getSectionSort(profileId, sectionId) {
   try {
@@ -494,7 +478,6 @@ function viewModeShortLabel(mode) {
 function sortTitles(items, sortType, sortOrder = 'desc') {
   const list = [...items];
   const mult = sortOrder === 'asc' ? 1 : -1;
-
   if (sortType === 'estreno') {
     return list.sort((a, b) => {
       const dateA = a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '';
@@ -547,7 +530,6 @@ function applyOverridesAndUnbundle(titles = []) {
       t.metadata = ov;
       t.tmdbId = ov.id || t.tmdbId;
     }
-
     if (t.isSaga && Array.isArray(t.archivos)) {
       for (const f of t.archivos) {
         const fileKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
@@ -598,7 +580,6 @@ function applyOverridesAndUnbundle(titles = []) {
   }
   return unbundledTitles;
 }
-
 let BG_LIBRARY_PROMISE = null;
 let BG_LIBRARY_DONE = false;
 let BG_LIBRARY_STATUS = '';
@@ -616,21 +597,17 @@ function startBackgroundLibraryCheck(tg) {
   if (BG_LIBRARY_PROMISE) return BG_LIBRARY_PROMISE;
   BG_LIBRARY_DONE = false;
   BG_LIBRARY_STATUS = 'Comprobando nuevos vídeos…';
-
   BG_LIBRARY_PROMISE = (async () => {
     try {
       const onProgress = (d, n) => {
         updateBackgroundProgress(`Buscando nuevos vídeos… ${d}/${n}`);
       };
-
       const refreshed = await refreshLibrary(tg, { force: false, onProgress });
       let titles = refreshed.titles || [];
-
       titles = applyOverridesAndUnbundle(titles);
       titles = attachAutoCollections(mergeMoviesByTmdb(titles));
       TITLES_CACHE = titles;
       CHECKED = true;
-
       const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
       pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
       if (pendingTitles.length > 0) {
@@ -647,11 +624,18 @@ function startBackgroundLibraryCheck(tg) {
         titles = attachAutoCollections(mergeMoviesByTmdb(titles));
         TITLES_CACHE = titles;
       }
-
       updateBackgroundProgress('Cargando carátulas…');
       await prewarmPosterCache(titles);
       BG_LIBRARY_STATUS = '';
       BG_LIBRARY_DONE = true;
+      if (document.querySelector('.home-screen') && !document.querySelector('.modal-overlay, .art-video-player')) {
+        const profileId = localStorage.getItem('tgvideo_last_profile_id');
+        const profiles = typeof getCachedProfiles === 'function' ? getCachedProfiles() : [];
+        const curProfile = profiles.find(p => p.id === profileId) || profiles[0];
+        if (curProfile) {
+          showHome(tg, sync, curProfile, { fast: true });
+        }
+      }
       return TITLES_CACHE;
     } catch (err) {
       console.error('[bgLibrary] Error en segundo plano:', err);
@@ -660,7 +644,6 @@ function startBackgroundLibraryCheck(tg) {
       return TITLES_CACHE;
     }
   })();
-
   return BG_LIBRARY_PROMISE;
 }
 
@@ -678,24 +661,20 @@ async function syncProfileOnly(sync, profile) {
         const mergedFavs = mergeFavorites(localFavs, remoteFavs);
         saveFavorites(profile.id, mergedFavs);
         profile.favorites = mergedFavs;
-
         const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
         const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
         profile.image_prefs = mergedImg;
-
         if (sync?.pullImagePrefs) {
           sync.pullImagePrefs(profile.id).then(dedicated => {
             if (dedicated) profile.image_prefs = syncImagePrefsWithRemote(profile, dedicated);
           }).catch(() => {});
         }
-
         if (remote.profile?.devices) {
           profile.devices = { ...(remote.profile.devices || {}), ...(profile.devices || {}) };
         }
         if (remote.profile?.ui_scale !== undefined && profile.ui_scale === undefined) {
           profile.ui_scale = remote.profile.ui_scale;
         }
-
         if (mergedFavs.length > remoteFavs.length) {
           sync.pushProfile({
             profile,
@@ -714,7 +693,6 @@ async function syncProfileOnly(sync, profile) {
 async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   showLoading('Sincronizando perfil…');
   await syncProfileOnly(sync, profile);
-
   BG_LIBRARY_PROMISE = null;
   BG_LIBRARY_DONE = false;
   WAITING_USER_SCREEN = true;
@@ -722,7 +700,6 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   const onProgress = (d, n) => {
     updateBackgroundProgress(`Buscando nuevos vídeos… ${d}/${n}`);
   };
-
   try {
     const refreshed = await refreshLibrary(tg, { force, onProgress });
     TITLES_CACHE = refreshed.titles || [];
@@ -731,11 +708,9 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
     if (!TITLES_CACHE) TITLES_CACHE = [];
   }
   CHECKED = true;
-
   let titles = applyOverridesAndUnbundle(TITLES_CACHE || []);
   titles = attachAutoCollections(mergeMoviesByTmdb(titles));
   TITLES_CACHE = titles;
-
   const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
   if (pendingTitles.length > 0) {
@@ -752,13 +727,11 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
     titles = attachAutoCollections(mergeMoviesByTmdb(titles));
     TITLES_CACHE = titles;
   }
-
   titles.forEach(t => applyImagePrefs(t, profile));
   showLoading('Cargando carátulas…');
   await prewarmPosterCache(titles);
   WAITING_USER_SCREEN = false;
   BG_LIBRARY_DONE = true;
-
   return TITLES_CACHE;
 }
 
@@ -779,7 +752,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     await loadAndSyncAll(tg, sync, profile, { force });
     perfLog(`loadAndSyncAll ${Math.round(perfNow() - tStart)} ms`);
   }
-
   let titles = TITLES_CACHE || [];
   const canReuse = fast && !reload && HOME_PROCESSED.ref === TITLES_CACHE && HOME_PROCESSED.profileId === profile.id;
   if (canReuse) {
@@ -799,7 +771,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     HOME_PROCESSED = { ref: titles, profileId: profile.id };
   }
   const tBuild = perfNow();
-
   const progress = loadProgress(profile.id);
   const rows = buildHomeRows(titles, progress, getNewsPrefs(profile));
   const titleById = new Map();
@@ -833,7 +804,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
   const seriesTitles = titles.filter(t => t.tipo === 'serie' && !isExternalTitle(t));
   const sportTitles = titles.filter(t => t.tipo === 'deporte' && !isExternalTitle(t));
   const musicTitles = titles.filter(t => t.tipo === 'musica' && !isExternalTitle(t));
-
   const sectionDefs = [
     ...(titles.length ? [{ id: 'inicio', label: 'Inicio', items: titles }] : []),
     ...(favoriteTitles.length ? [{ id: 'favoritos', label: 'Favoritos', items: favoriteTitles }] : []),
@@ -848,12 +818,10 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
   if (!isSearch && !sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
   ACTIVE_HOME_SECTION = selectedSection;
   const activeSection = sectionDefs.find(section => section.id === selectedSection);
-
   const isExternalsTab = selectedSection === 'externos';
   const isCategorySection = selectedSection !== 'inicio' && !isSearch && !isExternalsTab;
   const currentView = isCategorySection ? getSectionViewMode(profile.id, selectedSection) : 'grid';
   const isCarousel = isCategorySection && (currentView === 'posters' || currentView === 'logos');
-
   const categoryToolsHtml = (inHeader = false) => {
     const currentSort = getSectionSort(profile.id, selectedSection);
     const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
@@ -877,7 +845,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
         </div>
       </div>`;
   };
-
   const body = (!titles.length && !isExternalsTab) ? `
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
@@ -908,7 +875,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
           ${r.items.map(t => cardHtml(t, progress)).join('')}
         </div>
       </section>`).join('');
-
   showScreen(`
     <div class="screen home-screen ${isCarousel ? 'home-screen--carousel' : ''}">
       <header class="home-header ${isCarousel ? 'home-header--carousel' : ''}">
@@ -925,14 +891,12 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       </header>
       <main class="home-main ${isCarousel ? 'home-main--carousel' : ''}">${body}</main>
     </div>`);
-
   const activeNav = document.querySelector('.home-nav-item.active');
   if (activeNav) {
     requestAnimationFrame(() => {
       activeNav.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
     });
   }
-
   document.querySelectorAll('.home-nav-item').forEach(button => {
     button.onclick = (e) => {
       button.blur();
@@ -981,7 +945,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       sortBar.classList.remove('is-expanded');
       sortToggle.setAttribute('aria-expanded', 'false');
     };
-
     sortToggle.onclick = (e) => {
       e.stopPropagation();
       const isExpanded = sortBar.classList.contains('is-expanded');
@@ -998,7 +961,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     sortBar.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
     });
-
     sortBar.addEventListener('focusout', (e) => {
       // Solo colapsar si el foco realmente se movió a otro elemento interactivo fuera de sortBar.
       // En dispositivos táctiles (iOS/iPhone) e.relatedTarget es null al tocar un botón,
@@ -1007,7 +969,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
         collapseSort();
       }
     });
-
     const handleOutsideSort = (e) => {
       if (!sortBar.contains(e.target)) {
         collapseSort();
@@ -1015,7 +976,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     };
     document.addEventListener('pointerdown', handleOutsideSort, { passive: true });
   }
-
   document.querySelectorAll('.category-sort-btn').forEach(btn => {
     btn.onclick = (e) => {
       e.stopPropagation();
@@ -1023,7 +983,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       const sortType = btn.dataset.sort;
       const currentSort = getSectionSort(profile.id, selectedSection);
       const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
-
       if (sortType === currentSort) {
         // Al pulsar sobre el que ya estaba seleccionado, se cambia el sentido (ascendente/descendente)
         const nextOrder = currentOrder === 'desc' ? 'asc' : 'desc';
@@ -1047,7 +1006,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       showHome(tg, sync, profile, { fast: true, selectedSection, focusViewBtn: true, fromPointer: e.detail > 0 });
     };
   }
-
   if (isCarousel) {
     const carouselHost = document.getElementById('carousel-host');
     if (carouselHost && activeSection?.items) {
@@ -1079,14 +1037,12 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       }
     }).catch(() => {});
   }
-
   document.getElementById('btn-reload').onclick = () => {
     showUpdateDialog({
       onQuick: () => showHome(tg, sync, profile, { reload: true, force: false }),
       onFull: () => showHome(tg, sync, profile, { reload: true, force: true }),
     });
   };
-
   document.querySelectorAll('#app .row-expand-card').forEach(btn => {
     btn.onclick = (e) => {
       e.stopPropagation();
@@ -1150,7 +1106,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     const url = img.getAttribute('data-poster-url') || img.src;
     if (url) loadPoster(img, url);
   });
-
   setTimeout(() => {
     let el = null;
     if (focusViewBtn) {
@@ -1201,13 +1156,11 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
   }, 80);
   perfLog(`showHome(${selectedSection}): render HTML+eventos ${Math.round(perfNow() - tBuild)} ms, total ${Math.round(perfNow() - tStart)} ms`);
   requestAnimationFrame(() => requestAnimationFrame(() => perfLog(`showHome(${selectedSection}): pintado en pantalla ${Math.round(perfNow() - tStart)} ms`)));
-
   let metaSaveTimer = null;
   const saveMetaDebounced = () => {
     clearTimeout(metaSaveTimer);
     metaSaveTimer = setTimeout(persistTitlesMetadata, 1500);
   };
-
   let reattachTimer = null;
   const scheduleReattach = () => {
     clearTimeout(reattachTimer);
@@ -1224,7 +1177,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       }
     }, 2500);
   };
-
   const pendingBg = titles.filter(t => !isExternalTitle(t) && !TMDB_ATTEMPTED.has(t.id) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
   if (BG_ENRICH && BG_ENRICH.profileId === profile.id) {
     if (pendingBg.length) perfLog(`TMDB en segundo plano ya en curso; ${pendingBg.length} pendientes nuevos esperan`);
@@ -1249,7 +1201,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
         if (nameEl && displayName) nameEl.textContent = displayName;
         const posterNameEl = card.querySelector('.poster-name');
         if (posterNameEl && displayName) posterNameEl.textContent = displayName;
-
         if (!title.metadata?.poster) return;
         const poster = card.querySelector('.lib-card-poster');
         if (!poster) return;
@@ -1287,10 +1238,8 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
 // ---------- Selector de perfiles ----------
 async function showProfileSelector(tg, sync) {
   applyProfileScale(null);
-
   let profiles = typeof getCachedProfiles === 'function' ? getCachedProfiles() : [];
   let isRendered = false;
-
   const render = (profilesList) => {
     isRendered = true;
     const cards = profilesList.map(p => `
@@ -1298,13 +1247,11 @@ async function showProfileSelector(tg, sync) {
         <div class="avatar">${profileAvatar(p)}</div>
         <div class="profile-name">${esc(p.name)}</div>
       </div>`).join('');
-
     const addCard = `
       <div class="profile-card add-profile" tabindex="0" data-focusable id="btn-add-profile">
         <div class="avatar add">+</div>
         <div class="profile-name">Añadir perfil</div>
       </div>`;
-
     showScreen(`
       <div class="screen profiles-screen">
         <h1 class="profiles-title">¿Quién está ahí?</h1>
@@ -1315,7 +1262,6 @@ async function showProfileSelector(tg, sync) {
         </div>
         <button id="btn-logout" data-focusable class="logout-btn">Cerrar sesión</button>
       </div>`);
-
     const lastProfileId = localStorage.getItem('tgvideo_last_profile_id') || profilesList[0]?.id;
     setTimeout(() => {
       let target = null;
@@ -1330,7 +1276,6 @@ async function showProfileSelector(tg, sync) {
         target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
       }
     }, 60);
-
     document.querySelectorAll('.profile-card[data-id]').forEach(card => {
       card.addEventListener('click', async () => {
         const id = card.dataset.id;
@@ -1344,7 +1289,9 @@ async function showProfileSelector(tg, sync) {
             syncProfileOnly(sync, profile),
             new Promise(r => setTimeout(r, 1200))
           ]);
-
+          if (!TITLES_CACHE) {
+            await loadLocalLibraryCache();
+          }
           if (!TITLES_CACHE && BG_LIBRARY_PROMISE && !BG_LIBRARY_DONE) {
             if (BG_LIBRARY_STATUS) {
               showLoading(BG_LIBRARY_STATUS);
@@ -1353,7 +1300,6 @@ async function showProfileSelector(tg, sync) {
             await BG_LIBRARY_PROMISE;
             WAITING_USER_SCREEN = false;
           }
-
           if (isDevLogEnabled()) {
             startDevLogging({
               getClient: () => tg.getClient(),
@@ -1362,26 +1308,21 @@ async function showProfileSelector(tg, sync) {
               sync,
             });
           }
-
           showHome(tg, sync, profile);
         }
       });
     });
-
     document.getElementById('btn-add-profile')?.addEventListener('click', async () => {
       const name = await promptUI('Nombre del perfil', 'Ej: Papá, Niños…');
       if (!name) return showProfileSelector(tg, sync);
-
       const chosenAvatar = await pickAvatar({ name, current: null, title: 'Elige tu avatar', confirmLabel: 'Crear perfil' });
       if (chosenAvatar === null) return showProfileSelector(tg, sync);
-
       const cleanId = name
         .normalize('NFD').replace(/[̀-ͯ]/g, '')
         .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
       const profileId = cleanId && cleanId !== 'perfil' && cleanId !== 'default'
         ? cleanId
         : `usr_${Date.now().toString(36)}`;
-
       const newProfile = {
         v: 1,
         profile: {
@@ -1397,7 +1338,6 @@ async function showProfileSelector(tg, sync) {
         recent: [],
         prefs: {},
       };
-
       showLoading('Creando perfil…');
       try {
         await sync.pushProfile(newProfile);
@@ -1406,23 +1346,33 @@ async function showProfileSelector(tg, sync) {
         showError(err?.message || String(err));
       }
     });
-
     document.getElementById('btn-logout')?.addEventListener('click', async () => {
       await tg.logout();
       initDpad();
       start();
     });
   };
-
   if (profiles && profiles.length > 0) {
     render(profiles);
   } else {
     showLoading('Cargando perfiles…');
   }
 
-  // Comprobar / actualizar perfiles remotos
+  // Temporizador de seguridad: si en 2500ms no han cargado perfiles remotos y la pantalla sigue vacía,
+  // renderizar de inmediato para evitar que iPhone o conexiones lentas queden congelados
+  const safetyTimer = setTimeout(() => {
+    if (!isRendered) {
+      render(profiles || []);
+    }
+  }, 2500);
+
+  // Comprobar / actualizar perfiles remotos con timeout
   try {
-    const remoteProfiles = await sync.listProfiles();
+    const remoteProfiles = await Promise.race([
+      sync.listProfiles(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))
+    ]);
+    clearTimeout(safetyTimer);
     if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
       profiles = remoteProfiles;
       if (!isRendered || JSON.stringify(remoteProfiles.map(p => ({ id: p.id, name: p.name, avatar: p.avatar }))) !==
@@ -1431,9 +1381,10 @@ async function showProfileSelector(tg, sync) {
       }
     }
   } catch (err) {
+    clearTimeout(safetyTimer);
     console.warn('No se pudieron cargar perfiles remotos', err);
     if (!isRendered) {
-      render([]);
+      render(profiles || []);
     }
   }
 }
@@ -1444,6 +1395,8 @@ async function start() {
   applyProfileScale(null);
   showLoading('Conectando con Telegram…');
 
+  // Iniciar precarga de la biblioteca local de inmediato en paralelo con la conexión
+  loadLocalLibraryCache().catch(() => {});
   const tg = createTelegramClient({
     promptPhone: () => promptPhoneUI(),
     promptCode: () => promptCodeUI(),
@@ -1451,10 +1404,8 @@ async function start() {
     promptApiCredentials: () => promptApiCredentialsUI(),
     onError: (err) => showError(err?.message || String(err)),
   });
-
   try {
     await tg.ready();
-
     const sync = createTelegramSync({
       getClient: async () => {
         await tg.ready();
@@ -1462,7 +1413,6 @@ async function start() {
       },
       peerOf: tg.peerOf,
     });
-
     window.tg = tg;
     window.sync = sync;
     initContextMenu({ tg, getTitles: () => TITLES_CACHE, getChannels: () => CHANNELS_CACHE });
@@ -1476,13 +1426,11 @@ async function start() {
 
     // Arrancar comprobación de biblioteca en segundo plano una vez renderizados los perfiles
     startBackgroundLibraryCheck(tg);
-
   } catch (err) {
     console.error(err);
     showError(err?.message || String(err));
   }
 }
-
 hookConsole();
 initDpad();
 start();

@@ -15,6 +15,17 @@ import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
 import bigInt from 'big-integer';
 
+export function safeBigInt(val, fallback = '0') {
+  if (val === null || val === undefined || val === '' || val === 'undefined' || val === 'null' || val === 'NaN') {
+    return bigInt(fallback);
+  }
+  try {
+    return bigInt(val);
+  } catch (_) {
+    return bigInt(fallback);
+  }
+}
+
 export function getStoredApiCredentials() {
   const envId = Number(import.meta.env.VITE_API_ID);
   const envHash = import.meta.env.VITE_API_HASH;
@@ -174,15 +185,16 @@ export function createTelegramClient({
       const rawId = String(ch.tgChannelId || ch.channelId || ch.id || "").split("_top_")[0].trim();
       const cleanId = rawId.replace(/^-100/, "").replace(/^-/, "");
       const hash = ch.accessHash || ch.hash;
-      const isBasicGroup = ch.className === "Chat" || (ch.isGroup && (!hash || String(hash) === "0"));
+      const cleanHash = (hash && hash !== 'undefined' && hash !== 'null') ? String(hash) : '0';
+      const isBasicGroup = ch.className === "Chat" || (ch.isGroup && (!hash || cleanHash === '0'));
       if (isBasicGroup) {
         return new Api.InputPeerChat({
-          chatId: bigInt(rawId.replace(/^-/, "")),
+          chatId: safeBigInt(rawId.replace(/^-/, "")),
         });
       }
       return new Api.InputPeerChannel({
-        channelId: bigInt(cleanId || "0"),
-        accessHash: bigInt(hash || "0"),
+        channelId: safeBigInt(cleanId || "0"),
+        accessHash: safeBigInt(cleanHash),
       });
     },
 
