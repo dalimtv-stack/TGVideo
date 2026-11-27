@@ -7,7 +7,7 @@
 import { EXT_CHANNEL_TITLES_CACHE, hideExternalFiles, unhideExternalFiles, isExternalFileHiddenSync } from './externalTitlesCache.js';
 import { isExternalTitle } from '../library/titles.js';
 import { parseEpisode, parseCaption } from '../library/parse.js';
-import { startUploadTask, updateUploadTask } from './uploadTasks.js';
+import { startUploadTask, updateUploadTask, isTaskCancelled } from './uploadTasks.js';
 import { extractTitleAndYear, extractTitlesFromCaption } from '../metadata/tmdb.js';
 import { showMetadataModal } from './metadataModal.js';
 import { createKV } from '../core/kv.js';
@@ -128,6 +128,7 @@ async function triggerFileDownload(client, tg, file) {
 
     const bytes = await client.downloadMedia(msg.media, {
       progressCallback: (done, total) => {
+        if (isTaskCancelled(taskId)) throw new Error('Descarga cancelada por el usuario');
         const t = total || totalSize || 1;
         const pct = Math.min(100, Math.round((done / t) * 100));
         setProgressBar(bar, {

@@ -5,7 +5,7 @@ import { loadLibrary } from '../library/channels.js';
 import { buildStandardCaption, prettyName, parseEpisode } from '../library/parse.js';
 import { searchTmdbManual, cleanSearchName, extractTitleAndYear, parseTmdbId } from '../metadata/tmdb.js';
 import { createKV } from '../core/kv.js';
-import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
+import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask, isTaskCancelled } from './uploadTasks.js';
 
 const kv = createKV();
 const LIB_KEY = 'library_v2';
@@ -697,6 +697,9 @@ async function uploadFileChunked(client, { file, name, onProgress }) {
 
   let uploadedBytes = 0;
   for (let j = 0; j < partCount; j++) {
+    if (typeof isCancelled === 'function' && isCancelled()) {
+      throw new Error('Subida cancelada por el usuario');
+    }
     const start = j * partSize;
     const end = Math.min(size, (j + 1) * partSize);
     const chunkBlob = file.slice(start, end);
@@ -811,7 +814,9 @@ export async function startBackgroundUpload({
     const inputFile = await uploadFileChunked(client, {
       file,
       name: finalFilename,
+      isCancelled: () => isTaskCancelled(taskId),
       onProgress: (progress) => {
+        if (isTaskCancelled(taskId)) throw new Error('Subida cancelada por el usuario');
         const pct = Math.min(100, Math.round(progress * 100));
         const uploadedBytes = Math.round(progress * file.size);
         setTaskStatus(`Subiendo partes: ${formatBytes(uploadedBytes)} / ${formatBytes(file.size)} (${pct}%)`, pct);

@@ -7,7 +7,7 @@ import { parseCaption, buildStandardCaption, parseEpisode, prettyEpisodeName } f
 import { normalizeMovieKey, seriesNameFromFile } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { EXT_CHANNEL_TITLES_CACHE, getEpisodeSeriesMove, filterSeriesFilesByMoves } from './externalTitlesCache.js';
-import { startUploadTask, updateUploadTask } from './uploadTasks.js';
+import { startUploadTask, updateUploadTask, isTaskCancelled } from './uploadTasks.js';
 
 const kv = createKV();
 const LIB_KEY = 'library_v2';
@@ -632,14 +632,22 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     }
   }
 
-  // Parsear y asegurar season y episode en todos los archivos antes de ordenar
+  const isSerieEffective = (effectiveTitle?.tipo === 'serie') ||
+    (file.season > 0 || file.episode > 0) ||
+    Boolean(detectedSeries) ||
+    (hasSelectedList && allFiles.some(f => (Number(f.season) > 0 || Number(f.episode) > 0 || Boolean(f.seriesName))));
+
+  // Parsear season y episode (solo para series) antes de ordenar
   for (const f of allFiles) {
     let s = Number(f.season);
     let ep = Number(f.episode);
-    if (!Number.isFinite(s) || s <= 0 || !Number.isFinite(ep) || ep <= 0) {
-      const parsed = parseEpisode(f.captionFileName || f.fileName || f.filename || '');
-      if (!Number.isFinite(s) || s <= 0) f.season = parsed.season || 1;
-      if (!Number.isFinite(ep) || ep <= 0) f.episode = parsed.episode || 1;
+    const parsed = parseEpisode(f.captionFileName || f.fileName || f.filename || '');
+    if (parsed.season > 0 || parsed.episode > 0) {
+      if (!Number.isFinite(s) || s <= 0) f.season = parsed.season;
+      if (!Number.isFinite(ep) || ep <= 0) f.episode = parsed.episode;
+    } else if (isSerieEffective) {
+      if (!Number.isFinite(s) || s <= 0) f.season = 1;
+      if (!Number.isFinite(ep) || ep <= 0) f.episode = 1;
     }
   }
 
@@ -1016,7 +1024,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     let effectiveTmdbId = meta?.id || effectiveTitle?.tmdbId || file.tmdbId;
 
     const querySearchName = sBaseName && !isGenericSeriesName(sBaseName) ? sBaseName : (effectiveTitle?.nombre || filename);
-    const isTvTarget = isSerie || effectiveTitle?.tipo === 'serie' || isBatchMulti;
+    const isTvTarget = isSerieEffective || effectiveTitle?.tipo === 'serie';
 
     if (!effectiveTmdbId && querySearchName && !isGenericSeriesName(querySearchName)) {
       try {
@@ -1076,12 +1084,18 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
         const targetPeer = await resolvePeer(client, tg, targetChannel || targetChannelId);
 
         for (let i = 0; i < count; i++) {
+          if (isTaskCancelled(taskId)) throw new Error('Envío cancelado por el usuario.');
           const curFile = filesToSend[i];
-          const curFilename = formatSuggestedFileName(curFile, {
+          const isCurEpSeries = isSerieEffective && (curFile.season > 0 || curFile.episode > 0 || Boolean(curFile.seriesName));
+          const curFilename = isCurEpSeries ? formatSuggestedFileName(curFile, {
             ...effectiveTitle,
             nombre: sBaseName,
             tipo: 'serie',
             metadata: { ...(meta || {}), name: sBaseName, title: sBaseName },
+          }) : formatSuggestedFileName(curFile, {
+            ...(curFile.metadata ? { metadata: curFile.metadata } : {}),
+            nombre: curFile.title || curFile.fileName || curFile.filename,
+            tipo: 'pelicula',
           });
 
           const pct = Math.round((i / count) * 90) + 5;
@@ -1104,7 +1118,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
           if (!msg || !msg.media) continue;
 
           const cap = parseCaption(curFile.rawCaption || msg.message || '');
-          const isEpSeries = effectiveTitle?.tipo === 'serie' || isSerie;
+          const isEpSeries = isCurEpSeries;
           const targetSection = isEpSeries
             ? (sBaseName || seriesBaseName || targetChannel?.group || '')
             : (targetChannel?.section || targetChannel?.group || curFile.section || effectiveTitle?.origen?.seccion || '');
@@ -1223,6 +1237,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
       });
 
       try {
+        if (isTaskCancelled(taskId)) throw new Error('Envío cancelado por el usuario.');
         const curTargetFile = filesToSend[0] || file;
         const sourceCandidate = curTargetFile.channel || curTargetFile.channelId || effectiveTitle?.channel || effectiveTitle?.origen?.channelId || file.channel || file.channelId;
         const sourcePeer = await resolvePeer(client, tg, sourceCandidate);

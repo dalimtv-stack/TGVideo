@@ -2,7 +2,7 @@
 // Listado y gestión real de vídeos reenviados en canales ::tgstorage.
 import { loadLibrary } from '../library/channels.js';
 import { Api } from 'telegram';
-import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
+import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask, isTaskCancelled } from './uploadTasks.js';
 import { showForwardModal } from './forwardModal.js';
 import { parseEpisode, parseCaption } from '../library/parse.js';
 import { seriesNameFromFile } from '../library/titles.js';
@@ -54,7 +54,9 @@ function selectedEntries(selected, byChannel) {
 
 let forwardedDeletedHandler = null;
 
-export async function renderForwardedTab({ mainPanel, client, tg }) {
+export async function renderForwardedTab({ mainPanel, client, tg, titles = [], getTitles = null }) {
+  const safeGetTitles = typeof getTitles === 'function' ? getTitles : () => (Array.isArray(titles) ? titles : []);
+
   mainPanel.innerHTML = `<div class="admin-panel-header"><div class="admin-panel-title"><h2>Listar vídeos reenviados</h2><p>Selecciona vídeos reenviados de los canales ::tgstorage para descargarlos, enviarlos o resubirlos al canal correspondiente.</p></div><button class="btn-primary" data-focusable id="btn-load-forwarded">Cargar vídeos reenviados</button></div><div id="admin-forwarded-content"><p style="color:#aaa;">Pulsa «Cargar vídeos reenviados» para escanear los canales tgstorage.</p></div>`;
   const loadBtn = document.getElementById('btn-load-forwarded');
   const container = document.getElementById('admin-forwarded-content');
@@ -153,14 +155,17 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
       });
       container.querySelectorAll('.forwarded-file-check').forEach(box => box.addEventListener('change', () => {
         box.checked ? selected.add(box.dataset.key) : selected.delete(box.dataset.key); update();
-        const channelBox = container.querySelector(`.forwarded-channel-check[data-channel="${CSS.escape(box.dataset.channel)}"]`);
-        const list = byChannel.get(box.dataset.channel) || [];
-        if (channelBox) channelBox.checked = list.every(item => selected.has(item.key));
+        const chName = box.dataset.channel;
+        const channelBox = Array.from(container.querySelectorAll('.forwarded-channel-check')).find(cb => cb.dataset.channel === chName);
+        const list = byChannel.get(chName) || [];
+        if (channelBox) channelBox.checked = list.length > 0 && list.every(item => selected.has(item.key));
       }));
       container.querySelectorAll('.forwarded-channel-check').forEach(box => box.addEventListener('change', () => {
         const name = box.dataset.channel;
-        (byChannel.get(name) || []).forEach(item => box.checked ? selected.add(item.key) : selected.delete(item.key));
-        container.querySelectorAll(`.forwarded-file-check[data-channel="${CSS.escape(name)}"]`).forEach(item => { item.checked = box.checked; }); update();
+        const list = byChannel.get(name) || [];
+        list.forEach(item => box.checked ? selected.add(item.key) : selected.delete(item.key));
+        Array.from(container.querySelectorAll('.forwarded-file-check')).filter(fb => fb.dataset.channel === name).forEach(item => { item.checked = box.checked; });
+        update();
       }));
 
       // Tras «Enviar/Subir & BORRAR»: quitar la fila del reenvío borrado y actualizar contadores
@@ -173,7 +178,7 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
           const idx = files.findIndex(item => item.key === key);
           if (idx === -1) continue;
           files.splice(idx, 1);
-          const box = container.querySelector(`.forwarded-file-check[data-key="${CSS.escape(key)}"]`);
+          const box = Array.from(container.querySelectorAll('.forwarded-file-check')).find(b => b.dataset.key === key);
           const accordion = box?.closest('.admin-accordion-item');
           box?.closest('.admin-video-row')?.remove();
           const countEl = accordion?.querySelector('.admin-accordion-header span:not([class])');
@@ -190,14 +195,19 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
 
       document.getElementById('btn-forward-selected')?.addEventListener('click', () => {
         const entries = selectedEntries(selected, byChannel);
-        if (!entries.length) return;
+        if (!entries.length) {
+          alert('Por favor, selecciona al menos un archivo para enviar.');
+          return;
+        }
         const candidateSeries = entries.find(e => e.seriesName)?.seriesName || '';
-        const syntheticTitle = candidateSeries ? {
-          nombre: candidateSeries,
-          tipo: 'serie',
+        const isSerie = Boolean(candidateSeries) || entries.some(e => (Number(e.season) > 0 || Number(e.episode) > 0));
+        const syntheticTitle = {
+          id: entries[0].channelId ? `forwarded-${entries[0].channelId}` : `forwarded-${Date.now()}`,
+          nombre: candidateSeries || entries[0].filename || 'Lote seleccionado',
+          tipo: isSerie ? 'serie' : 'pelicula',
           archivos: entries,
-        } : null;
-        showForwardModal(client, tg, entries[0], () => channels, syntheticTitle, getTitles || (() => titles || []), {
+        };
+        showForwardModal(client, tg, entries[0], () => channels, syntheticTitle, safeGetTitles, {
           selectedFiles: entries,
           deleteSourceAfter: false,
         }).catch(err => {
@@ -208,14 +218,19 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
 
       document.getElementById('btn-forward-delete-selected')?.addEventListener('click', () => {
         const entries = selectedEntries(selected, byChannel);
-        if (!entries.length) return;
+        if (!entries.length) {
+          alert('Por favor, selecciona al menos un archivo para enviar y borrar.');
+          return;
+        }
         const candidateSeries = entries.find(e => e.seriesName)?.seriesName || '';
-        const syntheticTitle = candidateSeries ? {
-          nombre: candidateSeries,
-          tipo: 'serie',
+        const isSerie = Boolean(candidateSeries) || entries.some(e => (Number(e.season) > 0 || Number(e.episode) > 0));
+        const syntheticTitle = {
+          id: entries[0].channelId ? `forwarded-${entries[0].channelId}` : `forwarded-${Date.now()}`,
+          nombre: candidateSeries || entries[0].filename || 'Lote seleccionado',
+          tipo: isSerie ? 'serie' : 'pelicula',
           archivos: entries,
-        } : null;
-        showForwardModal(client, tg, entries[0], () => channels, syntheticTitle, getTitles || (() => titles || []), {
+        };
+        showForwardModal(client, tg, entries[0], () => channels, syntheticTitle, safeGetTitles, {
           selectedFiles: entries,
           deleteSourceAfter: true,
           onSourceDeleted: (f) => {
@@ -243,13 +258,29 @@ async function downloadSelected(selected, byChannel, client) {
   for (let i = 0; i < entries.length; i++) {
     const item = entries[i];
     const taskId = taskIds[i];
+    if (isTaskCancelled(taskId)) {
+      failUploadTask(taskId, 'Descarga cancelada');
+      continue;
+    }
     try {
       setProgress(taskId, { title: `Descargando ${item.filename}`, status: `Iniciando · ${i + 1} de ${entries.length}`, percent: 0 });
-      const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(taskId, { title: `Descargando ${item.filename}`, status: `${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(100, Math.round(done / (total || item.size || 1) * 100)) }) });
+      const bytes = await client.downloadMedia(item.msg.media, {
+        progressCallback: (done, total) => {
+          if (isTaskCancelled(taskId)) throw new Error('Descarga cancelada por el usuario');
+          setProgress(taskId, {
+            title: `Descargando ${item.filename}`,
+            status: `${formatBytes(done)} / ${formatBytes(total)}`,
+            percent: Math.min(100, Math.round(done / (total || item.size || 1) * 100))
+          });
+        }
+      });
       const blob = new Blob([bytes], { type: item.msg.document?.mimeType || 'application/octet-stream' });
       const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = item.filename; anchor.click(); URL.revokeObjectURL(url);
       finishUploadTask(taskId, 'Descarga guardada en el dispositivo', 100);
-    } catch (error) { console.error(error); failUploadTask(taskId, error.message || String(error)); }
+    } catch (error) {
+      console.error(error);
+      failUploadTask(taskId, error.message || String(error));
+    }
   }
 }
 
@@ -281,11 +312,37 @@ async function reuploadQueue(entries, client) {
   for (let i = 0; i < entries.length; i++) {
     const item = entries[i];
     const taskId = taskIds[i];
+    if (isTaskCancelled(taskId)) {
+      failUploadTask(taskId, 'Cancelado por el usuario');
+      continue;
+    }
     try {
       setProgress(taskId, { title: `Resubiendo ${item.newName}`, status: `Descargando original · ${i + 1} de ${entries.length}`, percent: 0 });
-      const bytes = await client.downloadMedia(item.msg.media, { progressCallback: (done, total) => setProgress(taskId, { title: `Resubiendo ${item.newName}`, status: `Descargando ${formatBytes(done)} / ${formatBytes(total)}`, percent: Math.min(45, Math.round(done / (total || item.size || 1) * 45)) }) });
+      const bytes = await client.downloadMedia(item.msg.media, {
+        progressCallback: (done, total) => {
+          if (isTaskCancelled(taskId)) throw new Error('Resubida cancelada por el usuario');
+          setProgress(taskId, {
+            title: `Resubiendo ${item.newName}`,
+            status: `Descargando ${formatBytes(done)} / ${formatBytes(total)}`,
+            percent: Math.min(45, Math.round(done / (total || item.size || 1) * 45))
+          });
+        }
+      });
+      if (isTaskCancelled(taskId)) throw new Error('Resubida cancelada por el usuario');
       const blob = new Blob([bytes], { type: item.msg.document?.mimeType || 'application/octet-stream' });
-      const upload = await client.uploadFile({ file: new File([blob], item.newName, { type: blob.type }), workers: 3, onProgress: progress => setProgress(taskId, { title: `Resubiendo ${item.newName}`, status: `Subiendo ${formatBytes(progress * item.size)} / ${formatBytes(item.size)}`, percent: 45 + Math.round(progress * 50) }) });
+      const upload = await client.uploadFile({
+        file: new File([blob], item.newName, { type: blob.type }),
+        workers: 3,
+        onProgress: progress => {
+          if (isTaskCancelled(taskId)) throw new Error('Resubida cancelada por el usuario');
+          setProgress(taskId, {
+            title: `Resubiendo ${item.newName}`,
+            status: `Subiendo ${formatBytes(progress * item.size)} / ${formatBytes(item.size)}`,
+            percent: 45 + Math.round(progress * 50)
+          });
+        }
+      });
+      if (isTaskCancelled(taskId)) throw new Error('Resubida cancelada por el usuario');
       const caption = item.msg.message || '';
       await client.sendFile(item.peer, { file: upload, caption, forceDocument: true, attributes: [new Api.DocumentAttributeFilename({ fileName: item.newName })] });
       finishUploadTask(taskId, 'Resubida completada', 100);

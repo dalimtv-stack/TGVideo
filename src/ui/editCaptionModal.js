@@ -3,7 +3,7 @@ import { Api } from 'telegram';
 import { modal } from './settings.js';
 import { parseCaption, buildStandardCaption } from '../library/parse.js';
 import { attachSpatialNav } from './spatialNav.js';
-import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
+import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask, isTaskCancelled } from './uploadTasks.js';
 
 
 function getFloodWaitSeconds(err) {
@@ -517,7 +517,7 @@ export function showEditCaptionModal({
 
     try {
       for (let i = 0; i < filesToUpdate.length; i++) {
-        if (cancelRequested) break;
+        if (cancelRequested || (taskId && isTaskCancelled(taskId))) break;
         const file = filesToUpdate[i];
         if (!file.messageId) continue;
 
@@ -560,7 +560,7 @@ export function showEditCaptionModal({
         }
 
         let fileSaved = false;
-        while (!fileSaved && !cancelRequested) {
+        while (!fileSaved && !cancelRequested && !(taskId && isTaskCancelled(taskId))) {
           try {
             await client.invoke(new Api.messages.EditMessage({
               peer,
