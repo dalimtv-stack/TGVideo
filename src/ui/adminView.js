@@ -147,6 +147,16 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
     }
 
     if (!loadedProfiles || loadedProfiles.length === 0) {
+      if (typeof sync?.getCachedProfiles === 'function') {
+        loadedProfiles = sync.getCachedProfiles() || [];
+      } else if (typeof localStorage !== 'undefined') {
+        try {
+          loadedProfiles = JSON.parse(localStorage.getItem('tg_cached_profiles') || '[]');
+        } catch (_) {}
+      }
+    }
+
+    if (!loadedProfiles || loadedProfiles.length === 0) {
       if (profile) loadedProfiles = [profile];
     }
 

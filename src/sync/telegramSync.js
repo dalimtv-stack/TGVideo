@@ -56,33 +56,42 @@ function normalizeName(str) {
     .replace(/[^a-z0-9_-]/g, '_');
 }
 
-function parseSyncFilename(name) {
-  const mGlobal = name.match(/^config_global_(\d{14})\.json$/);
-  if (mGlobal) {
-    return { kind: 'global', timestamp: mGlobal[1], filename: name };
+function parseSyncFilename(filename) {
+  if (!filename || typeof filename !== 'string' || !filename.endsWith('.json')) return null;
+  const name = filename.slice(0, -5);
+
+  if (name.startsWith('config_global_')) {
+    const rawTs = name.slice('config_global_'.length);
+    const timestamp = rawTs.replace(/\D/g, '');
+    return { kind: 'global', timestamp, rawTs, filename };
   }
-  const mOverrides = name.match(/^metadata_overrides_(\d{14})\.json$/);
-  if (mOverrides) {
-    return { kind: 'overrides', timestamp: mOverrides[1], filename: name };
+
+  if (name.startsWith('metadata_overrides_')) {
+    const rawTs = name.slice('metadata_overrides_'.length);
+    const timestamp = rawTs.replace(/\D/g, '');
+    return { kind: 'overrides', timestamp, rawTs, filename };
   }
-  const mImg = name.match(/^imgprefs_([a-z0-9_-]+)_(\d{14})\.json$/i);
-  if (mImg) {
-    return {
-      kind: 'imgprefs',
-      profileId: mImg[1],
-      timestamp: mImg[2],
-      filename: name,
-    };
+
+  if (name.startsWith('perfil_') || name.startsWith('imgprefs_')) {
+    const kind = name.startsWith('imgprefs_') ? 'imgprefs' : 'profile';
+    const rest = name.slice(name.startsWith('imgprefs_') ? 'imgprefs_'.length : 'perfil_'.length);
+    const match = rest.match(/^(.*?)_(\d{8}_\d{6}|\d{14})$/);
+    if (match) {
+      const profileId = match[1];
+      const rawTs = match[2];
+      const timestamp = rawTs.replace(/\D/g, '');
+      return { kind, profileId, timestamp, rawTs, filename };
+    }
+    const lastUnderscore = rest.lastIndexOf('_');
+    if (lastUnderscore > 0) {
+      const profileId = rest.slice(0, lastUnderscore);
+      const rawTs = rest.slice(lastUnderscore + 1);
+      const timestamp = rawTs.replace(/\D/g, '');
+      return { kind, profileId, timestamp, rawTs, filename };
+    }
+    return { kind, profileId: rest, timestamp: '', rawTs: '', filename };
   }
-  const m = name.match(/^perfil_([a-z0-9_-]+)_(\d{14})\.json$/i);
-  if (m) {
-    return {
-      kind: 'profile',
-      profileId: m[1],
-      timestamp: m[2],
-      filename: name,
-    };
-  }
+
   return null;
 }
 
@@ -126,10 +135,31 @@ export function createTelegramSync({ getClient, peerOf }) {
     // 1. Buscar en diálogos activos con timeout
     try {
       const dialogs = await Promise.race([
-        client.getDialogs({ limit: 40 }),
+        client.getDialogs({ limit: 100 }),
         new Promise(r => setTimeout(() => r([]), 4500))
       ]);
       for (const d of (dialogs || [])) {
+        const entity = d.entity;
+        if (
+          (entity?.className === 'Channel' || entity?.className === 'Chat') &&
+          entity.title === SYNC_CHANNEL_TITLE
+        ) {
+          cachedChannel = {
+            id: String(entity.id),
+            hash: (entity.accessHash && String(entity.accessHash) !== 'undefined') ? String(entity.accessHash) : '0',
+            title: entity.title,
+          };
+          saveStoredSyncChannel(cachedChannel);
+          return cachedChannel;
+        }
+      }
+
+      // Si no está en activos, revisar diálogos archivados
+      const archivedDialogs = await Promise.race([
+        client.getDialogs({ archived: true, limit: 100 }),
+        new Promise(r => setTimeout(() => r([]), 3500))
+      ]);
+      for (const d of (archivedDialogs || [])) {
         const entity = d.entity;
         if (
           (entity?.className === 'Channel' || entity?.className === 'Chat') &&
@@ -243,6 +273,7 @@ export function createTelegramSync({ getClient, peerOf }) {
             messageId: msg.id,
             date: msg.date || 0,
             caption: msg.message || '',
+            media: msg.media || null,
           });
         }
 
@@ -497,16 +528,19 @@ export function createTelegramSync({ getClient, peerOf }) {
               const captionName = f.caption ? f.caption.replace(/^Sync\s+/i, '').trim() : null;
 
               try {
-                const msgs = await Promise.race([
-                  client.getMessages(peer, { ids: [f.messageId] }),
-                  new Promise(r => setTimeout(() => r([]), 3500))
-                ]);
-                const msg = msgs?.[0];
-                if (!msg?.media) {
+                let media = f.media;
+                if (!media) {
+                  const msgs = await Promise.race([
+                    client.getMessages(peer, { ids: [f.messageId] }),
+                    new Promise(r => setTimeout(() => r([]), 3500))
+                  ]);
+                  media = msgs?.[0]?.media;
+                }
+                if (!media) {
                   return { f, data: null, captionName };
                 }
 
-                const buffer = await safeDownloadMedia(client, msg.media, 3500);
+                const buffer = await safeDownloadMedia(client, media, 3500);
                 if (buffer) {
                   const text = new TextDecoder().decode(buffer);
                   const data = JSON.parse(text);

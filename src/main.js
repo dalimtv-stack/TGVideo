@@ -1379,6 +1379,8 @@ async function showProfileSelector(tg, sync) {
           JSON.stringify((getCachedProfiles() || []).map(p => ({ id: p.id, name: p.name, avatar: p.avatar })))) {
         render(profiles);
       }
+    } else if (!isRendered) {
+      render(profiles || []);
     }
   } catch (err) {
     clearTimeout(safetyTimer);

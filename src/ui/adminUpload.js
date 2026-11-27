@@ -280,7 +280,7 @@ async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
 
       <div class="admin-field-group">
         <label>Nombre final del archivo que verá Telegram:</label>
-        <input type="text" class="admin-input" data-focusable id="meta-final-filename" value="${esc(detectedYear ? `${cleanName} (${detectedYear})${fileExt}` : file.name)}" />
+        <input type="text" class="admin-input" data-focusable id="meta-final-filename" value="${esc(isEp ? file.name : (detectedYear ? `${cleanName} (${detectedYear})${fileExt}` : file.name))}" />
       </div>
       <div class="admin-field-group">
         <label>Sinopsis:</label>
@@ -306,8 +306,12 @@ async function renderSingleFileUploadForm({ workspace, file, client, tg }) {
     document.getElementById('upload-file-input')?.click();
   });
 
-  setupTmdbSearch(cleanName);
-  await populateChannelSelect('upload-target-channel', client, 'Películas');
+  setupTmdbSearch(cleanName, file);
+  await populateChannelSelect('upload-target-channel', client, isEp ? 'Series' : 'Películas');
+  document.getElementById('upload-tmdb-type')?.addEventListener('change', (e) => {
+    const isTv = e.target?.value === 'tv';
+    populateChannelSelect('upload-target-channel', client, isTv ? 'Series' : 'Películas');
+  });
 
   document.getElementById('btn-start-upload')?.addEventListener('click', () => {
     const finalFilename = document.getElementById('meta-final-filename')?.value?.trim() || file.name;
@@ -488,7 +492,7 @@ async function renderMultiFileUploadForm({ workspace, files, client, tg }) {
   });
 }
 
-function setupTmdbSearch(initialQuery) {
+function setupTmdbSearch(initialQuery, file = null) {
   const queryInput = document.getElementById('upload-tmdb-query');
   const typeSelect = document.getElementById('upload-tmdb-type');
   const resultsDiv = document.getElementById('upload-tmdb-results');
@@ -563,7 +567,23 @@ function setupTmdbSearch(initialQuery) {
           const filenameInput = document.getElementById('meta-final-filename');
           if (filenameInput) {
             const ext = filenameInput.value.match(/\.([a-zA-Z0-9]{2,5})$/)?.[0] || '.mp4';
-            filenameInput.value = year ? `${title} (${year})${ext}` : `${title}${ext}`;
+            const isTv = typeSelect?.value === 'tv';
+            const epDetectedInInput = parseEpisode(filenameInput.value);
+            const epDetectedInOrig = parseEpisode(file?.name || '');
+            const hasEpTag = (epDetectedInInput.episode > 0 || epDetectedInInput.season > 0) ||
+                             (epDetectedInOrig.episode > 0 || epDetectedInOrig.season > 0);
+
+            if (isTv || hasEpTag) {
+              // Es una serie o episodio: NO destruir temporada/episodio con formato de película
+              // Si ya tiene el episodio en el nombre (ej. 'Legión - 1x02 [720p].mkv'), no tocarlo
+              if (!epDetectedInInput.episode && hasEpTag) {
+                const ep = epDetectedInInput.episode ? epDetectedInInput : epDetectedInOrig;
+                const epCode = `${ep.season || 1}x${String(ep.episode).padStart(2, '0')}`;
+                filenameInput.value = `${title} - ${epCode}${ext}`;
+              }
+            } else {
+              filenameInput.value = year ? `${title} (${year})${ext}` : `${title}${ext}`;
+            }
           }
 
           if (queryInput) queryInput.value = title;
