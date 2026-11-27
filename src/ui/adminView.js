@@ -61,7 +61,6 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
             <span class="admin-tab-icon">🔞</span>
             <span class="admin-tab-label">Filtros de edad a perfiles</span>
           </button>
-          <!-- Oculta temporalmente: planteamiento de canales externos en revisión -->
           <button class="admin-tab-btn" data-focusable data-tab="channels" role="tab" aria-selected="false">
             <span class="admin-tab-icon">📡</span>
             <span class="admin-tab-label">Añadir canales/grupos/temas Externos</span>
@@ -328,7 +327,7 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
         resultsArea.innerHTML = `
           <div class="admin-stat-summary-bar"><div class="admin-stat-summary-box"><span class="admin-stat-summary-num">${totalFiles}</span><span class="admin-stat-summary-label">Archivos analizados</span></div><div class="admin-stat-summary-box"><span class="admin-stat-summary-num">${dynamic.length}</span><span class="admin-stat-summary-label">Calificaciones adicionales detectadas</span></div></div>
           <div style="display:flex;flex-direction:column;gap:.85rem;margin-top:.5rem;">
-          ${ordered.map((b,i) => { const pct = totalFiles ? (b.count / totalFiles * 100).toFixed(1) : '0.0'; return `<div class="admin-age-stat-card"><div class="admin-age-stat-header"><div class="admin-age-stat-main"><span class="admin-age-stat-pill" style="color:${b.color};border-color:${b.color};background:${b.color}15;">${esc(b.raw)}</span><div><strong style="color:#fff;font-size:.95rem">${esc(b.label)}</strong><div style="font-size:.8rem;color:#888">${pct}% de los archivos</div></div></div><div style="display:flex;align-items:center;gap:1rem"><span class="admin-age-stat-count">${b.count} archivos</span>${b.count ? `<button class="btn-secondary admin-btn-sm btn-toggle-age-files" data-focusable data-index="${i}">Ver archivos ▼</button>` : ''}</div></div><div class="admin-stat-progress-bar"><div class="admin-stat-progress-fill" style="width:${pct}%;background:${b.color}"></div></div>${b.count ? `<div class="admin-titles-dropdown" id="age-files-${i}" style="display:none">${b.files.map(n => `<div>• ${esc(n)}</div>`).join('')}${b.count > b.files.length ? `<div style="color:#888;font-style:italic">… y ${b.count - b.files.length} más</div>` : ''}</div>` : ''}</div>`; }).join('')}
+          ${ordered.map((b,i) => { const pct = totalFiles ? (b.count / totalFiles * 100).toFixed(1) : '0.0'; return `<div class="admin-age-stat-card"><div class="admin-age-stat-header"><div class="admin-age-stat-main"><span class="admin-age-stat-pill" style="color:${b.color};border-color:${b.color};background:${b.color}15;">${esc(b.raw)}</span><div><strong style="color:#fff;font-size:.95rem">${esc(b.label)}</strong><div style="font-size:.8rem;color:#888">${pct}% de los archivos</div></div></div><div style="display:flex;align-items:center;gap:1rem"><span class="admin-age-stat-count">${b.count} archivos</span>${b.count ? `<button class="btn-secondary admin-btn-sm btn-toggle-age-files" data-index="${i}">Ver archivos ▼</button>` : ''}</div></div><div class="admin-stat-progress-bar"><div class="admin-stat-progress-fill" style="width:${pct}%;background:${b.color}"></div></div>${b.count ? `<div class="admin-titles-dropdown" id="age-files-${i}" style="display:none">${b.files.map(n => `<div>• ${esc(n)}</div>`).join('')}${b.count > b.files.length ? `<div style="color:#888;font-style:italic">… y ${b.count - b.files.length} más</div>` : ''}</div>` : ''}</div>`; }).join('')}
           </div>`;
         resultsArea.querySelectorAll('.btn-toggle-age-files').forEach(btn => btn.addEventListener('click', () => { const list = document.getElementById(`age-files-${btn.dataset.index}`); const open = list.style.display === 'none'; list.style.display = open ? 'flex' : 'none'; btn.textContent = open ? 'Ocultar ▲' : 'Ver archivos ▼'; }));
       } catch (err) { console.error(err); resultsArea.innerHTML = `<p style="color:#f87171">Error al calcular el listado: ${esc(err.message || err)}</p>`; }
@@ -428,14 +427,14 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
               <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
                 <div style="display:flex;align-items:center;gap:0.4rem;">
                   <label style="color:#aaa;font-size:0.85rem;">Ordenar vídeos:</label>
-                  <select class="admin-select" data-focusable id="admin-list-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
+                  <select class="admin-select" id="admin-list-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
                     <option value="name" ${listSort === 'name' ? 'selected' : ''}>🔤 Nombre (A-Z)</option>
                     <option value="date_desc" ${listSort === 'date_desc' ? 'selected' : ''}>📅 Fecha de subida (recientes)</option>
                     <option value="date_asc" ${listSort === 'date_asc' ? 'selected' : ''}>📅 Fecha de subida (antiguos)</option>
                   </select>
                 </div>
                 <label style="display:inline-flex;align-items:center;gap:0.4rem;color:#e2e8f0;font-size:0.85rem;cursor:pointer;">
-                  <input type="checkbox" data-focusable id="admin-list-unidentified-check" ${listFilterUnidentified ? 'checked' : ''} style="cursor:pointer;" />
+                  <input type="checkbox" id="admin-list-unidentified-check" ${listFilterUnidentified ? 'checked' : ''} style="cursor:pointer;" />
                   Solo no identificadas
                 </label>
               </div>
@@ -443,7 +442,7 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
             <div class="admin-accordion-list">
               ${channelList.map((channel, i) => `
                 <div class="admin-accordion-item">
-                  <div class="admin-accordion-header library-channel-header" data-focusable tabindex="0" role="button" data-index="${i}">
+                  <div class="admin-accordion-header library-channel-header" data-index="${i}">
                     <div style="display:flex;align-items:center;gap:.75rem">
                       <strong>${esc(channel.name)}</strong>
                       ${channel.isExternal ? '<span class="admin-badge admin-badge-channel" style="background:#0284c7;color:#fff;border-color:#38bdf8;">Externo</span>' : ''}
@@ -485,16 +484,9 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
             renderChannelsList();
           });
           resultsArea.querySelectorAll('.library-channel-header').forEach(header => {
-            const toggle = () => {
+            header.addEventListener('click', () => {
               const list = document.getElementById(`library-channel-${header.dataset.index}`);
               if (list) list.style.display = list.style.display === 'none' ? 'flex' : 'none';
-            };
-            header.addEventListener('click', toggle);
-            header.addEventListener('keydown', (e) => {
-              if (e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 23) {
-                e.preventDefault();
-                toggle();
-              }
             });
           });
         }
@@ -507,15 +499,4 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
 
   // Carga inicial
   renderAgeFiltersTab();
-
-  // Foco inicial para TV / mando a distancia
-  setTimeout(() => {
-    const initialFocus = document.querySelector('.admin-sidebar .admin-tab-btn.is-active[data-focusable]')
-      || document.querySelector('.admin-sidebar .admin-tab-btn[data-focusable]')
-      || document.querySelector('#admin-btn-back');
-    if (initialFocus) {
-      initialFocus.focus({ preventScroll: true });
-      initialFocus.classList.add('dpad-focused');
-    }
-  }, 100);
 }

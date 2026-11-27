@@ -307,14 +307,9 @@ export function destroyCarousel() {
  * @param {HTMLElement} host
  * @param {{ items: object[], mode?: 'posters'|'logos', initialId?: string|null, allTitles?: object[], onOpen?: (t: object) => void }} opts
  */
-export function mountCarousel(host, { items: rawItems, mode = 'posters', initialId = null, allTitles = [], onOpen } = {}) {
+export function mountCarousel(host, { items, mode = 'posters', initialId = null, allTitles = [], onOpen } = {}) {
   destroyCarousel();
-  if (!host || !rawItems?.length) return null;
-
-  // Sin límite de títulos: antes se recortaba a 150 y el resto de la sección no aparecía.
-  // Cada elemento es un <div> vacío hasta que entra en la ventana de carga (LOAD_WINDOW) o en
-  // pantalla (IntersectionObserver), así que miles de títulos no cargan imágenes de golpe.
-  const items = rawItems;
+  if (!host || !items?.length) return null;
 
   const logos = mode === 'logos';
   let cur = Math.max(0, items.findIndex((t) => String(t.id) === String(initialId)));
@@ -561,19 +556,13 @@ export function mountCarousel(host, { items: rawItems, mode = 'posters', initial
     if (stage.scrollTop !== 0) stage.scrollTop = 0;
   }, { passive: true });
 
-  let prevCur = -1;
   function setActive(i, { smooth = true } = {}) {
-    const nextCur = Math.max(0, Math.min(items.length - 1, i));
-    if (prevCur >= 0 && prevCur !== nextCur && els[prevCur]) {
-      els[prevCur].classList.remove('is-active');
-      els[prevCur].setAttribute('aria-selected', 'false');
-    }
-    cur = nextCur;
-    if (els[cur]) {
-      els[cur].classList.add('is-active');
-      els[cur].setAttribute('aria-selected', 'true');
-    }
-    prevCur = cur;
+    cur = Math.max(0, Math.min(items.length - 1, i));
+    els.forEach((el, k) => {
+      const on = k === cur;
+      el.classList.toggle('is-active', on);
+      el.setAttribute('aria-selected', String(on));
+    });
     const t = items[cur];
     loadWindow();
     center(smooth);

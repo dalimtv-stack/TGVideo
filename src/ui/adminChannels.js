@@ -1,15 +1,9 @@
 // src/ui/adminChannels.js
 // Módulo para escanear, integrar y desvincular canales, grupos y temas externos en la biblioteca.
 import { Api } from 'telegram';
-import { clearExternalChannelCache, applyEpisodeOverrides } from './externalTitlesCache.js';
-import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName, detectTrailingSeriesMap, getTrailingSeriesForFile } from '../library/parse.js';
-import { extractTitleAndYear, extractTitlesFromCaption, enrichTitles } from '../metadata/tmdb.js';
-import { seriesNameFromFile, normalizeMovieKey } from '../library/titles.js';
-import { formatBytes } from '../core/utils.js';
-import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
-import { createKV } from '../core/kv.js';
-
-const defaultKv = createKV();
+import { isVideoMessage, getFileName, parseCaption, parseEpisode, prettyName } from '../library/parse.js';
+import { extractTitleAndYear, enrichTitles } from '../metadata/tmdb.js';
+import { seriesNameFromFile } from '../library/titles.js';
 
 const LIB_KEY = 'library_v2';
 const EXT_KEY = 'external_sources_v1';
@@ -22,8 +16,113 @@ function esc(str) {
     .replace(/"/g, '&quot;');
 }
 
-export { buildTitlesForExternalChannel } from './externalTitlesBuilder.js';
-import { buildTitlesForExternalChannel } from './externalTitlesBuilder.js';
+/**
+ * Función modular y reutilizable para construir los títulos de la biblioteca
+ * a partir de un registro de canal externo y su lista de archivos de vídeo detectados.
+ */
+export function buildTitlesForExternalChannel(channelRecord, detectedFiles) {
+  const generatedTitles = [];
+  const virtualId = String(channelRecord.id);
+  const category = channelRecord.category || 'Películas';
+  const groupName = channelRecord.group || channelRecord.name || channelRecord.title || 'Externo';
+
+  if (category === 'Películas') {
+    const movieMap = new Map();
+    for (const f of detectedFiles) {
+      const targetFileName = f.captionFileName || f.fileName || f.label;
+      const parsed = extractTitleAndYear(targetFileName);
+      const baseName = parsed.title || f.label;
+      const key = f.tmdbId ? `tmdb_${f.tmdbId}` : `${baseName.toLowerCase().trim()}_${parsed.year || ''}`;
+
+      if (!movieMap.has(key)) {
+        movieMap.set(key, {
+          id: `${virtualId}:${f.messageId}`,
+          nombre: baseName,
+          yearHint: parsed.year || null,
+          files: [f],
+          tmdbId: f.tmdbId || null,
+          imdbId: f.imdbId || null,
+        });
+      } else {
+        const grp = movieMap.get(key);
+        grp.files.push(f);
+        if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+      }
+    }
+
+    for (const grp of movieMap.values()) {
+      grp.files.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0) || (b.date || 0) - (a.date || 0));
+      generatedTitles.push({
+        id: String(grp.id),
+        tipo: 'pelicula',
+        isSaga: false,
+        grupo: groupName,
+        nombre: grp.nombre,
+        yearHint: grp.yearHint,
+        origen: { tipo: 'externo', channelId: String(virtualId), messageId: grp.files[0].messageId },
+        channel: channelRecord,
+        archivos: grp.files,
+        ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
+        tmdbId: grp.tmdbId,
+        imdbId: grp.imdbId,
+      });
+    }
+  } else if (category === 'Series') {
+    const seriesMap = new Map();
+    for (const f of detectedFiles) {
+      const sName = seriesNameFromFile(f.captionFileName || f.fileName) || groupName;
+      const key = sName.toLowerCase().trim();
+      if (!seriesMap.has(key)) {
+        seriesMap.set(key, {
+          id: `${virtualId}#${sName}`,
+          nombre: sName,
+          files: [f],
+          tmdbId: f.tmdbId || null,
+          imdbId: f.imdbId || null,
+        });
+      } else {
+        const grp = seriesMap.get(key);
+        grp.files.push(f);
+        if (!grp.tmdbId && f.tmdbId) grp.tmdbId = f.tmdbId;
+      }
+    }
+
+    for (const grp of seriesMap.values()) {
+      grp.files.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || (a.date - b.date));
+      generatedTitles.push({
+        id: String(grp.id),
+        tipo: 'serie',
+        isSaga: false,
+        grupo: groupName,
+        nombre: grp.nombre,
+        origen: { tipo: 'externo', channelId: String(virtualId) },
+        channel: channelRecord,
+        archivos: grp.files,
+        ultimoMensajeFecha: grp.files.reduce((m, f) => Math.max(m, f.date || 0), 0),
+        tmdbId: grp.tmdbId,
+        imdbId: grp.imdbId,
+      });
+    }
+  } else {
+    const tipo = category === 'Deportes' ? 'deporte' : 'musica';
+    const sortedFiles = [...detectedFiles].sort((a, b) => (b.date || 0) - (a.date || 0));
+    generatedTitles.push({
+      id: String(virtualId),
+      tipo,
+      isSaga: false,
+      grupo: groupName,
+      nombre: groupName,
+      origen: { tipo: 'externo', channelId: String(virtualId) },
+      channel: channelRecord,
+      archivos: sortedFiles,
+      ultimoMensajeFecha: sortedFiles.reduce((m, f) => Math.max(m, f.date || 0), 0),
+      tmdbId: sortedFiles.find(f => f.tmdbId)?.tmdbId || null,
+      imdbId: sortedFiles.find(f => f.imdbId)?.imdbId || null,
+    });
+  }
+
+  return generatedTitles;
+}
 
 export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg }) {
   mainPanel.innerHTML = `
@@ -76,14 +175,7 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
       const addedIdsSet = new Set(extSaved.map(x => String(x.id)));
 
       const dialogs = [];
-      const seenIds = new Set();
-
-      const processDialog = async (d, isArchived = false) => {
-        if (!d) return;
-        const idStr = String(d.id);
-        if (seenIds.has(idStr)) return;
-        seenIds.add(idStr);
-
+      for await (const d of client.iterDialogs({ limit: 120 })) {
         if (d.isChannel || d.isGroup) {
           const isForum = Boolean(d.entity?.forum);
           let topics = [];
@@ -107,43 +199,15 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
           }
 
           dialogs.push({
-            id: idStr,
+            id: String(d.id),
             title: d.title || `Chat ${d.id}`,
             entity: d.entity,
             isChannel: Boolean(d.isChannel),
             isGroup: Boolean(d.isGroup),
             isForum,
-            isArchived,
             topics,
           });
         }
-      };
-
-      // 1. Diálogos activos (sin límite estrecho de 120)
-      try {
-        for await (const d of client.iterDialogs({ limit: 500 })) {
-          await processDialog(d, false);
-        }
-      } catch (err) {
-        console.warn('[adminChannels] Error leyendo diálogos activos:', err);
-      }
-
-      // 2. Diálogos archivados en Telegram (archived: true)
-      try {
-        for await (const d of client.iterDialogs({ archived: true, limit: 500 })) {
-          await processDialog(d, true);
-        }
-      } catch (err) {
-        console.warn('[adminChannels] Error leyendo archivados (archived: true):', err);
-      }
-
-      // 3. Diálogos en carpetas archivadas (folder: 1)
-      try {
-        for await (const d of client.iterDialogs({ folder: 1, limit: 500 })) {
-          await processDialog(d, true);
-        }
-      } catch (err) {
-        console.warn('[adminChannels] Error leyendo folder 1:', err);
       }
 
       if (!dialogs.length) {
@@ -155,10 +219,6 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
 
       const renderDialogsTree = () => {
         resultContainer.innerHTML = `
-          <div style="margin-bottom:1rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
-            <input type="text" id="filter-channels-input" data-focusable placeholder="🔍 Filtrar canales o grupos por nombre o ID…" style="flex:1 1 300px;background:#0f172a;border:1px solid rgba(255,255,255,0.2);border-radius:6px;padding:0.55rem 0.8rem;color:#fff;font-size:0.88rem;outline:none;" />
-            <span style="font-size:0.82rem;color:#94a3b8;" id="filter-channels-count">${dialogs.length} disponibles</span>
-          </div>
           <div class="admin-topic-tree">
             ${dialogs.map((d, dIdx) => {
               const hasTopics = d.isForum && d.topics.length > 0;
@@ -177,7 +237,6 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
                             ? `<span class="admin-badge admin-badge-channel">📢 Canal</span>`
                             : `<span class="admin-badge admin-badge-group">👥 Grupo</span>`
                         }
-                        ${d.isArchived ? `<span class="admin-badge" style="background:#334155;color:#cbd5e1;border:1px solid rgba(255,255,255,0.2);">📁 Archivado</span>` : ''}
                         ${channelAdded ? `<span class="admin-badge" style="background:#065f46;color:#34d399;border:1px solid #10b981;">✓ En biblioteca</span>` : ''}
                       </div>
                       <small style="color:#888;">ID: ${esc(d.id)}</small>
@@ -334,24 +393,6 @@ export async function renderChannelsTab({ mainPanel, client, kv, titles = [], tg
             });
           });
         });
-
-        const filterInput = resultContainer.querySelector('#filter-channels-input');
-        const filterCount = resultContainer.querySelector('#filter-channels-count');
-        if (filterInput) {
-          filterInput.addEventListener('input', () => {
-            const query = filterInput.value.toLowerCase().trim();
-            let visibleCount = 0;
-            resultContainer.querySelectorAll('.admin-channel-item').forEach(item => {
-              const text = item.textContent.toLowerCase();
-              const matches = !query || text.includes(query);
-              item.style.display = matches ? 'block' : 'none';
-              if (matches) visibleCount++;
-            });
-            if (filterCount) {
-              filterCount.textContent = query ? `${visibleCount} coincidentes` : `${dialogs.length} disponibles`;
-            }
-          });
-        }
       };
 
       renderDialogsTree();
@@ -384,8 +425,6 @@ async function removeExternalSource({ virtualId, displayName, kv, titles, onRemo
       savedObj.channels = savedObj.channels.filter(c => String(c.id) !== String(virtualId));
     }
     await kv.set(LIB_KEY, savedObj).catch(() => {});
-    await kv.set(`ext_files_${virtualId}`, null).catch(() => {});
-    clearExternalChannelCache(virtualId);
 
     const kept = titles.filter(t => {
       const matchChannel = String(t.channel?.id) === String(virtualId);
@@ -408,7 +447,6 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
   const existingModal = document.querySelector('.admin-modal-overlay');
   existingModal?.remove();
 
-  const prevFocus = document.activeElement;
   const isTopic = Boolean(topic);
   const displayName = isTopic ? `${dialog.title} > ${topic.title}` : dialog.title;
   const defaultGroup = isTopic ? topic.title : dialog.title;
@@ -416,7 +454,7 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
   const overlay = document.createElement('div');
   overlay.className = 'admin-modal-overlay';
   overlay.innerHTML = `
-    <div class="admin-modal-card" role="dialog" aria-modal="true" aria-label="Añadir a la biblioteca">
+    <div class="admin-modal-card">
       <h3 style="margin:0;font-size:1.15rem;color:#fff;">Añadir a la biblioteca</h3>
       <p style="margin:0;color:#ccc;font-size:0.9rem;line-height:1.4;">
         ¿Deseas escanear e incorporar los vídeos de <strong>${esc(displayName)}</strong> como canal de la biblioteca?
@@ -424,7 +462,7 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
 
       <div class="admin-field-group">
         <label>Categoría en biblioteca:</label>
-        <select class="admin-select" id="modal-channel-category" data-focusable>
+        <select class="admin-select" id="modal-channel-category">
           <option value="Películas" selected>Películas</option>
           <option value="Series">Series</option>
           <option value="Deportes">Deportes</option>
@@ -434,7 +472,7 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
 
       <div class="admin-field-group">
         <label>Nombre / Colección en biblioteca:</label>
-        <input type="text" class="admin-input" id="modal-channel-group" data-focusable value="${esc(defaultGroup)}">
+        <input type="text" class="admin-input" id="modal-channel-group" value="${esc(defaultGroup)}">
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:0.75rem;margin-top:0.6rem;">
@@ -446,29 +484,17 @@ function promptAddChannelOrTopic({ dialog, topic, client, kv, titles, onSuccess 
 
   document.body.appendChild(overlay);
 
-  const closeModal = () => {
-    overlay.remove();
-    prevFocus?.focus?.({ preventScroll: true });
-  };
-
-  overlay.querySelector('#modal-cancel-btn')?.addEventListener('click', closeModal);
+  overlay.querySelector('#modal-cancel-btn')?.addEventListener('click', () => overlay.remove());
 
   overlay.querySelector('#modal-confirm-btn')?.addEventListener('click', () => {
     const category = overlay.querySelector('#modal-channel-category').value;
     const groupName = overlay.querySelector('#modal-channel-group').value.trim() || displayName;
     overlay.remove();
-    startScanWithProgress({ dialog, topic, category, groupName, client, kv, titles, onSuccess, prevFocus });
+    startScanWithProgress({ dialog, topic, category, groupName, client, kv, titles, onSuccess });
   });
-
-  // Enfocar inmediatamente el botón de confirmar para mando / Android TV
-  setTimeout(() => {
-    const firstFocus = overlay.querySelector('#modal-confirm-btn') || overlay.querySelector('[data-focusable]');
-    firstFocus?.focus?.({ preventScroll: true });
-    firstFocus?.classList?.add('dpad-focused');
-  }, 50);
 }
 
-async function startScanWithProgress({ dialog, topic, category, groupName, client, kv, titles, onSuccess, prevFocus }) {
+async function startScanWithProgress({ dialog, topic, category, groupName, client, kv, titles, onSuccess }) {
   const existingModal = document.querySelector('.admin-modal-overlay');
   existingModal?.remove();
 
@@ -509,10 +535,6 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
   const fillEl = progressOverlay.querySelector('#prog-bar-fill');
   const statusEl = progressOverlay.querySelector('#prog-status-text');
   const cancelBtn = progressOverlay.querySelector('#prog-cancel-btn');
-  setTimeout(() => {
-    cancelBtn?.focus?.({ preventScroll: true });
-    cancelBtn?.classList?.add('dpad-focused');
-  }, 50);
 
   cancelBtn?.addEventListener('click', () => {
     isCancelled = true;
@@ -637,8 +659,6 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     savedObj.channels = savedObj.channels.filter(c => String(c.id) !== String(virtualId));
     savedObj.channels.push(channelRecord);
     await kv.set(LIB_KEY, savedObj).catch(e => console.warn('[admin] Error guardando en library_v2', e));
-    await kv.set(`ext_files_${virtualId}`, detectedFiles).catch(() => {});
-    clearExternalChannelCache(virtualId);
 
     const extList = (await kv.get(EXT_KEY).catch(() => [])) || [];
     const updatedExt = extList.filter(x => String(x.id) !== String(virtualId));
@@ -668,42 +688,13 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
     if (addedEl) addedEl.innerHTML = `Vídeos: <strong>${detectedFiles.length} / ${detectedFiles.length}</strong>`;
     statusEl.textContent = `✓ Se han detectado ${detectedFiles.length} vídeos (${generatedTitles.length} títulos). Pulsa para buscar metadatos en TMDB y finalizar.`;
 
-
-    // Botón de finalización rápida sin demora de TMDB
-    cancelBtn.textContent = 'Guardar y Finalizar (Rápido)';
+    cancelBtn.textContent = 'Identificar y Finalizar';
     cancelBtn.className = 'btn-primary';
-    cancelBtn.setAttribute('data-focusable', '');
     cancelBtn.disabled = false;
 
-    // Crear botón opcional de TMDB
-    let tmdbBtn = progressOverlay.querySelector('#prog-tmdb-btn');
-    if (!tmdbBtn) {
-      tmdbBtn = document.createElement('button');
-      tmdbBtn.id = 'prog-tmdb-btn';
-      tmdbBtn.className = 'btn-secondary';
-      tmdbBtn.setAttribute('data-focusable', '');
-      tmdbBtn.style.marginRight = '0.8rem';
-      tmdbBtn.textContent = 'Identificar en TMDB (Opcional)';
-      cancelBtn.parentNode.insertBefore(tmdbBtn, cancelBtn);
-    }
-
-    cancelBtn.onclick = () => {
-      progressOverlay.remove();
-      prevFocus?.focus?.({ preventScroll: true });
-      onSuccess?.();
-    };
-
-    setTimeout(() => {
-      cancelBtn.focus({ preventScroll: true });
-      cancelBtn.classList.add('dpad-focused');
-    }, 50);
-
-    if (tmdbBtn) {
-      tmdbBtn.onclick = async () => {
-        tmdbBtn.disabled = true;
-        cancelBtn.disabled = true;
-        tmdbBtn.textContent = 'Identificando en TMDB…';
-
+    cancelBtn.onclick = async () => {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = 'Identificando en TMDB…';
       fillEl.style.width = '0%';
       if (addedEl) addedEl.innerHTML = `Identificados: <strong>0 / ${generatedTitles.length}</strong>`;
       statusEl.textContent = `Identificando títulos con TMDB (0/${generatedTitles.length})…`;
@@ -759,9 +750,8 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
       } finally {
         progressOverlay.remove();
         onSuccess?.(virtualId);
-        }
-      };
-    }
+      }
+    };
   } catch (err) {
     console.error('Error durante el escaneo', err);
     statusEl.textContent = `Error: ${esc(err.message || String(err))}`;
@@ -771,101 +761,6 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
   }
 }
 
-
-
-/**
- * Identifica en lote un conjunto de títulos pendientes mediante TMDB,
- * mostrando una ventana modal con barra de progreso y persistiendo los metadatos.
- */
-export async function identifyTitlesInBulk(titlesToEnrich = [], { modalTitle = 'Identificar con TMDB en bloque', onProgress, onComplete } = {}) {
-  const pending = (titlesToEnrich || []).filter(t => !t.metadata?.id && !t.tmdbId);
-  if (pending.length === 0) {
-    alert('Todos los títulos seleccionados ya están identificados en TMDB.');
-    return { total: 0, identified: 0 };
-  }
-
-  const idOverlay = document.createElement('div');
-  idOverlay.className = 'modal-overlay';
-  idOverlay.style.cssText = 'position:fixed;inset:0;z-index:100060;background:rgba(0,0,0,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:1rem;';
-  idOverlay.innerHTML = `
-    <div style="background:#181c24;border:1px solid rgba(255,255,255,0.18);border-radius:14px;max-width:480px;width:100%;color:#fff;padding:1.8rem;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,0.9);">
-      <div style="font-size:2.4rem;margin-bottom:0.6rem;">✨</div>
-      <h3 style="margin:0 0 0.5rem;font-size:1.25rem;font-weight:700;">${esc(modalTitle)}</h3>
-      <p id="bulk-id-status" style="color:#94a3b8;font-size:0.92rem;margin:0 0 1.2rem;">Identificando títulos con TMDB (0/${pending.length})…</p>
-      <div style="background:rgba(255,255,255,0.08);height:8px;border-radius:4px;overflow:hidden;margin-bottom:1.5rem;">
-        <div id="bulk-id-fill" style="background:linear-gradient(90deg, #a855f7, #38bdf8);height:100%;width:0%;transition:width 0.2s ease;"></div>
-      </div>
-      <button type="button" id="bulk-id-cancel" data-focusable class="btn btn-secondary" style="padding:0.5rem 1.4rem;border-radius:8px;cursor:pointer;">Cancelar</button>
-    </div>
-  `;
-  document.body.appendChild(idOverlay);
-
-  const statusEl = idOverlay.querySelector('#bulk-id-status');
-  const fillEl = idOverlay.querySelector('#bulk-id-fill');
-  const cancelBtn = idOverlay.querySelector('#bulk-id-cancel');
-  setTimeout(() => {
-    cancelBtn?.focus?.({ preventScroll: true });
-    cancelBtn?.classList?.add('dpad-focused');
-  }, 50);
-
-  const controller = new AbortController();
-  cancelBtn.onclick = () => {
-    controller.abort();
-    idOverlay.remove();
-  };
-
-  let identifiedCount = 0;
-  try {
-    await enrichTitles(pending, {
-      signal: controller.signal,
-      onProgress: (d, total) => {
-        identifiedCount = d;
-        const pct = Math.round((d / Math.max(1, total)) * 100);
-        if (fillEl) fillEl.style.width = `${pct}%`;
-        if (statusEl) statusEl.textContent = `Identificando títulos con TMDB (${d}/${total})…`;
-        onProgress?.(d, total);
-      },
-    });
-
-    const curSaved = (await kv.get(LIB_KEY).catch(() => null)) || {};
-    curSaved.metadataMap = curSaved.metadataMap || {};
-    for (const t of pending) {
-      if (t.metadata) {
-        curSaved.metadataMap[t.id] = {
-          id: t.metadata.id,
-          name: t.metadata.name,
-          poster: t.metadata.poster,
-          background: t.metadata.background,
-          logo: t.metadata.logo,
-          overview: t.metadata.overview,
-          tipo: t.metadata.tipo,
-          year: t.metadata.year,
-          ageRating: t.metadata.ageRating,
-          genres: t.metadata.genres,
-          voteAverage: t.metadata.voteAverage,
-        };
-      }
-      if (Array.isArray(t.archivos)) {
-        for (const f of t.archivos) {
-          if (f.metadata) {
-            const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
-            curSaved.metadataMap[fKey] = f.metadata;
-          }
-        }
-      }
-    }
-    await kv.set(LIB_KEY, curSaved).catch(() => {});
-    if (statusEl) statusEl.textContent = `✓ ¡Identificación completada! (${identifiedCount} procesados)`;
-    if (fillEl) fillEl.style.width = '100%';
-    await new Promise(r => setTimeout(r, 600));
-  } catch (err) {
-    if (err.name !== 'AbortError') console.warn('[bulk-identify]', err);
-  } finally {
-    idOverlay.remove();
-    onComplete?.(pending);
-  }
-  return { total: pending.length, identified: identifiedCount };
-}
 
 async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
   container.innerHTML = `<div style="padding:1rem;color:#38bdf8;">Cargando archivos de canales externos…</div>`;
@@ -920,10 +815,7 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
     // 2. Desde caché guardada
     for (const ext of extSaved) {
       const chId = String(ext.id);
-      let chFiles = cache[chId] || [];
-      if (!Array.isArray(chFiles) || chFiles.length === 0) {
-        chFiles = (await kv.get(`ext_files_${chId}`).catch(() => [])) || [];
-      }
+      const chFiles = cache[chId] || [];
       const chName = ext.name || ext.title || ext.group || chId;
       for (const f of chFiles) {
         const key = f.key || `${chId}:${f.messageId}`;
@@ -1020,17 +912,16 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
             <span id="admin-ext-count-text" style="color:#94a3b8;font-size:0.85rem;"></span>
           </div>
           <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap;">
-            <button type="button" class="btn-primary" data-focusable id="admin-ext-btn-identify-all" style="padding:0.45rem 0.9rem;font-size:0.85rem;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:0.4rem;background:#9333ea;">✨ Identificar pendientes con TMDB</button>
             <div style="display:flex;align-items:center;gap:0.4rem;">
               <label style="color:#aaa;font-size:0.85rem;">Ordenar por:</label>
-              <select class="admin-select" data-focusable id="admin-ext-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
+              <select class="admin-select" id="admin-ext-sort-select" style="width:auto;padding:0.4rem 2rem 0.4rem 0.8rem;font-size:0.85rem;">
                 <option value="date_desc">📅 Fecha de subida (más recientes)</option>
                 <option value="date_asc">📅 Fecha de subida (más antiguos)</option>
                 <option value="name_asc">🔤 Nombre (A - Z)</option>
               </select>
             </div>
             <label style="display:inline-flex;align-items:center;gap:0.4rem;color:#e2e8f0;font-size:0.85rem;cursor:pointer;">
-              <input type="checkbox" data-focusable id="admin-ext-filter-unidentified" style="cursor:pointer;" />
+              <input type="checkbox" id="admin-ext-filter-unidentified" style="cursor:pointer;" />
               Solo no identificadas
             </label>
           </div>
@@ -1049,158 +940,9 @@ async function renderExternalVideosTotalView(container, { kv, titles, tg }) {
       renderList();
     });
 
-    container.querySelector('#admin-ext-btn-identify-all')?.addEventListener('click', async () => {
-      const unidentifiedItems = allFiles.filter(item => !item.hasTmdb);
-      if (unidentifiedItems.length === 0) {
-        alert('Todos los archivos externos ya están identificados en TMDB.');
-        return;
-      }
-      const candidateTitles = unidentifiedItems.map(item => {
-        const parsed = extractTitleAndYear(item.fileName || item.shownName);
-        return {
-          id: item.key,
-          tipo: 'pelicula',
-          nombre: parsed.title || item.shownName,
-          yearHint: parsed.year,
-          archivos: [{
-            messageId: item.messageId,
-            fileName: item.fileName,
-            label: item.shownName,
-            size: item.size,
-            date: item.date,
-            key: item.key,
-          }],
-        };
-      });
-
-      await identifyTitlesInBulk(candidateTitles, {
-        modalTitle: `Identificar ${unidentifiedItems.length} vídeos externos`,
-        onComplete: (enriched) => {
-          clearExternalChannelCache();
-          for (const cand of enriched) {
-            if (cand.metadata) {
-              const matched = allFiles.find(f => f.key === cand.id);
-              if (matched) {
-                matched.hasTmdb = true;
-                matched.tmdbId = cand.metadata.id;
-                matched.tmdbTitle = cand.metadata.name;
-              }
-            }
-          }
-          renderList();
-        },
-      });
-    });
-
     renderList();
   } catch (err) {
     console.error('Error en vista total de canales externos', err);
     container.innerHTML = `<div style="color:#f87171;padding:1rem;">Error cargando vista externa: ${esc(err.message || String(err))}</div>`;
   }
-}
-/**
- * Escanea o actualiza un único canal externo (rápido o completo) y refresca su almacenamiento.
- */
-export async function scanSingleExternalChannel({ tg, sync, channelRecord, isFull = false, kv: passedKv = null }) {
-  const kv = passedKv || defaultKv;
-  if (!tg || !channelRecord) return;
-  const client = tg.getClient?.() || tg.client;
-  if (!client) throw new Error('Cliente de Telegram no disponible');
-
-  const channelId = String(channelRecord.channelId || channelRecord.tgChannelId || channelRecord.id).split('_top_')[0];
-  const isTopic = Boolean(channelRecord.isTopic && channelRecord.topicId);
-  const virtualId = isTopic ? `${channelId}_top_${channelRecord.topicId}` : String(channelRecord.id || channelId);
-
-  let peer = channelRecord.entity;
-  if (!peer && tg?.peerOf && (channelRecord.accessHash || channelRecord.hash)) {
-    try {
-      peer = tg.peerOf(channelRecord);
-    } catch (_) {}
-  }
-  if (!peer) {
-    try {
-      peer = await client.getInputEntity(channelId);
-    } catch (_) {
-      try {
-        const cleanId = channelId.replace(/^-100/, '').replace(/^-/, '');
-        peer = await client.getInputEntity(`-100${cleanId}`);
-      } catch (err) {
-        if (tg?.peerOf) {
-          const cleanId = channelId.replace(/^-100/, '').replace(/^-/, '');
-          peer = tg.peerOf({ id: cleanId, accessHash: channelRecord.accessHash || channelRecord.hash || '0' });
-        } else {
-          throw new Error('No se pudo resolver el canal en Telegram: ' + (err.message || String(err)));
-        }
-      }
-    }
-  }
-
-  let existingFiles = [];
-  let minId = 0;
-  if (!isFull) {
-    existingFiles = (await kv.get(`ext_files_${virtualId}`).catch(() => [])) || [];
-    minId = existingFiles.reduce((m, f) => Math.max(m, Number(f.messageId || 0)), 0);
-  }
-
-  const iterOptions = {};
-  if (isTopic) iterOptions.replyTo = channelRecord.topicId;
-  if (minId > 0) iterOptions.minId = minId;
-
-  const newDetected = [];
-  for await (const msg of client.iterMessages(peer, iterOptions)) {
-    if (isVideoMessage(msg)) {
-      const rawCaption = msg.message || '';
-      const cap = parseCaption(rawCaption);
-      const captionFileName = cap.fileName ? cap.fileName.trim() : null;
-      const rawFileName = getFileName(msg) || '';
-      const fileName = captionFileName || rawFileName || `video_${msg.id}.mp4`;
-      const ep = parseEpisode(fileName);
-      const doc = msg.document || msg.media?.document;
-      const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
-
-      newDetected.push({
-        key: `${virtualId}:${msg.id}`,
-        channelId: virtualId,
-        messageId: msg.id,
-        channel: channelRecord,
-        fileName,
-        captionFileName,
-        rawFileName,
-        rawCaption,
-        label: prettyName(fileName),
-        section: cap.section || null,
-        synopsis: cap.synopsis || null,
-        tmdbId: cap.tmdbId ? String(cap.tmdbId).trim() : null,
-        imdbId: cap.imdbId ? String(cap.imdbId).trim() : null,
-        rating: cap.rating ? Number(cap.rating) : null,
-        ageRating: cap.ageRating || null,
-        season: ep.season,
-        episode: ep.episode,
-        size: Number(doc?.size?.toString?.() || doc?.size || 0),
-        duration: durAttr?.duration || 0,
-        mimeType: doc?.mimeType || 'video/mp4',
-        date: msg.date,
-      });
-    }
-  }
-
-  const finalFiles = isFull ? newDetected : [...newDetected, ...existingFiles];
-  // Deduplicar por messageId
-  const uniqueMap = new Map();
-  finalFiles.forEach(f => {
-    if (!uniqueMap.has(f.messageId)) uniqueMap.set(f.messageId, f);
-  });
-  const mergedFiles = Array.from(uniqueMap.values());
-
-  // Guardar en kv
-  await kv.set(`ext_files_${virtualId}`, mergedFiles).catch(() => {});
-  const savedObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
-  savedObj.cache = savedObj.cache || {};
-  savedObj.cache[virtualId] = mergedFiles;
-  await kv.set(LIB_KEY, savedObj).catch(() => {});
-
-  if (sync?.saveProfile) {
-    await sync.saveProfile().catch(() => {});
-  }
-  return mergedFiles;
 }

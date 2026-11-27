@@ -1,15 +1,13 @@
-// src/ui/settings.js
 import { isAndroidTV, isAndroidApp, applyDevicePixelZoom } from '../core/platform.js';
 import { startAppUpdate } from '../core/updater.js';
 import { checkForUpdate, CURRENT_VERSION } from '../core/updateCheck.js';
 import { isDevLogEnabled, setDevLogEnabled, startDevLogging, stopDevLogging, uploadDevLog } from '../utils/devLogger.js';
+// src/ui/settings.js
 import { getGlobalConfig, getTmdbKey, getFanartKey, getCacheMaxMb, saveGlobalConfig } from '../settings/global.js';
 import { validateFanartKey } from '../metadata/fanart.js';
 import { loadProgress } from '../player/progress.js';
-import { getPosterCacheStats, optimizePosterCache, clearPosterCache, loadPoster } from '../metadata/posterCache.js';
-import { getDevicePosterSize, getDevicePosterQuality, setDevicePosterSettings } from '../settings/device.js';
+import { getPosterCacheStats, optimizePosterCache, clearPosterCache } from '../metadata/posterCache.js';
 import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js';
-import { patchRemoteProfile, saveDeviceEntry } from '../settings/profileSync.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -158,8 +156,6 @@ export function getDeviceSettings(profile) {
     carouselLogosScale: normalizeScaleIndex(logosScale, 5),
     pixelZoom: devPixelZoom,
     pixelZoomIndex: resolvedPixelZoomIdx,
-    posterSize: getDevicePosterSize(),
-    posterQuality: getDevicePosterQuality(),
   };
 }
 
@@ -571,8 +567,22 @@ function profileSettings(profile, sync, onChanged) {
     close();
     onChanged();
 
-    // Sincronizar en segundo plano con Telegram (cola secuencial: no pisa otros ajustes guardados)
-    patchRemoteProfile(profile, sync, remoteProfile => ({ ...remoteProfile, name, avatar }), 'nombre/avatar del perfil');
+    // Sincronizar en segundo plano con Telegram sin bloquear la interfaz
+    (async () => {
+      try {
+        const remote = await sync.pullProfile(profile.id);
+        if (!remote) return;
+        const changed = { ...remote.profile, name, avatar };
+        await sync.pushProfile({
+          ...remote,
+          profile: changed,
+          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
+        });
+        Object.assign(profile, changed);
+      } catch (err) {
+        console.warn('[settings] Error al sincronizar nombre/avatar del perfil:', err);
+      }
+    })();
   };
 }
 
@@ -585,8 +595,6 @@ function deviceSettings(profile, sync, onChanged) {
   const currentSkip = devSettings.skipSeconds;
   const currentScale = devSettings.uiScale;
   const currentPixelZoomIdx = devSettings.pixelZoomIndex;
-  const currentPosterSize = devSettings.posterSize ?? 480;
-  const currentPosterQuality = devSettings.posterQuality ?? 0.72;
 
   const exoPlayerOption = isAndroidApp ? `
               <label class="settings-radio-label ${currentPlayer === 'exoplayer' ? 'is-checked' : ''}" data-focusable tabindex="0" role="radio" aria-checked="${currentPlayer === 'exoplayer'}">
@@ -640,45 +648,6 @@ function deviceSettings(profile, sync, onChanged) {
             </div>
           </fieldset>
 
-          <fieldset class="settings-section">
-            <legend class="settings-legend">Portadas en Caché (este dispositivo)</legend>
-            <div class="settings-field-row">
-              <label class="settings-label-inline">
-                <span>Tamaño de carátula:</span>
-                <select name="posterSize" class="settings-select" data-focusable>
-                  <option value="320" ${currentPosterSize === 320 ? 'selected' : ''}>320 px (Compacto / Ligero)</option>
-                  <option value="480" ${currentPosterSize === 480 ? 'selected' : ''}>480 px (Predeterminado actual)</option>
-                  <option value="600" ${currentPosterSize === 600 ? 'selected' : ''}>600 px (Medio)</option>
-                  <option value="720" ${currentPosterSize === 720 ? 'selected' : ''}>720 px (Alto)</option>
-                  <option value="800" ${currentPosterSize === 800 ? 'selected' : ''}>800 px (Máxima nitidez)</option>
-                  ${![320, 480, 600, 720, 800].includes(currentPosterSize) ? `<option value="${currentPosterSize}" selected>${currentPosterSize} px (Personalizado)</option>` : ''}
-                </select>
-              </label>
-            </div>
-            <div class="settings-field-row" style="margin-top:0.45rem;">
-              <label class="settings-label-inline">
-                <span>Calidad de compresión:</span>
-                <select name="posterQuality" class="settings-select" data-focusable>
-                  <option value="0.55" ${currentPosterQuality === 0.55 ? 'selected' : ''}>55% (Baja - Ahorro espacio)</option>
-                  <option value="0.65" ${currentPosterQuality === 0.65 ? 'selected' : ''}>65% (Media)</option>
-                  <option value="0.72" ${currentPosterQuality === 0.72 ? 'selected' : ''}>72% (Predeterminada actual)</option>
-                  <option value="0.82" ${currentPosterQuality === 0.82 ? 'selected' : ''}>82% (Alta calidad)</option>
-                  <option value="0.92" ${currentPosterQuality === 0.92 ? 'selected' : ''}>92% (Muy alta)</option>
-                  ${![0.55, 0.65, 0.72, 0.82, 0.92].includes(currentPosterQuality) ? `<option value="${currentPosterQuality}" selected>${Math.round(currentPosterQuality * 100)}% (Personalizado)</option>` : ''}
-                </select>
-              </label>
-            </div>
-            <p class="settings-hint" style="margin-top:0.35rem;font-size:0.72rem;color:#94a3b8;line-height:1.2;">
-              Afecta a las nuevas carátulas optimizadas en este equipo.
-            </p>
-            <div class="settings-field-row" style="margin-top:0.55rem;">
-              <button type="button" class="btn-ghost" data-focusable id="btn-refresh-posters" style="width:100%;text-align:center;font-weight:600;padding:0.65rem 1rem;">Refrescar portadas</button>
-            </div>
-            <p class="settings-hint" style="margin-top:0.3rem;font-size:0.72rem;color:#94a3b8;line-height:1.2;">
-              Borra las portadas guardadas en este equipo y las vuelve a convertir con el tamaño y la calidad elegidos.
-            </p>
-          </fieldset>
-
       <p class="settings-status" role="status"></p>
       <div class="settings-actions">
         <button class="btn" data-focusable type="submit">Guardar en este dispositivo</button>
@@ -687,35 +656,6 @@ function deviceSettings(profile, sync, onChanged) {
   `, 'Estas preferencias se guardan para este equipo sin alterar otros dispositivos');
 
   overlay.querySelector('#btn-device-skin').onclick = () => showSkinSettings(profile, sync, onChanged);
-
-  overlay.querySelector('#btn-refresh-posters')?.addEventListener('click', async () => {
-    const btn = overlay.querySelector('#btn-refresh-posters');
-    const status = overlay.querySelector('.settings-status');
-    const form = overlay.querySelector('form');
-    if (!confirm('¿Borrar las portadas guardadas en este equipo y volver a convertirlas?')) return;
-    btn.disabled = true;
-    if (status) status.textContent = 'Borrando portadas en caché…';
-    try {
-      // Aplicar ya el tamaño y la calidad seleccionados para que la reconversión los use
-      const posterSize = Number(form?.elements.posterSize?.value) || 480;
-      const posterQuality = Number(form?.elements.posterQuality?.value) || 0.72;
-      setDevicePosterSettings(posterSize, posterQuality);
-      await clearPosterCache();
-      // Recargar las portadas visibles: se descargan de nuevo y se guardan convertidas
-      const imgs = [...document.querySelectorAll('img[data-poster-url]')];
-      for (const img of imgs) {
-        const url = img.dataset.posterUrl;
-        if (!url) continue;
-        img.src = url;
-        loadPoster(img, url);
-      }
-      if (status) status.textContent = `✓ Portadas borradas. Se están volviendo a convertir (${posterSize} px · ${Math.round(posterQuality * 100)}%).`;
-    } catch (err) {
-      if (status) status.textContent = 'Error al refrescar portadas: ' + (err?.message || err);
-    } finally {
-      btn.disabled = false;
-    }
-  });
 
   overlay.querySelectorAll('.settings-radio-label').forEach(label => {
     const radio = label.querySelector('input[type="radio"]');
@@ -744,13 +684,8 @@ function deviceSettings(profile, sync, onChanged) {
     const form = e.currentTarget;
     const player = form.elements.player?.value || 'artplayer';
     const skipSeconds = Number(form.elements.skipSeconds?.value) || 10;
-    const posterSize = Number(form.elements.posterSize?.value) || 480;
-    const posterQuality = Number(form.elements.posterQuality?.value) || 0.72;
 
     const deviceId = getDeviceId();
-
-    // Guardado exclusivo en este dispositivo (no en perfil ni sincronización global)
-    setDevicePosterSettings(posterSize, posterQuality);
 
 
     // Guardado local inmediato para este dispositivo
@@ -762,15 +697,48 @@ function deviceSettings(profile, sync, onChanged) {
       localStorage.setItem(`tgvideo_skip_${profile.id}`, String(skipSeconds));
     }
 
-    // Guardado en memoria y en Telegram bajo la clave de este dispositivo.
-    // Se conserva todo lo guardado antes desde Skin (escalas, resolución…).
-    saveDeviceEntry(profile, sync, deviceId,
-      { player, skip_seconds: skipSeconds },
-      { player, skip_seconds: skipSeconds },
-      'ajustes de dispositivo');
+    // Guardado en memoria en el perfil bajo la clave de este dispositivo
+    if (!profile.devices) profile.devices = {};
+    profile.devices[deviceId] = {
+      ...(profile.devices[deviceId] || {}),
+      player,
+      skip_seconds: skipSeconds,
+      updated_at: Date.now()
+    };
+    profile.player = player;
+    profile.skip_seconds = skipSeconds;
 
     close();
     onChanged();
+
+    // Sincronizar en segundo plano dentro del JSON de perfil en Telegram
+    (async () => {
+      try {
+        const remote = await sync.pullProfile(profile.id);
+        if (!remote) return;
+        const remoteDevices = remote.profile?.devices || {};
+        remoteDevices[deviceId] = {
+          ...(remoteDevices[deviceId] || {}),
+          player,
+          skip_seconds: skipSeconds,
+          updated_at: Date.now()
+        };
+        const changed = {
+          ...remote.profile,
+          devices: remoteDevices,
+          player,
+          skip_seconds: skipSeconds
+        };
+        await sync.pushProfile({
+          ...remote,
+          profile: changed,
+          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
+        });
+        Object.assign(profile, changed);
+      } catch (err) {
+        console.warn('[settings] Error al sincronizar ajustes de dispositivo:', err);
+      }
+    })();
   };
 }
 
@@ -865,28 +833,53 @@ function showSkinSettings(profile, sync, onChanged) {
       localStorage.setItem('tgvideo_device_pixel_zoom', String(pixelZoom));
       localStorage.setItem(`tgvideo_scale_${profile.id}`, String(uiScale));
     }
-    const skinPatch = {
+    if (!profile.devices) profile.devices = {};
+    profile.devices[deviceId] = {
+      ...(profile.devices[deviceId] || {}),
       ui_scale: uiScale,
       carousel_posters_scale: carouselPostersScale,
       carousel_logos_scale: carouselLogosScale,
       pixel_zoom: pixelZoom,
+      updated_at: Date.now()
     };
-    saveDeviceEntry(profile, sync, deviceId, skinPatch, { ui_scale: uiScale }, 'ajustes de Skin');
     applyDevicePixelZoom(pixelZoom);
     applyProfileScale(profile);
     close();
+    onChanged();
 
-    // Enfocar de forma estable el botón del modal anterior (Ajustes de dispositivo) sin recargar la pantalla detrás
-    const focusPrevModal = () => {
+    // Enfocar el botón "Guardar en este dispositivo" del modal anterior (Ajustes de dispositivo)
+    setTimeout(() => {
       const prevForm = document.querySelector('.device-settings-form');
-      const targetBtn = prevForm?.querySelector('button[type="submit"]') || prevForm?.querySelector('#btn-device-skin');
-      if (targetBtn) {
-        targetBtn.focus({ preventScroll: true });
-        targetBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      const saveBtn = prevForm?.querySelector('button[type="submit"]');
+      if (saveBtn) {
+        saveBtn.focus({ preventScroll: true });
+        saveBtn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }
-    };
-    focusPrevModal();
-    setTimeout(focusPrevModal, 50);
+    }, 60);
+    (async () => {
+      try {
+        const remote = await sync.pullProfile(profile.id);
+        if (!remote) return;
+        const devices = remote.profile?.devices || {};
+        devices[deviceId] = {
+          ...(devices[deviceId] || {}),
+          ui_scale: uiScale,
+          carousel_posters_scale: carouselPostersScale,
+          carousel_logos_scale: carouselLogosScale,
+          pixel_zoom: pixelZoom,
+          updated_at: Date.now()
+        };
+        const changed = { ...remote.profile, devices, ui_scale: uiScale };
+        await sync.pushProfile({
+          ...remote,
+          profile: changed,
+          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
+        });
+        Object.assign(profile, changed);
+      } catch (err) {
+        console.warn('[settings] Error al sincronizar ajustes de Skin:', err);
+      }
+    })();
   };
 }
 
