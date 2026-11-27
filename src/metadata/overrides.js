@@ -8,7 +8,7 @@ import { createKV } from '../core/kv.js';
 
 const kv = createKV();
 const KV_KEY = 'metadata_overrides_v1';
-let state = { v: 1, updated_at: 0, overrides: {} };
+let state = { v: 1, _syncMessageId: null, updated_at: 0, overrides: {} };
 let syncRef = null;
 let pushTimer = null;
 
@@ -32,7 +32,7 @@ export async function loadOverrides(sync) {
   if (local?.overrides) state = local;
   if (!syncRef?.pullMetadataOverrides) return state;
   try {
-    const remote = await syncRef.pullMetadataOverrides();
+    const remote = await syncRef.pullMetadataOverrides({ ifDifferentThanMsgId: state._syncMessageId });
     if (remote?.overrides) {
       // Fusión: por entrada gana la más reciente
       const merged = { ...state.overrides };
@@ -40,7 +40,12 @@ export async function loadOverrides(sync) {
         const l = merged[k];
         if (!l || (v?.updated_at || 0) >= (l?.updated_at || 0)) merged[k] = v;
       }
-      state = { v: 1, updated_at: Math.max(state.updated_at || 0, remote.updated_at || 0), overrides: merged };
+      state = {
+        v: 1,
+        _syncMessageId: remote._syncMessageId || state._syncMessageId,
+        updated_at: Math.max(state.updated_at || 0, remote.updated_at || 0),
+        overrides: merged,
+      };
       await kv.set(KV_KEY, state).catch(() => {});
     }
   } catch (e) {
@@ -104,9 +109,7 @@ export async function pruneOverrides(validKeys = [], sync) {
   const next = {};
   for (const [k, v] of Object.entries(state.overrides)) {
     if (valid.has(String(k))) next[k] = v;
-    // Conservar también por si la clave es canal:mensaje y valid tiene el title.id agrupado
   }
-  // Si validKeys incluye tmdb ids como "tmdb:123", conservar overrides con ese id
   const validTmdb = new Set();
   for (const k of validKeys) {
     if (String(k).startsWith('tmdb:')) validTmdb.add(String(k).slice(5));
@@ -116,7 +119,7 @@ export async function pruneOverrides(validKeys = [], sync) {
     if (v?.id != null && validTmdb.has(String(v.id))) next[k] = v;
   }
   const removed = before - Object.keys(next).length;
-  state = { v: 1, updated_at: Date.now(), overrides: next };
+  state = { v: 1, _syncMessageId: state._syncMessageId, updated_at: Date.now(), overrides: next };
   await kv.set(KV_KEY, state).catch(() => {});
   schedulePush();
   let bytes = 0;

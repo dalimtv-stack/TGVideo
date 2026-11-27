@@ -94,17 +94,36 @@ export function hasNewerThan(a = {}, b = {}) {
   return false;
 }
 
-// ---------------------------------------------------------------- lectura
+// ---------------------------------------------------------------- lectura y caché
+
+let cachedMergedPrefs = new Map();
+
+export function clearImagePrefsCache(profileId) {
+  if (profileId) cachedMergedPrefs.delete(String(profileId));
+  else cachedMergedPrefs.clear();
+}
 
 /** Mapa completo (memoria del perfil + caché del dispositivo) ya fusionado. */
 export function readImagePrefs(profile) {
-  const inMem = profile?.image_prefs && typeof profile.image_prefs === 'object' ? profile.image_prefs : {};
-  return mergeImagePrefMaps(readLocal(profile), inMem);
+  if (!profile) return {};
+  const pid = String(profile.id || 'default');
+  const inMem = profile?.image_prefs && typeof profile.image_prefs === 'object' ? profile.image_prefs : null;
+  const cached = cachedMergedPrefs.get(pid);
+  if (cached && cached.inMem === inMem) {
+    return cached.merged;
+  }
+  const local = readLocal(profile);
+  const merged = mergeImagePrefMaps(local, inMem || {});
+  cachedMergedPrefs.set(pid, { inMem, merged });
+  return merged;
 }
 
 export function saveLocalImagePrefs(profile, prefs) {
   writeLocal(profile, prefs);
-  if (profile) profile.image_prefs = prefs;
+  if (profile) {
+    profile.image_prefs = prefs;
+    cachedMergedPrefs.set(String(profile.id || 'default'), { inMem: prefs, merged: prefs });
+  }
   return prefs;
 }
 
@@ -122,8 +141,7 @@ const tmdbAlias = (t) => {
 
 /**
  * Claves en las que puede estar guardada la elección de un título.
- * - Colecciones/sagas y series: SOLO su propio id y su alias TMDB tipado. Antes también leían las
- *   claves `canal:mensaje` de sus películas, por lo que la saga heredaba el cartel de cualquiera de ellas.
+ * - Colecciones/sagas y series: SOLO su propio id y su alias TMDB tipado.
  * - Películas: además las claves antiguas (`tmdb:<id>`, `<id>`) y las de sus archivos (versiones).
  */
 function candidateKeys(titleOrId) {
@@ -149,8 +167,14 @@ function candidateKeys(titleOrId) {
 
 function rawEntryFor(profile, titleOrId) {
   const all = readImagePrefs(profile);
+  if (!all || !Object.keys(all).length) return null;
+  const keys = candidateKeys(titleOrId);
   let res = null;
-  for (const k of candidateKeys(titleOrId)) res = mergeEntry(res, all[k]);
+  for (const k of keys) {
+    if (k in all) {
+      res = mergeEntry(res, all[k]);
+    }
+  }
   return res || { ts: {}, updated_at: 0 };
 }
 
@@ -158,6 +182,7 @@ function rawEntryFor(profile, titleOrId) {
 export function getImagePrefs(profile, titleOrId) {
   if (!profile || !titleOrId) return {};
   const e = rawEntryFor(profile, titleOrId);
+  if (!e) return {};
   const out = {};
   for (const k of KINDS) if (e[k]) out[k] = e[k];
   return out;
@@ -233,7 +258,9 @@ export function setImagePref(profile, title, kind, url, sync) {
 
   const local = readImagePrefs(profile);
   let current = null;
-  for (const k of candidateKeys(obj)) current = mergeEntry(current, local[k]);
+  for (const k of candidateKeys(obj)) {
+    if (k in local) current = mergeEntry(current, local[k]);
+  }
   const next = { ...(current || {}), ts: { ...(current?.ts || {}) } };
   next[kind] = url || '';        // '' = lápida: "restaurar original"
   next.ts[kind] = now;
@@ -258,6 +285,9 @@ function clearCustomFields(t, kind) {
 function applyToOne(t, profile) {
   if (!t || !profile) return false;
   const prefs = getImagePrefs(profile, t);
+  if (!prefs || !Object.keys(prefs).length) {
+    if (!t._origImages || !Object.keys(t._origImages).length) return false;
+  }
   let changed = false;
 
   for (const kind of KINDS) {

@@ -17,9 +17,9 @@ export function getCacheMaxMb() {
 export async function loadGlobalConfig(sync) {
   config = (await kv.get(KEY).catch(() => null)) || config;
   try {
-    const remote = await sync.pullGlobalConfig();
+    const remote = await sync.pullGlobalConfig({ ifDifferentThanMsgId: config._syncMessageId });
     if (remote && (remote.updated_at || 0) >= (config.updated_at || 0)) {
-      config = remote;
+      config = { ...config, ...remote, _syncMessageId: remote._syncMessageId || config._syncMessageId };
       await kv.set(KEY, config);
     }
   } catch (error) { console.warn('[config] No se pudo descargar configuración', error); }

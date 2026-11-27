@@ -1,8 +1,7 @@
 // src/sync/telegramSync.js
-// Sincronización bidireccional vía canal de Telegram (Perfiles::TGVideo::tgstorage)
 import { Api } from 'telegram';
-import { loadFavorites, mergeFavorites, loadProgress } from '../player/progress.js';
-import { readImagePrefs, mergeImagePrefMaps } from '../metadata/imagePrefs.js';
+import { loadFavorites, loadProgress } from '../player/progress.js';
+import { mergeImagePrefMaps, readImagePrefs } from '../metadata/imagePrefs.js';
 import { createImagePrefsSync } from './imagePrefsSync.js';
 
 const SYNC_CHANNEL_TITLE = 'Perfiles::TGVideo::tgstorage';
@@ -37,72 +36,64 @@ function saveStoredSyncChannel(channel) {
   } catch (_) {}
 }
 
-
 function nowTimestamp() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
-  return (
-    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_` +
-    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
-  );
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function normalizeName(name) {
-  if (!name || typeof name !== 'string') return '';
-  return name
+function normalizeName(str) {
+  return (str || '')
+    .toString()
+    .trim()
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9_-]/g, '_')
-    .slice(0, 32);
+    .replace(/[^a-z0-9_-]/g, '_');
 }
-/**
- * Parsea nombres de archivo de sincronización soportando timestamps de 14 dígitos
- * tanto continuos (YYYYMMDDHHMMSS) como con guion bajo (YYYYMMDD_HHMMSS) e IDs con guiones.
- */
-function parseSyncFilename(filename) {
-  if (!filename || typeof filename !== 'string' || !filename.endsWith('.json')) return null;
-  const name = filename.slice(0, -5);
 
-  if (name.startsWith('config_global_')) {
-    const rawTs = name.slice('config_global_'.length);
-    const timestamp = rawTs.replace(/\D/g, '');
-    return { kind: 'global', timestamp, rawTs, filename };
+function parseSyncFilename(name) {
+  const mGlobal = name.match(/^config_global_(\d{14})\.json$/);
+  if (mGlobal) {
+    return { kind: 'global', timestamp: mGlobal[1], filename: name };
   }
-
-  if (name.startsWith('metadata_overrides_')) {
-    const rawTs = name.slice('metadata_overrides_'.length);
-    const timestamp = rawTs.replace(/\D/g, '');
-    return { kind: 'overrides', timestamp, rawTs, filename };
+  const mOverrides = name.match(/^metadata_overrides_(\d{14})\.json$/);
+  if (mOverrides) {
+    return { kind: 'overrides', timestamp: mOverrides[1], filename: name };
   }
-
-  if (name.startsWith('perfil_') || name.startsWith('imgprefs_')) {
-    const kind = name.startsWith('imgprefs_') ? 'imgprefs' : 'profile';
-    const rest = name.slice(name.startsWith('imgprefs_') ? 'imgprefs_'.length : 'perfil_'.length);
-    // Timestamp al final: _YYYYMMDD_HHMMSS o _YYYYMMDDHHMMSS
-    const match = rest.match(/^(.*?)_(\d{8}_\d{6}|\d{14})$/);
-    if (match) {
-      const profileId = match[1];
-      const rawTs = match[2];
-      const timestamp = rawTs.replace(/\D/g, '');
-      return { kind, profileId, timestamp, rawTs, filename };
-    }
-    const lastUnderscore = rest.lastIndexOf('_');
-    if (lastUnderscore > 0) {
-      const profileId = rest.slice(0, lastUnderscore);
-      const rawTs = rest.slice(lastUnderscore + 1);
-      const timestamp = rawTs.replace(/\D/g, '');
-      return { kind, profileId, timestamp, rawTs, filename };
-    }
-    return { kind, profileId: rest, timestamp: '', rawTs: '', filename };
+  const mImg = name.match(/^imgprefs_([a-z0-9_-]+)_(\d{14})\.json$/i);
+  if (mImg) {
+    return {
+      kind: 'imgprefs',
+      profileId: mImg[1],
+      timestamp: mImg[2],
+      filename: name,
+    };
   }
-
+  const m = name.match(/^perfil_([a-z0-9_-]+)_(\d{14})\.json$/i);
+  if (m) {
+    return {
+      kind: 'profile',
+      profileId: m[1],
+      timestamp: m[2],
+      filename: name,
+    };
+  }
   return null;
+}
+
+function mergeFavorites(local = [], remote = []) {
+  const set = new Set(local);
+  for (const item of remote) {
+    set.add(item);
+  }
+  return [...set];
 }
 
 export function createTelegramSync({ getClient, peerOf }) {
   let cachedChannel = null;
   let pushTimer = null;
+  const docCache = new Map(); // messageId -> parsed json data
 
   async function findOrCreateSyncChannel() {
     if (cachedChannel && cachedChannel.id && cachedChannel.hash) return cachedChannel;
@@ -114,10 +105,11 @@ export function createTelegramSync({ getClient, peerOf }) {
     const client = await getClient();
 
     // 1. Buscar en diálogos activos
-    for await (const dialog of client.iterDialogs({})) {
-      const entity = dialog.entity;
+    const dialogs = await client.getDialogs({ limit: 100 });
+    for (const d of dialogs) {
+      const entity = d.entity;
       if (
-        entity?.className === 'Channel' &&
+        (entity?.className === 'Channel' || entity?.className === 'Chat') &&
         entity.title === SYNC_CHANNEL_TITLE
       ) {
         cachedChannel = {
@@ -130,37 +122,37 @@ export function createTelegramSync({ getClient, peerOf }) {
       }
     }
 
-    // 2. Buscar en archivados si no se encontró en activos
+    // 2. Si no está en los primeros 100, buscar por título
     try {
-      for await (const dialog of client.iterDialogs({ folder: 1 })) {
-        const entity = dialog.entity;
-        if (
-          entity?.className === 'Channel' &&
-          entity.title === SYNC_CHANNEL_TITLE
-        ) {
-          cachedChannel = {
-            id: String(entity.id),
-            hash: String(entity.accessHash),
-            title: entity.title,
-          };
-          return cachedChannel;
-        }
+      const searchRes = await client.invoke(
+        new Api.contacts.Search({ q: SYNC_CHANNEL_TITLE, limit: 10 })
+      );
+      const found = (searchRes.chats || []).find(
+        (c) => c.title === SYNC_CHANNEL_TITLE
+      );
+      if (found) {
+        cachedChannel = {
+          id: String(found.id),
+          hash: String(found.accessHash),
+          title: found.title,
+        };
+        saveStoredSyncChannel(cachedChannel);
+        return cachedChannel;
       }
-    } catch (_) {}
+    } catch (e) {
+      console.warn('[sync] Búsqueda de canal de sync falló', e);
+    }
 
-    // 3. Crear el canal si no existe
-    const created = await client.invoke(
+    // 3. Crear el canal privado si no existe
+    const res = await client.invoke(
       new Api.channels.CreateChannel({
         title: SYNC_CHANNEL_TITLE,
-        about: 'Almacenamiento de perfiles y progreso de TGVideo (no borrar)',
+        about: 'Canal de sincronización de perfiles y progreso de TGVideo (no eliminar)',
         broadcast: true,
         megagroup: false,
       })
     );
-
-    const chat = created.chats?.[0];
-    if (!chat) throw new Error('No se pudo crear el canal de sincronización');
-
+    const chat = res.chats?.[0];
     cachedChannel = {
       id: String(chat.id),
       hash: String(chat.accessHash),
@@ -229,9 +221,15 @@ export function createTelegramSync({ getClient, peerOf }) {
     return listFilesPromise;
   }
 
-  async function pullGlobalConfig() {
+  async function pullGlobalConfig({ ifDifferentThanMsgId = null } = {}) {
     const latest = (await listSyncFiles()).find((f) => f.kind === 'global');
     if (!latest) return null;
+    if (ifDifferentThanMsgId && latest.messageId === ifDifferentThanMsgId) {
+      return null;
+    }
+    if (docCache.has(latest.messageId)) {
+      return docCache.get(latest.messageId);
+    }
     const client = await getClient();
     const peer = peerOf(await findOrCreateSyncChannel());
     const [msg] = await client.getMessages(peer, { ids: [latest.messageId] });
@@ -239,6 +237,8 @@ export function createTelegramSync({ getClient, peerOf }) {
     const buffer = await client.downloadMedia(msg.media, {});
     const data = JSON.parse(new TextDecoder().decode(buffer));
     if (!data || typeof data !== 'object') return null;
+    data._syncMessageId = latest.messageId;
+    docCache.set(latest.messageId, data);
     return data;
   }
 
@@ -261,6 +261,11 @@ export function createTelegramSync({ getClient, peerOf }) {
         attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
       });
 
+      if (sentMsg?.id) {
+        snapshot._syncMessageId = sentMsg.id;
+        docCache.set(sentMsg.id, snapshot);
+      }
+
       // Conservar la versión recién subida y hasta 4 backups anteriores (5 en total)
       const oldGlobals = (await listSyncFiles()).filter(
         (f) => f.kind === 'global' && f.messageId !== sentMsg?.id
@@ -280,9 +285,15 @@ export function createTelegramSync({ getClient, peerOf }) {
     return task;
   }
 
-  async function pullMetadataOverrides() {
+  async function pullMetadataOverrides({ ifDifferentThanMsgId = null } = {}) {
     const latest = (await listSyncFiles()).find((f) => f.kind === 'overrides');
     if (!latest) return null;
+    if (ifDifferentThanMsgId && latest.messageId === ifDifferentThanMsgId) {
+      return null;
+    }
+    if (docCache.has(latest.messageId)) {
+      return docCache.get(latest.messageId);
+    }
     const client = await getClient();
     const peer = peerOf(await findOrCreateSyncChannel());
     const [msg] = await client.getMessages(peer, { ids: [latest.messageId] });
@@ -290,6 +301,8 @@ export function createTelegramSync({ getClient, peerOf }) {
     const buffer = await client.downloadMedia(msg.media, {});
     const data = JSON.parse(new TextDecoder().decode(buffer));
     if (!data || typeof data.overrides !== 'object') return null;
+    data._syncMessageId = latest.messageId;
+    docCache.set(latest.messageId, data);
     return data;
   }
 
@@ -311,6 +324,11 @@ export function createTelegramSync({ getClient, peerOf }) {
         forceDocument: true,
         attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
       });
+
+      if (sentMsg?.id) {
+        snapshot._syncMessageId = sentMsg.id;
+        docCache.set(sentMsg.id, snapshot);
+      }
 
       // Conservar la versión recién subida y hasta 4 backups anteriores (5 en total)
       const oldOverrides = (await listSyncFiles()).filter(
@@ -341,18 +359,73 @@ export function createTelegramSync({ getClient, peerOf }) {
       if (!byId.has(key)) byId.set(key, f);
     }
 
+    const cachedProfiles = getCachedProfiles() || [];
+    const cachedMap = new Map();
+    for (const p of cachedProfiles) {
+      if (p.id) cachedMap.set(normalizeName(p.id), p);
+    }
+
     const profiles = [];
     const client = await getClient();
     const ch = await findOrCreateSyncChannel();
     const peer = peerOf(ch);
 
     for (const f of byId.values()) {
+      const pKey = normalizeName(f.profileId);
+      const existing = cachedMap.get(pKey);
+
+      // Si ya tenemos este perfil en caché local con el MISMO messageId exacto,
+      // reutilizarlo de inmediato sin volver a descargarlo de Telegram
+      if (existing && existing.messageId === f.messageId) {
+        profiles.push(existing);
+        continue;
+      }
+
+      // Si ya se descargó en esta sesión:
+      if (docCache.has(f.messageId)) {
+        const data = docCache.get(f.messageId);
+        const pId = data.profile?.id || f.profileId;
+        if ((pId === 'perfil' || f.profileId === 'perfil') && (!data.profile || !data.profile.name || data.profile.name === 'perfil')) {
+          continue;
+        }
+        const storedMaxAge = typeof localStorage !== 'undefined' ? localStorage.getItem(`tgvideo_max_age_${pId}`) : null;
+        profiles.push({
+          id: pId,
+          name: data.profile?.name || f.profileId,
+          avatar: data.profile?.avatar || null,
+          age_limit: data.profile?.age_limit || 'TP',
+          maxAgeRating: data.profile?.maxAgeRating || storedMaxAge || 'all',
+          pin: data.profile?.pin || null,
+          is_kids: !!data.profile?.is_kids,
+          player:
+            data.profile?.player ||
+            (typeof localStorage !== 'undefined'
+              ? localStorage.getItem(`tgvideo_player_${data.profile?.id || f.profileId}`)
+              : null) ||
+            'artplayer',
+          skip_seconds:
+            data.profile?.skip_seconds ||
+            (typeof localStorage !== 'undefined'
+              ? Number(localStorage.getItem(`tgvideo_skip_${data.profile?.id || f.profileId}`))
+              : null) ||
+            10,
+          favorites: mergeFavorites(data.profile?.favorites || [], data.favorites || []),
+          image_prefs: mergeImagePrefMaps(data.image_prefs || {}, data.profile?.image_prefs || {}),
+          devices: data.profile?.devices || {},
+          ui_scale: data.profile?.ui_scale,
+          lastSync: f.timestamp,
+          messageId: f.messageId,
+        });
+        continue;
+      }
+
       try {
         const [msg] = await client.getMessages(peer, { ids: [f.messageId] });
         if (!msg?.media) continue;
         const buffer = await client.downloadMedia(msg.media, {});
         const text = new TextDecoder().decode(buffer);
         const data = JSON.parse(text);
+        docCache.set(f.messageId, data);
 
         const pId = data.profile?.id || f.profileId;
         // Filtrar y omitir perfiles fantasma huérfanos con ID o nombre 'perfil'
@@ -436,11 +509,34 @@ export function createTelegramSync({ getClient, peerOf }) {
     );
     if (!matching.length) return null;
 
+    const latest = matching[0];
+
+    if (docCache.has(latest.messageId)) {
+      const data = docCache.get(latest.messageId);
+      const remoteFavs = mergeFavorites(data.favorites || [], data.profile?.favorites || []);
+      const remoteImg = mergeImagePrefMaps(data.image_prefs || {}, data.profile?.image_prefs || {});
+      return {
+        ...data,
+        favorites: remoteFavs,
+        image_prefs: remoteImg,
+      };
+    }
+
+    const cachedProfiles = getCachedProfiles() || [];
+    const cached = cachedProfiles.find((p) => p.id === profileId || normalizeName(p.id) === norm);
+    if (cached && cached.messageId === latest.messageId) {
+      return {
+        profile: cached,
+        favorites: cached.favorites || [],
+        image_prefs: cached.image_prefs || {},
+        progress: typeof loadProgress === 'function' ? loadProgress(cached.id) : {},
+      };
+    }
+
     const client = await getClient();
     const ch = await findOrCreateSyncChannel();
     const peer = peerOf(ch);
 
-    const latest = matching[0];
     const msgs = await client.getMessages(peer, { ids: [latest.messageId] });
     const msg = msgs[0];
     if (!msg?.media) return null;
@@ -448,11 +544,10 @@ export function createTelegramSync({ getClient, peerOf }) {
     const buffer = await client.downloadMedia(msg.media, {});
     const text = new TextDecoder().decode(buffer);
     const data = JSON.parse(text);
+    docCache.set(latest.messageId, data);
 
-    let remoteFavs = mergeFavorites(data.favorites || [], data.profile?.favorites || []);
-    let remoteImg = mergeImagePrefMaps(data.image_prefs || {}, data.profile?.image_prefs || {});
-
-    // La versión más reciente ya contiene favoritos, progreso e imágenes fusionados de forma atómica
+    const remoteFavs = mergeFavorites(data.favorites || [], data.profile?.favorites || []);
+    const remoteImg = mergeImagePrefMaps(data.image_prefs || {}, data.profile?.image_prefs || {});
 
     return {
       ...data,
@@ -532,6 +627,36 @@ export function createTelegramSync({ getClient, peerOf }) {
         ],
       });
 
+      if (sentMsg?.id) {
+        docCache.set(sentMsg.id, snapshot);
+        if (typeof localStorage !== 'undefined') {
+          try {
+            const currentCached = getCachedProfiles() || [];
+            const idx = currentCached.findIndex((p) => p.id === pid || normalizeName(p.id) === pid);
+            const updatedEntry = {
+              id: pid,
+              name: snapshot.profile?.name || pid,
+              avatar: snapshot.profile?.avatar || null,
+              age_limit: snapshot.profile?.age_limit || 'TP',
+              maxAgeRating: snapshot.profile?.maxAgeRating || 'all',
+              pin: snapshot.profile?.pin || null,
+              is_kids: !!snapshot.profile?.is_kids,
+              player: snapshot.profile?.player || 'artplayer',
+              skip_seconds: snapshot.profile?.skip_seconds || 10,
+              favorites: currentFavs,
+              image_prefs: currentImg,
+              devices: snapshot.profile?.devices || {},
+              ui_scale: snapshot.profile?.ui_scale,
+              lastSync: nowTimestamp(),
+              messageId: sentMsg.id,
+            };
+            if (idx >= 0) currentCached[idx] = updatedEntry;
+            else currentCached.push(updatedEntry);
+            localStorage.setItem(CACHED_PROFILES_KEY, JSON.stringify(currentCached));
+          } catch (_) {}
+        }
+      }
+
       // Limpiar versiones antiguas dejando exactamente MAX_VERSIONS (1 activa + 4 backups = 5 total)
       const norm = normalizeName(profileId);
       const files = await listSyncFiles();
@@ -546,7 +671,6 @@ export function createTelegramSync({ getClient, peerOf }) {
       // EXCLUIR explícitamente el mensaje que acabamos de enviar para NUNCA borrarlo
       const older = mine.filter((f) => f.messageId !== sentMsg?.id);
       if (older.length >= MAX_VERSIONS) {
-        // Dejar MAX_VERSIONS - 1 copias anteriores (4 backups)
         const toDelete = older.slice(MAX_VERSIONS - 1);
         for (const f of toDelete) {
           try {

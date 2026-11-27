@@ -18,12 +18,19 @@ export function createImagePrefsSync({ getClient, peerOf, listSyncFiles, findOrC
     return f.kind === 'imgprefs' && (f.profileId === profileId || f.profileId === norm || normalizeName(f.profileId) === norm);
   };
 
+  const imgPrefsDocCache = new Map();
+
   async function readFile(client, peer, messageId) {
+    if (imgPrefsDocCache.has(messageId)) {
+      return imgPrefsDocCache.get(messageId);
+    }
     const [msg] = await client.getMessages(peer, { ids: [messageId] });
     if (!msg?.media) return null;
     const buffer = await client.downloadMedia(msg.media, {});
     const data = JSON.parse(new TextDecoder().decode(buffer));
-    return data && typeof data.image_prefs === 'object' ? data.image_prefs : null;
+    const prefs = data && typeof data.image_prefs === 'object' ? data.image_prefs : null;
+    if (prefs) imgPrefsDocCache.set(messageId, prefs);
+    return prefs;
   }
 
   /** Lee y fusiona las últimas versiones de imágenes del perfil. Devuelve {} si no hay ninguna. */
@@ -63,6 +70,10 @@ export function createImagePrefsSync({ getClient, peerOf, listSyncFiles, findOrC
         forceDocument: true,
         attributes: [new Api.DocumentAttributeFilename({ fileName: filename })],
       });
+
+      if (sent?.id) {
+        imgPrefsDocCache.set(sent.id, merged);
+      }
 
       const older = (await listSyncFiles()).filter((f) => sameProfile(f, profileId) && f.messageId !== sent?.id);
       if (older.length >= MAX_VERSIONS) {

@@ -1354,8 +1354,6 @@ async function showProfileSelector(tg, sync) {
             WAITING_USER_SCREEN = false;
           }
 
-          (TITLES_CACHE || []).forEach(t => applyImagePrefs(t, profile));
-
           if (isDevLogEnabled()) {
             startDevLogging({
               getClient: () => tg.getClient(),
