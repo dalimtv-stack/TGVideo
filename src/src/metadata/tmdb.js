@@ -1,0 +1,1071 @@
+// src/metadata/tmdb.js
+import { createKV } from "../core/kv.js";
+import { getTmdbKey } from "../settings/global.js";
+import { getOverride, getOverrideByTmdbId, setOverride, removeOverride } from "./overrides.js";
+const kv = createKV();
+const API = "https://api.themoviedb.org/3";
+const IMAGE = "https://image.tmdb.org/t/p/";
+
+const VALID_YEAR_RE = /(?:19\d{2}|20[0-2]\d|2030)/;
+
+export function extractTitleAndYear(name = "") {
+  let str = String(name || "").trim();
+  try { str = decodeURIComponent(str); } catch (_) {}
+
+  // 1. Quitar extensiones de vídeo
+  while (/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i.test(str)) {
+    str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, "").trim();
+  }
+
+  // 0. Eliminar prefijos numéricos iniciales tipo "15-", "1-", "01 -", respetando años como "2013 - ..." o "1984"
+  str = str.replace(/^\s*(?!(?:19\d{2}|20[0-3]\d)\s*[-_–—]\s*[a-zA-Z])\d{1,3}\s*[-_–—]\s*/, "");
+
+  // Reemplazar de entrada guiones bajos, "ª" y normalizar separadores
+  str = str.replace(/ª/g, " ");
+  str = str.replace(/[_]+/g, " ");
+
+  // 2. Extraer año explícito entre paréntesis o corchetes: (1996), [2026], etc.
+  let year = null;
+  const parenMatches = [...str.matchAll(/[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/g)];
+  if (parenMatches.length > 0) {
+    const lastMatch = parenMatches[parenMatches.length - 1];
+    year = lastMatch[1];
+    str = str.slice(0, lastMatch.index) + " " + str.slice(lastMatch.index + lastMatch[0].length);
+  }
+
+  // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis
+  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|\\d{3,4}x\\d{3,4}|\\d{3,4}p?x26[45]|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|cast|cas|latino|lat|spanish|spa|esp|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
+  const bracketQualityRe = new RegExp("\\[[^\\]]*" + qualityKw + "[^\\]]*\\]", "gi");
+  const parenQualityRe = new RegExp("\\([^\\)]*" + qualityKw + "[^\\)]*\\)", "gi");
+  str = str.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
+
+  // 4. Eliminar códigos de episodios: S01E02, 1x02, T7 C14, T01, E04, Temporada 3, capítulo 2, etc.
+  // Si está al INICIO: eliminar solo el prefijo del episodio para conservar el título que viene detrás (ej: 1x01 - Castle Rock, T7 C14 - Aida)
+  str = str.replace(/^\s*(?:[ST]\d{1,2}[\s,–—.:_-]*[EC]\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\b[\s,–—.:_-]*\d{1,2}[\s,–—.:_-]*(?:[EC]|ep|cap(?:[ií]tulo)?|ch(?:apter)?)?[\s,–—.:_-]*\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*\d{1,4})\s*[-–—:._]*\s*/i, " ");
+  // Si está en medio o al final: eliminar desde el código del episodio hasta el final
+  str = str.replace(/(?:[ST]\d{1,2}[\s,–—.:_-]*[EC]\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\b[\s,–—.:_-]*\d{1,2}[\s,–—.:_-]*(?:[EC]|ep|cap(?:[ií]tulo)?|ch(?:apter)?)?[\s,–—.:_-]*\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*\d{1,4}).*/i, " ");
+  str = str.replace(/\d{1,2}x\d{1,4}.*/i, " ");
+
+  // 5. Eliminar desde la primera palabra clave suelta de calidad hasta el final
+  const bareQualityRe = new RegExp(`\\b${qualityKw}\\b.*`, "i");
+  str = str.replace(bareQualityRe, " ");
+
+  // 6. Si aún no hay año entre paréntesis, buscar año suelto al FINAL del texto
+  if (!year) {
+    const trailingYearMatch = str.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
+    if (trailingYearMatch) {
+      const candidateTitle = str.slice(0, trailingYearMatch.index).trim();
+      if (candidateTitle.length > 1) {
+        year = trailingYearMatch[1];
+        str = candidateTitle;
+      }
+    }
+  }
+
+  // 6b. Si el año está al INICIO del texto (ej: "1987-ACCION-POCOBOR" o "1987 Pelicula")
+  if (!year) {
+    const leadingYearMatch = str.match(/^\s*((?:19\d{2}|20[0-3]\d))\s*[-_–—.\s]\s*(.*)$/);
+    if (leadingYearMatch && leadingYearMatch[2].trim()) {
+      year = leadingYearMatch[1];
+      str = leadingYearMatch[2].trim();
+    }
+  }
+
+  // 6c. Si aún no hay año, buscar si quedó un año (1900-2039) aislado dentro del texto
+  if (!year) {
+    const yearMatch = str.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
+    if (yearMatch) {
+      const candidateTitle = str.slice(0, yearMatch.index).trim();
+      if (candidateTitle.length > 1) {
+        year = yearMatch[1];
+        str = candidateTitle;
+      }
+    }
+  }
+
+  // 7. Limpiar corchetes o paréntesis residuales y espacios
+  str = str.replace(/\[[^\]]*\]/g, " ").replace(/\([^)]*\)/g, " ").replace(/[\[\]\(\)]/g, " ");
+
+  // 8. Normalizar separadores sin destruir puntos en siglas/abreviaturas como "L.A."
+  str = str.replace(/([a-zA-Z0-9]{2,})\.([a-zA-Z0-9]{2,})/g, "$1 $2");
+  str = str.replace(/[-–—\s.]+$/, "").replace(/^\s*[-–—.]+/, "").replace(/\s+/g, " ").trim();
+
+  return { title: str || name, year };
+}
+
+/**
+ * Extrae título y año del caption del mensaje (respaldo cuando el nombre de archivo no identifica).
+ * Formato habitual: "Taxi Driver (1976) Drama | Crimen. Película de culto\n\nSinopsis\n..."
+ * Devuelve una lista de candidatos { title, year } ordenados de más a menos fiable.
+ */
+// Telegram guarda los emojis personalizados (Premium) como un emoji "de respaldo" en el texto.
+// Los canales que escriben títulos con letras-emoji (🅰️, 🩸, 2️⃣…) producen texto ilegible
+// que no sirve como título. Se eliminan emojis, keycaps (2️⃣), banderas y modificadores.
+const KEYCAP_RE = /[0-9#*]\uFE0F?\u20E3/gu;
+const EMOJI_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}\uFE0E\uFE0F\u200D\u20E3]/gu;
+export function stripEmojiText(value = "") {
+  return String(value || "").replace(KEYCAP_RE, " ").replace(EMOJI_RE, " ").replace(/[ \t]+/g, " ").trim();
+}
+const countLetters = (value = "") => (String(value).match(/\p{L}/gu) || []).length;
+
+export function extractTitlesFromCaption(caption = "") {
+  const text = String(caption || "").replace(/\r/g, "");
+  if (!text.trim()) return [];
+  // Si la palabra Sinopsis/Synopsis está dentro del texto (incluso en la misma línea), cortamos a partir de ella
+  const cleanText = text.split(/\b(?:sinopsis|synopsis|argumento|resumen)\b/i)[0];
+  const skipLine = /^(sinopsis|synopsis|nombre de archivo|archivo|tmdb|imdb|puntuaci[oó]n|rating|secci[oó]n|g[eé]nero|duraci[oó]n|calidad|idioma|audio|subt[ií]tulos|resoluci[oó]n|codec|peso|tamano|tamaño|formato|temporada|episodio)\b/i;
+  const promoPattern = /(@\w+|https?:\/\/|t\.me\/|telegram\.me\/|\b(unete|[uú]nete|canal|grupo|vip|password|contrase[nñ]a|aporte|descarga|s[ií]guenos|link|enlace|compartido|colabora|donaciones|servidor)\b)/i;
+
+  const lines = cleanText.split("\n").map(l => stripEmojiText(l.replace(/[*_`~]+/g, "")).replace(/^[\s\p{Extended_Pictographic}🎬📽️🎞️▶️•·\-–—]+/u, "").trim()).filter(Boolean);
+  const out = [];
+  const push = (title, year) => {
+    const t = String(title || "").replace(/[\s.:;,|\-–—]+$/, "").replace(/^[\s.:;,|\-–—]+/, "").replace(/\s+/g, " ").trim();
+    if (t.length < 2 || t.length > 120) return;
+    if (countLetters(t) < 2) return; // Sin letras reales (solo emojis/símbolos): no es un título
+    if (promoPattern.test(t)) return; // Bloquear spam/promociones como nombres de películas
+    if (!out.some(o => o.title.toLowerCase() === t.toLowerCase() && o.year === (year || null))) out.push({ title: t, year: year || null });
+  };
+
+  // 1. Priorizar campos explícitos (ej: "Título: Inception (2010)" o "Nombre de archivo: Gladiator.mkv")
+  for (const line of lines) {
+    const mExplicit = line.match(/^(?:t[ií]tulo|pel[ií]cula|movie|nombre\s+de\s+archivo)\s*[:\-]\s*(.+)$/i);
+    if (mExplicit) {
+      const cand = mExplicit[1].trim();
+      const parsed = extractTitleAndYear(cand);
+      push(parsed.title, parsed.year);
+    }
+  }
+
+  // 2. Líneas generales evitando publicidad
+  for (const line of lines.slice(0, 4)) {
+    if (/^(sinopsis|synopsis|argumento|resumen)\b/i.test(line)) break;
+    if (skipLine.test(line) || promoPattern.test(line)) continue;
+    // 1) "Título (1976) ..." o "Título [1976] ..."
+    const m = line.match(/^(.+?)\s*[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/);
+    if (m) { push(m[1], m[2]); continue; }
+    // 2) "Título - 1976 ..." / "Título 1976 ..."
+    const m2 = line.match(/^(.+?)\s*[-–—]?\s+((?:19\d{2}|20[0-3]\d))\b/);
+    if (m2) { push(m2[1], m2[2]); continue; }
+    // 3) Solo si contiene año o no es puramente palabras técnicas
+    const seg = line.split(/\s+\|\s+|\.\s+|\s+[-–—]\s+/)[0];
+    const parsed = extractTitleAndYear(seg);
+    if (parsed.year || !/\b(1080p|720p|4k|dual|latino|castellano|dvdrip|x264|x265|hevc)\b/i.test(parsed.title)) {
+      push(parsed.title, parsed.year);
+    }
+  }
+  return out.slice(0, 4);
+}
+
+export function cleanSearchName(name = "") {
+  return extractTitleAndYear(name).title;
+}
+
+// Acepta solo un ID real: un número entero ("1562"), "movie:1562" / "tv/1399" o un enlace de themoviedb.org.
+// Un título que empieza por números ("28 semanas después", "300", "21 Jump Street") NO es un ID:
+// antes se tomaba el "28" inicial como TMDB #28 (Apocalypse Now).
+export function parseTmdbId(value) {
+  if (typeof value === "number") return Number.isInteger(value) && value > 0 ? value : null;
+  const str = String(value || "").trim();
+  if (!str) return null;
+  const url = str.match(/themoviedb\.org\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?(?:tv|movie|collection)\/(\d+)/i);
+  if (url) return Number(url[1]);
+  const plain = str.match(/^(?:(?:tv|movie|collection)[:/]\s*)?(\d+)$/i);
+  return plain ? Number(plain[1]) : null;
+}
+export function imageUrl(path, size = "w342") { return path?.startsWith("/") ? IMAGE + size + path : ""; }
+async function request(path, params = {}, signal) {
+  const key = getTmdbKey();
+  if (!key) throw new Error("Introduce tu clave de TMDB en Ajustes globales.");
+  const url = new URL(API + path);
+  if (!("language" in params)) {
+    url.searchParams.set("language", "es-ES");
+  }
+  for (const [name, value] of Object.entries(params)) {
+    if (value === null || value === undefined) {
+      url.searchParams.delete(name);
+    } else {
+      url.searchParams.set(name, value);
+    }
+  }
+  const headers = {};
+  if (key.includes(".")) headers.Authorization = `Bearer ${key}`;
+  else url.searchParams.set("api_key", key);
+  let attempts = 0;
+  while (attempts < 4) {
+    const response = await fetch(url, { headers, signal });
+    if (response.status === 429) {
+      attempts++;
+      const retryHeader = Number(response.headers.get("Retry-After"));
+      const waitSec = (!isNaN(retryHeader) && retryHeader > 0) ? retryHeader : attempts * 1.5;
+      console.warn(`[tmdb] Límite de peticiones alcanzado (429). Esperando ${waitSec}s antes de reintentar (intento ${attempts}/4)...`);
+      await new Promise(r => setTimeout(r, waitSec * 1000));
+      continue;
+    }
+    if (!response.ok) throw new Error(response.status === 401 ? "La clave de TMDB no es válida." : `TMDB no disponible (${response.status}).`);
+    return response.json();
+  }
+  throw new Error("TMDB no disponible (429: límite de peticiones excedido tras varios reintentos).");
+}
+// Imágenes disponibles en TMDB para un título: { poster: [...], backdrop: [...], logo: [...] }
+export async function fetchTmdbImages(type, id, signal) {
+  const endpoint = type === "collection" ? "collection" : (type === "serie" || type === "tv" ? "tv" : "movie");
+  const data = await request(`/${endpoint}/${id}/images`, { language: null }, signal);
+  const rank = (x) => (x.iso_639_1 === "es" ? 0 : x.iso_639_1 === "en" ? 1 : !x.iso_639_1 ? 2 : 3);
+  const build = (list = [], thumb, full) => [...list]
+    .sort((a, b) => rank(a) - rank(b) || (b.vote_average || 0) - (a.vote_average || 0) || (b.vote_count || 0) - (a.vote_count || 0))
+    .slice(0, 500)
+    .map((x) => ({
+      thumb: imageUrl(x.file_path, thumb),
+      url: imageUrl(x.file_path, full),
+      lang: x.iso_639_1 || "",
+      vote: x.vote_average || 0,
+      likes: x.vote_count || 0,
+    }));
+  return {
+    poster: build(data?.posters, "w185", "w500"),
+    backdrop: build(data?.backdrops, "w300", "w1280"),
+    logo: build(data?.logos, "w300", "w500"),
+  };
+}
+
+// Películas de una colección de TMDB (ordenadas por fecha de estreno)
+export async function fetchTmdbCollectionParts(collectionId, signal) {
+  if (!collectionId) return [];
+  try {
+    const data = await request(`/collection/${collectionId}`, {}, signal);
+    return (data.parts || [])
+      .map((p) => ({ id: p.id, name: p.title || p.name || "", date: p.release_date || "", poster: imageUrl(p.poster_path) }))
+      .sort((a, b) => String(a.date || "9999").localeCompare(String(b.date || "9999")));
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Obtiene en orden cronológico los tráilers de las películas que componen una colección de TMDB.
+ * @param {string|number} collectionId ID de la colección en TMDB.
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Array<{ key: string, id: number, name: string, date: string }>>}
+ */
+export async function fetchCollectionMovieTrailers(collectionId, signal) {
+  if (!collectionId) return [];
+  const parts = await fetchTmdbCollectionParts(collectionId, signal);
+  if (!parts || !parts.length) return [];
+
+  const list = await Promise.all(
+    parts.map(async (part) => {
+      try {
+        const key = await fetchTmdbTrailer("movie", part.id, signal);
+        if (!key) return null;
+        const year = part.date ? String(part.date).slice(0, 4) : "";
+        const titleWithYear = year && !part.name.includes(year) ? `${part.name} (${year})` : part.name;
+        return {
+          key,
+          id: part.id,
+          name: titleWithYear,
+          date: part.date || "",
+        };
+      } catch (_) {
+        return null;
+      }
+    })
+  );
+
+  return list.filter(Boolean);
+}
+
+export async function validateTmdbKey() { return request("/configuration"); }
+
+export async function fetchExternalIds(type, id, signal) {
+  if (!id) return null;
+  const endpoint = (type === "serie" || type === "tv") ? "tv" : "movie";
+  try {
+    return await request(`/${endpoint}/${id}/external_ids`, {}, signal);
+  } catch (_) {
+    return null;
+  }
+}
+
+export async function fetchTvExternalIds(tvId, signal) {
+  return fetchExternalIds("tv", tvId, signal);
+}
+
+const imdbMemoryCache = new Map();
+
+function withTimeoutSignal(parentSignal, ms = 3500) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      clearTimeout(timer);
+      ctrl.abort();
+    } else {
+      parentSignal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        ctrl.abort();
+      }, { once: true });
+    }
+  }
+  return ctrl.signal;
+}
+
+/**
+ * Obtiene la puntuación pública oficial de IMDb por su ID (ej: "tt0111161").
+ * Utiliza caché en memoria y KV, proxy público de Agregarr y fallback a Cinemeta.
+ * @param {string} imdbId
+ * @param {string} [type="movie"]
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<number|null>}
+ */
+export async function fetchImdbRating(imdbId, type = "movie", signal) {
+  if (!imdbId) return null;
+  const rawId = String(imdbId).trim();
+  const id = rawId.startsWith("tt") ? rawId : `tt${rawId}`;
+  if (imdbMemoryCache.has(id)) {
+    return imdbMemoryCache.get(id);
+  }
+  const cacheKey = `imdb_rating:${id}`;
+  try {
+    const cached = await kv.get(cacheKey).catch(() => null);
+    if (cached != null && Number.isFinite(Number(cached)) && Number(cached) > 0) {
+      const val = Number(cached);
+      imdbMemoryCache.set(id, val);
+      return val;
+    }
+  } catch (_) {}
+
+  const reqSignal = withTimeoutSignal(signal, 3500);
+
+  // 1. Agregarr (proxy de ratings públicos oficiales de IMDb actualizados a diario)
+  try {
+    const res = await fetch(`https://api.agregarr.org/api/ratings?id=${encodeURIComponent(id)}`, {
+      signal: reqSignal,
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const item = Array.isArray(data) ? data[0] : data;
+      const score = item?.rating != null ? Number(item.rating) : null;
+      if (score != null && Number.isFinite(score) && score > 0) {
+        imdbMemoryCache.set(id, score);
+        await kv.set(cacheKey, score).catch(() => {});
+        return score;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Cinemeta (catálogo público de metadatos de Stremio indexado por IMDb ID)
+  try {
+    const stremType = (type === "serie" || type === "tv" || type === "series") ? "series" : "movie";
+    const res = await fetch(`https://v3-cinemeta.strem.io/meta/${stremType}/${encodeURIComponent(id)}.json`, {
+      signal: reqSignal,
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const score = data?.meta?.imdbRating != null ? Number(data.meta.imdbRating) : null;
+      if (score != null && Number.isFinite(score) && score > 0) {
+        imdbMemoryCache.set(id, score);
+        await kv.set(cacheKey, score).catch(() => {});
+        return score;
+      }
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+export async function fetchTmdbTrailer(type, id, signal) {
+  if (!id) return null;
+  if (type === "collection") {
+    const trailers = await fetchCollectionMovieTrailers(id, signal);
+    return trailers[0]?.key || null;
+  }
+  const endpoint = type === "serie" || type === "tv" ? "tv" : "movie";
+  try {
+    const dataEs = await request(`/${endpoint}/${id}/videos`, {}, signal);
+    const results = dataEs.results || [];
+    let vid = results.find(v => v.site === "YouTube" && v.type === "Trailer")
+      || results.find(v => v.site === "YouTube" && (v.type === "Teaser" || v.type === "Clip"));
+    if (vid?.key) return vid.key;
+
+    const dataEn = await request(`/${endpoint}/${id}/videos`, { language: "en-US" }, signal);
+    const resultsEn = dataEn.results || [];
+    vid = resultsEn.find(v => v.site === "YouTube" && v.type === "Trailer")
+      || resultsEn.find(v => v.site === "YouTube" && (v.type === "Teaser" || v.type === "Clip"));
+    return vid?.key || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+const normalize = s => String(s || "")
+  .replace(/ñ/g, "n").replace(/Ñ/g, "N")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]/g, "");
+
+export async function setManualMetadata(title, metadata) {
+  if (!title || !metadata) return null;
+  const key = `manual_tmdb:${title.id}`;
+  await kv.set(key, metadata).catch(e => console.warn("[tmdb] Error guardando identificación manual", e));
+  // Sincronizar con otros dispositivos (sirve también para mensajes reenviados)
+  await setOverride(title.id, metadata).catch(e => console.warn("[tmdb] Error guardando override", e));
+  title.metadata = metadata;
+  title.tmdbId = metadata.id;
+  return metadata;
+}
+
+export async function clearManualMetadata(title) {
+  if (!title) return;
+  const key = `manual_tmdb:${title.id}`;
+  await kv.del(key).catch(() => {});
+  await removeOverride(title.id).catch(() => {});
+  title.metadata = null;
+  title.tmdbId = null;
+}
+
+export function parseAgeRatingFromTmdb(data, type) {
+  if (!data) return "";
+  const isTv = type === "tv" || type === "serie";
+  if (!isTv && data.release_dates) {
+    const results = data.release_dates?.results || [];
+    const es = results.find(r => String(r.iso_3166_1 || '').toUpperCase() === "ES");
+    const esCert = es?.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
+    if (esCert) return String(esCert).trim();
+
+    const latam = results.find(r => ["MX", "AR", "CO", "CL"].includes(String(r.iso_3166_1 || '').toUpperCase()));
+    const latamCert = latam?.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
+    if (latamCert) return String(latamCert).trim();
+
+    const usOrGb = results.find(r => ["US", "GB"].includes(String(r.iso_3166_1 || '').toUpperCase()));
+    const usCert = usOrGb?.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
+    if (usCert) return String(usCert).trim();
+
+    for (const r of results) {
+      const anyCert = r.release_dates?.find(d => d.certification && String(d.certification).trim())?.certification;
+      if (anyCert) return String(anyCert).trim();
+    }
+
+    // Si existen estrenos o fecha pero ninguna entidad asignó certificado, en TMDB se muestra "NR"
+    if (results.length > 0 || data.release_date) {
+      return "NR";
+    }
+  } else if (data.content_ratings) {
+    const results = data.content_ratings?.results || [];
+    const es = results.find(r => String(r.iso_3166_1 || '').toUpperCase() === "ES");
+    if (es?.rating && String(es.rating).trim()) return String(es.rating).trim();
+
+    const latam = results.find(r => ["MX", "AR", "CO", "CL"].includes(String(r.iso_3166_1 || '').toUpperCase()));
+    if (latam?.rating && String(latam.rating).trim()) return String(latam.rating).trim();
+
+    const usOrGb = results.find(r => ["US", "GB"].includes(String(r.iso_3166_1 || '').toUpperCase()));
+    if (usOrGb?.rating && String(usOrGb.rating).trim()) return String(usOrGb.rating).trim();
+
+    for (const r of results) {
+      if (r.rating && String(r.rating).trim()) return String(r.rating).trim();
+    }
+
+    if (results.length > 0 || data.first_air_date) {
+      return "NR";
+    }
+  }
+  return "";
+}
+
+export async function fetchTmdbAgeRating(type, id, signal) {
+  if (!id || !getTmdbKey()) return "";
+  const endpoint = type === "serie" || type === "tv" ? "tv" : "movie";
+  const append = endpoint === "tv" ? "content_ratings" : "release_dates";
+  try {
+    const data = await request(`/${endpoint}/${id}`, { append_to_response: append }, signal);
+    return parseAgeRatingFromTmdb(data, endpoint);
+  } catch (_) {
+    return "";
+  }
+}
+
+export async function fetchTmdbFullDetails(type, id, signal) {
+  const endpoint = type === "collection" ? "collection" : (type === "serie" || type === "tv" ? "tv" : "movie");
+  if (endpoint === "collection") return {};
+  const append = endpoint === "tv" ? "credits,external_ids,content_ratings" : "credits,external_ids,release_dates";
+  try {
+    const data = await request(`/${endpoint}/${id}`, { append_to_response: append }, signal);
+    const crew = data.credits?.crew || [];
+    const director = crew.find(c => c.job === "Director")?.name || "";
+    const writer = crew.find(c => c.job === "Screenplay" || c.job === "Writer" || c.job === "Story")?.name || "";
+    const cast = (data.credits?.cast || []).slice(0, 5).map(c => c.name).join(", ");
+    const imdbId = data.external_ids?.imdb_id || data.imdb_id || "";
+    const ageRating = parseAgeRatingFromTmdb(data, endpoint);
+    const col = data.belongs_to_collection;
+    const collection = col ? {
+      id: col.id,
+      name: col.name,
+      poster: imageUrl(col.poster_path),
+      backdrop: imageUrl(col.backdrop_path, "w1280"),
+    } : null;
+    let rating = data.vote_average != null ? Number(data.vote_average) : 0;
+    let imdbRating = null;
+    let tmdbRating = rating;
+    let hasImdbRating = false;
+    if (imdbId) {
+      const imdbR = await fetchImdbRating(imdbId, endpoint, signal).catch(() => null);
+      if (imdbR && Number.isFinite(imdbR) && imdbR > 0) {
+        rating = imdbR;
+        imdbRating = imdbR;
+        hasImdbRating = true;
+      }
+    }
+    return {
+      director,
+      writer,
+      cast,
+      imdbId,
+      ageRating,
+      rating,
+      imdbRating,
+      tmdbRating,
+      hasImdbRating,
+      overview: data.overview || "",
+      runtime: data.runtime || 0,
+      collection,
+    };
+
+  } catch (e) {
+    console.warn("[tmdb] Error fetching full details:", e);
+    return {};
+  }
+}
+
+
+async function searchTmdbCandidates(type, query, year, signal) {
+  if (!query || !query.trim()) return null;
+  const q = query.trim();
+  if (/^serie\s+desconocida/i.test(q) || /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|video|file|input|\d+)$/i.test(q)) {
+    return null;
+  }
+
+  const trySearch = async (searchQuery, searchYear) => {
+    if (!searchQuery || !searchQuery.trim()) return null;
+    const cleanQ = searchQuery.trim();
+    const params = { query: cleanQ };
+    if (searchYear && type !== "collection") {
+      params[type === "tv" ? "first_air_date_year" : "year"] = String(searchYear).trim();
+    }
+    let res = await request(`/search/${type}`, params, signal).catch(() => null);
+    if ((!res?.results || res.results.length === 0) && searchYear && type !== "collection") {
+      res = await request(`/search/${type}`, { query: cleanQ }, signal).catch(() => null);
+    }
+    if (!res?.results || res.results.length === 0) {
+      const unaccented = cleanQ.replace(/ñ/g, "n").replace(/Ñ/g, "N").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      if (unaccented && unaccented.toLowerCase() !== cleanQ.toLowerCase()) {
+        res = await request(`/search/${type}`, { query: unaccented }, signal).catch(() => null);
+      }
+    }
+    if (!res?.results || res.results.length === 0) return null;
+    const match = res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(cleanQ)))
+      || res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && (normalize(n).includes(normalize(cleanQ)) || normalize(cleanQ).includes(normalize(n)))));
+    if (match) return match.id || null;
+
+    if (cleanQ.length >= 3 && !/^(?:serie|video|file|\d+)$/i.test(cleanQ)) {
+      const words = cleanQ.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+      const first = res.results[0];
+      const firstNames = [first.name, first.title, first.original_name, first.original_title].filter(Boolean).map(s => s.toLowerCase());
+      const hasWordMatch = words.some(w => firstNames.some(fn => fn.includes(w)));
+      if (hasWordMatch || res.results.length === 1) {
+        return first.id || null;
+      }
+    }
+    return null;
+  };
+
+  // 1. Intento original con el término extraído
+  let matchId = await trySearch(q, year);
+  if (matchId) return matchId;
+
+  let currentQuery = q;
+  let currentYear = year;
+
+  // 2. Si no encuentra nada en TMDB, probar eliminando palabras que comiencen por ".@" o "@"
+  const hasAt = /(?:^|\s)\.?@\S+/.test(currentQuery);
+  if (hasAt) {
+    const queryWithoutAt = currentQuery.replace(/(?:^|\s)\.?@\S+/g, " ").replace(/\s+/g, " ").trim();
+    if (queryWithoutAt && queryWithoutAt !== currentQuery) {
+      currentQuery = queryWithoutAt;
+      matchId = await trySearch(currentQuery, currentYear);
+      if (matchId) return matchId;
+    }
+  }
+
+  // 3. Si no detecta nada, probamos a quitarle al final del nombre HD, FHD y similares
+  const trailingQualityRe = /[\s._-]+(?:fhd|hd|uhd|[248]k|sd|hq|microhd|hdrip|webrip|bdrip|brrip|dvdrip|remux)\s*$/i;
+  if (trailingQualityRe.test(currentQuery)) {
+    const queryWithoutQuality = currentQuery.replace(trailingQualityRe, "").trim();
+    if (queryWithoutQuality && queryWithoutQuality !== currentQuery) {
+      matchId = await trySearch(queryWithoutQuality, currentYear);
+      if (matchId) return matchId;
+      matchId = await trySearch(queryWithoutQuality, null);
+      if (matchId) return matchId;
+      currentQuery = queryWithoutQuality;
+    }
+  }
+
+  // 4. Si aún no se encuentra nada, se prueba a eliminar la última palabra si es un año (ej: 1966)
+  const trailingYearMatch = currentQuery.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
+  if (trailingYearMatch) {
+    const candidateYear = trailingYearMatch[1];
+    const candidateTitle = currentQuery.slice(0, trailingYearMatch.index).trim();
+    if (candidateTitle.length >= 1) {
+      const effectiveYear = currentYear || candidateYear;
+      matchId = await trySearch(candidateTitle, effectiveYear);
+      if (matchId) return matchId;
+      // Probar también el título limpio sin filtrar por año
+      matchId = await trySearch(candidateTitle, null);
+      if (matchId) return matchId;
+      currentQuery = candidateTitle;
+    }
+  }
+
+  // 5. Intento final con el título actual sin restricción de año
+  if (currentYear) {
+    matchId = await trySearch(currentQuery, null);
+    if (matchId) return matchId;
+  }
+
+  return null;
+}
+
+// Búsquedas por caption fallidas en esta sesión (evita repetirlas en cada recarga de pestaña)
+const CAPTION_MISS = new Set();
+
+async function searchByCaptions(type, title, alreadyTried, signal) {
+  if (title?.isUnknownSeries || /^serie\s+desconocida/i.test(title?.nombre || '')) {
+    return null;
+  }
+  const captions = [...new Set((title.archivos || []).map(f => f.rawCaption || f.caption).filter(c => c && c.trim()))].slice(0, 5);
+  for (const caption of captions) {
+    const cands = extractTitlesFromCaption(caption);
+    for (const cand of cands) {
+      const key = `${type}:${cand.title.toLowerCase()}:${cand.year || ""}`;
+      if (CAPTION_MISS.has(key)) continue;
+      if (cand.title.toLowerCase() === String(alreadyTried || "").toLowerCase() && !cand.year) continue;
+      console.log(`[tmdb] Probando identificación por caption para "${title.nombre}": "${cand.title}"${cand.year ? ` (${cand.year})` : ""}`);
+      const id = await searchTmdbCandidates(type, cand.title, cand.year, signal).catch(() => null);
+      if (id) {
+        console.log(`[tmdb] ¡Identificado con éxito por caption!: "${title.nombre}" → "${cand.title}"${cand.year ? ` (${cand.year})` : ""} = ${id}`);
+        return id;
+      }
+      CAPTION_MISS.add(key);
+    }
+  }
+  return null;
+}
+
+export async function searchTmdbManual(input, signal) {
+  let query = "";
+  let type = "movie";
+  let year = "";
+  let directId = null;
+
+  if (typeof input === "string") {
+    query = input;
+    type = (typeof arguments[1] === "string" ? arguments[1] : null) || "movie";
+    year = (typeof arguments[2] === "string" ? arguments[2] : null) || "";
+    directId = arguments[3] || null;
+  } else if (input && typeof input === "object") {
+    query = input.query || "";
+    type = input.type || "movie";
+    year = input.year || "";
+    directId = input.directId || null;
+  }
+
+  // Si la búsqueda es un número puro o un ID/enlace directo a TMDB, tratarlo como directId
+  if (!directId) {
+    const rawTrimmed = String(query || "").trim();
+    if (/^\d+$/.test(rawTrimmed)) {
+      directId = rawTrimmed;
+    } else {
+      directId = parseTmdbId(rawTrimmed);
+    }
+  }
+
+  const endpoint = type === "collection" ? "collection" : type === "serie" || type === "tv" ? "tv" : "movie";
+  const id = parseTmdbId(directId);
+  if (id) {
+    const data = await request(`/${endpoint}/${id}`, {}, signal);
+    const col = data.belongs_to_collection;
+    const collection = col ? {
+      id: col.id,
+      name: col.name,
+      poster: imageUrl(col.poster_path),
+      backdrop: imageUrl(col.backdrop_path, "w1280"),
+    } : null;
+    return [{
+      id: data.id,
+      type: endpoint,
+      name: data.name || data.title,
+      overview: data.overview || "",
+      date: data.first_air_date || data.release_date || "",
+      poster: imageUrl(data.poster_path),
+      backdrop: imageUrl(data.backdrop_path, "w1280"),
+      rating: data.vote_average || 0,
+      collection,
+    }];
+  }
+
+  const parsed = extractTitleAndYear(query);
+  const q = String(parsed.title || query || "").trim();
+  const searchYear = String(year || parsed.year || "").trim();
+
+  if (!q) return [];
+  const params = { query: q };
+  if (searchYear && endpoint !== "collection") {
+    params[endpoint === "tv" ? "first_air_date_year" : "year"] = searchYear;
+  }
+  let search = await request(`/search/${endpoint}`, params, signal);
+  if ((!search.results || search.results.length === 0) && searchYear && endpoint !== "collection") {
+    search = await request(`/search/${endpoint}`, { query: q }, signal).catch(() => search);
+  }
+
+  // Fallback si contiene caracteres especiales o "ñ": probar búsqueda transliterada
+  if (!search.results || search.results.length === 0) {
+    const unaccented = q
+      .replace(/ñ/g, "n").replace(/Ñ/g, "N")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    if (unaccented && unaccented.toLowerCase() !== q.toLowerCase()) {
+      search = await request(`/search/${endpoint}`, { query: unaccented }, signal).catch(() => search);
+    }
+  }
+
+  // Fallback autoidentificación: primero eliminar palabras que comiencen por "@"
+  if (!search.results || search.results.length === 0) {
+    if (/(?:^|\s)@\S+/.test(q)) {
+      const qNoAt = q.replace(/(?:^|\s)@\S+/g, " ").replace(/\s+/g, " ").trim();
+      if (qNoAt && qNoAt !== q) {
+        const p2 = { query: qNoAt };
+        if (searchYear && endpoint !== "collection") p2[endpoint === "tv" ? "first_air_date_year" : "year"] = searchYear;
+        search = await request(`/search/${endpoint}`, p2, signal).catch(() => search);
+        if ((!search.results || search.results.length === 0) && searchYear && endpoint !== "collection") {
+          search = await request(`/search/${endpoint}`, { query: qNoAt }, signal).catch(() => search);
+        }
+      }
+    }
+  }
+
+  // Si no hay "@" o no se encuentra nada: eliminar la última palabra si es un año (ej: 1966)
+  if (!search.results || search.results.length === 0) {
+    const candidateQ = q.replace(/(?:^|\s)@\S+/g, " ").replace(/\s+/g, " ").trim();
+    const trailingYearMatch = candidateQ.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
+    if (trailingYearMatch) {
+      const candidateYear = trailingYearMatch[1];
+      const qNoYear = candidateQ.slice(0, trailingYearMatch.index).trim();
+      if (qNoYear.length >= 1) {
+        const effectiveYear = searchYear || candidateYear;
+        const p3 = { query: qNoYear };
+        if (effectiveYear && endpoint !== "collection") p3[endpoint === "tv" ? "first_air_date_year" : "year"] = effectiveYear;
+        search = await request(`/search/${endpoint}`, p3, signal).catch(() => search);
+        if ((!search.results || search.results.length === 0) && effectiveYear && endpoint !== "collection") {
+          search = await request(`/search/${endpoint}`, { query: qNoYear }, signal).catch(() => search);
+        }
+      }
+    }
+  }
+
+  return (search.results || []).slice(0, 10).map(r => ({
+    id: r.id,
+    type: endpoint,
+    name: r.name || r.title,
+    overview: r.overview || "",
+    date: r.first_air_date || r.release_date || "",
+    poster: imageUrl(r.poster_path),
+    backdrop: imageUrl(r.backdrop_path, "w1280"),
+    rating: r.vote_average || 0,
+  }));
+}
+
+async function enrichSaga(title, { signal } = {}) {
+  const ov = getOverride(title.id);
+  if (ov) { title.metadata = ov; title.tmdbId = ov.id; return ov; }
+  const byTmdb = title.tmdbId ? getOverrideByTmdbId(title.tmdbId) : null;
+  if (byTmdb) { title.metadata = byTmdb; title.tmdbId = byTmdb.id; return byTmdb; }
+  const manual = await kv.get(`manual_tmdb:${title.id}`).catch(() => null);
+  if (manual) { title.metadata = manual; title.tmdbId = manual.id; return manual; }
+
+  const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
+  const query = cleanSearchName(title.nombre);
+  const cacheKey = `tmdb_v2:collection:${directId || query.toLowerCase()}`;
+  const cached = await kv.get(cacheKey).catch(() => null);
+  if (cached) { title.metadata = cached; return cached; }
+  if (!getTmdbKey()) return null;
+  let data;
+  if (directId) data = await request(`/collection/${directId}`, {}, signal);
+  else {
+    const matchId = await searchTmdbCandidates("collection", query, null, signal);
+    if (!matchId) return null;
+    data = await request(`/collection/${matchId}`, {}, signal);
+  }
+  const metadata = {
+    id: data.id, type: "collection", name: data.name || title.nombre,
+    overview: data.overview || "", poster: imageUrl(data.poster_path),
+    backdrop: imageUrl(data.backdrop_path, "w1280"),
+  };
+  await kv.set(cacheKey, metadata).catch(error => console.warn("[tmdb] Caché no disponible", error));
+  title.metadata = metadata;
+  return metadata;
+}
+
+export async function enrichTitle(title, { signal } = {}) {
+  if (!["pelicula", "serie"].includes(title?.tipo)) return null;
+  if (title.isUnknownSeries || /^serie\s+desconocida/i.test(title.nombre || '') || /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|\d+)$/i.test((title.nombre || '').trim())) {
+    const ov = getOverride(title.id);
+    if (!ov) return null;
+  }
+  const ov = getOverride(title.id);
+  if (ov) {
+    if (ov.id && !ov.ageRating && getTmdbKey()) {
+      fetchTmdbAgeRating(title.tipo === "serie" ? "tv" : "movie", ov.id, signal).then(rating => {
+        if (rating) {
+          ov.ageRating = rating;
+          setOverride(title.id, ov).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    if (title.tipo === "pelicula" && ov.id && ov.collection === undefined && getTmdbKey()) {
+      fetchTmdbFullDetails("movie", ov.id, signal).then(full => {
+        if (full?.collection !== undefined) {
+          ov.collection = full.collection;
+          if (full?.ageRating && !ov.ageRating) ov.ageRating = full.ageRating;
+          setOverride(title.id, ov).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    const ovImdbId = ov.imdbId || title.imdbId;
+    if (ovImdbId && !ov.hasImdbRating) {
+      fetchImdbRating(ovImdbId, title.tipo === "serie" ? "tv" : "movie", signal).then(r => {
+        if (r && Number.isFinite(r) && r > 0) {
+          if (!ov.tmdbRating && ov.rating && ov.rating !== r) ov.tmdbRating = ov.rating;
+          ov.imdbId = ovImdbId;
+          ov.rating = r;
+          ov.imdbRating = r;
+          ov.hasImdbRating = true;
+          setOverride(title.id, ov).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    title.metadata = ov; title.tmdbId = ov.id; return ov;
+  }
+  // Reenvío u otro mensaje: mismo TMDB en caption o ya conocido
+  const byTmdb = title.tmdbId ? getOverrideByTmdbId(title.tmdbId) : null;
+  if (byTmdb) {
+    if (byTmdb.id && !byTmdb.ageRating && getTmdbKey()) {
+      fetchTmdbAgeRating(title.tipo === "serie" ? "tv" : "movie", byTmdb.id, signal).then(rating => {
+        if (rating) {
+          byTmdb.ageRating = rating;
+          setOverride(title.id, byTmdb).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    if (title.tipo === "pelicula" && byTmdb.id && byTmdb.collection === undefined && getTmdbKey()) {
+      fetchTmdbFullDetails("movie", byTmdb.id, signal).then(full => {
+        if (full?.collection !== undefined) {
+          byTmdb.collection = full.collection;
+          if (full?.ageRating && !byTmdb.ageRating) byTmdb.ageRating = full.ageRating;
+          setOverride(title.id, byTmdb).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    title.metadata = byTmdb; title.tmdbId = byTmdb.id; return byTmdb;
+  }
+  const manual = await kv.get(`manual_tmdb:${title.id}`).catch(() => null);
+  if (manual) {
+    if (manual.id && !manual.ageRating && getTmdbKey()) {
+      fetchTmdbAgeRating(title.tipo === "serie" ? "tv" : "movie", manual.id, signal).then(rating => {
+        if (rating) {
+          manual.ageRating = rating;
+          setManualMetadata(title, manual).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    if (title.tipo === "pelicula" && manual.id && manual.collection === undefined && getTmdbKey()) {
+      fetchTmdbFullDetails("movie", manual.id, signal).then(full => {
+        if (full?.collection !== undefined) {
+          manual.collection = full.collection;
+          if (full?.ageRating && !manual.ageRating) manual.ageRating = full.ageRating;
+          setManualMetadata(title, manual).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+    title.metadata = manual; title.tmdbId = manual.id; return manual;
+  }
+
+  if (title.isSaga) return enrichSaga(title, { signal });
+  const type = title.tipo === "serie" ? "tv" : "movie";
+  const directId = parseTmdbId(title.tmdbId || title.archivos.find(f => f.tmdbId)?.tmdbId);
+  const parsed = extractTitleAndYear(title.nombre);
+  const query = parsed.title;
+  // Priorizar siempre el año explícito entre paréntesis extraído inicialmente en yearHint
+  const year = title.yearHint || parsed.year;
+  const cacheKey = `tmdb_v2:${type}:${directId || `${query.toLowerCase()}:${year || ""}`}`;
+  const cached = await kv.get(cacheKey).catch(() => null);
+  if (cached) {
+    if (type === "movie" && cached.id && cached.collection === undefined && getTmdbKey()) {
+      try {
+        const full = await fetchTmdbFullDetails("movie", cached.id, signal);
+        cached.collection = full?.collection || null;
+        if (full?.ageRating && !cached.ageRating) {
+          cached.ageRating = full.ageRating;
+        }
+        await kv.set(cacheKey, cached).catch(() => {});
+      } catch (_) {}
+    } else if (cached.id && !cached.ageRating && getTmdbKey()) {
+      fetchTmdbAgeRating(type, cached.id, signal).then(rating => {
+        if (rating) {
+          cached.ageRating = rating;
+          title.metadata = cached;
+          kv.set(cacheKey, cached).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
+    // Asegurar puntuación de IMDb en segundo plano para no bloquear la biblioteca
+    const effectiveImdbId = cached.imdbId || title.imdbId;
+    if (effectiveImdbId && !cached.hasImdbRating) {
+      fetchImdbRating(effectiveImdbId, type, signal).then(r => {
+        if (r && Number.isFinite(r) && r > 0) {
+          if (!cached.tmdbRating && cached.rating && cached.rating !== r) cached.tmdbRating = cached.rating;
+          cached.imdbId = effectiveImdbId;
+          cached.rating = r;
+          cached.imdbRating = r;
+          cached.hasImdbRating = true;
+          kv.set(cacheKey, cached).catch(() => {});
+        }
+      }).catch(() => {});
+    } else if (!cached.hasImdbRating && cached.id && getTmdbKey()) {
+      fetchExternalIds(type, cached.id, signal).then(async ext => {
+        const iId = ext?.imdb_id;
+        if (iId) {
+          cached.imdbId = iId;
+          const r = await fetchImdbRating(iId, type, signal).catch(() => null);
+          if (r && Number.isFinite(r) && r > 0) {
+            if (!cached.tmdbRating && cached.rating && cached.rating !== r) cached.tmdbRating = cached.rating;
+            cached.rating = r;
+            cached.imdbRating = r;
+            cached.hasImdbRating = true;
+          }
+          kv.set(cacheKey, cached).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
+    title.metadata = cached;
+    return cached;
+  }
+  if (!getTmdbKey()) return null;
+  let id = directId;
+  if (!id) {
+    id = await searchTmdbCandidates(type, query, year, signal);
+  }
+  if (!id) {
+    // Respaldo: probar con el caption de los mensajes (p. ej. "Taxi Driver (1976) Drama | Crimen…")
+    id = await searchByCaptions(type, title, query, signal);
+  }
+  if (!id) {
+    console.log(`[tmdb] Sin identificar: "${title.nombre}" (búsqueda "${query}"${year ? ` ${year}` : ""})`);
+    return null;
+  }
+  const append = type === "tv" ? "content_ratings,external_ids" : "release_dates,external_ids";
+  const data = await request(`/${type}/${id}`, { append_to_response: append }, signal);
+  const ageRating = parseAgeRatingFromTmdb(data, type);
+  const imdbId = data.external_ids?.imdb_id || data.imdb_id || "";
+  const col = data.belongs_to_collection;
+  const collection = col ? {
+    id: col.id,
+    name: col.name,
+    poster: imageUrl(col.poster_path),
+    backdrop: imageUrl(col.backdrop_path, "w1280"),
+  } : null;
+
+  let rating = data.vote_average != null ? Number(data.vote_average) : 0;
+  let imdbRating = null;
+  let tmdbRating = rating;
+  let hasImdbRating = false;
+  if (imdbId) {
+    try {
+      const imdbR = await fetchImdbRating(imdbId, type, signal);
+      if (imdbR && Number.isFinite(imdbR) && imdbR > 0) {
+        rating = imdbR;
+        imdbRating = imdbR;
+        hasImdbRating = true;
+      }
+    } catch (_) {}
+  }
+
+  const metadata = { id: data.id, type, name: data.name || data.title, overview: data.overview, rating,
+    imdbRating, tmdbRating,
+    imdbId, hasImdbRating,
+    date: data.first_air_date || data.release_date, last_air_date: data.last_air_date || "", poster: imageUrl(data.poster_path), backdrop: imageUrl(data.backdrop_path, "w1280"),
+    collection, ageRating };
+  await kv.set(cacheKey, metadata).catch(error => console.warn("[tmdb] Caché no disponible", error));
+  title.metadata = metadata;
+  return metadata;
+}
+
+export async function enrichTitles(titles, { signal, onUpdate, onProgress } = {}) {
+  let done = 0;
+  let index = 0;
+  const total = titles.length;
+  await Promise.all(Array.from({ length: Math.min(4, titles.length) }, async () => {
+    while (index < titles.length && !signal?.aborted) {
+      const title = titles[index++];
+      try {
+        if (await enrichTitle(title, { signal })) onUpdate?.(title);
+        // Cada película dentro de una saga obtiene metadatos propios con clave individual para respetar overrides
+        if (title.isSaga && Array.isArray(title.archivos)) {
+          for (const file of title.archivos) {
+            if (signal?.aborted) break;
+            const parsedFilm = extractTitleAndYear(file.captionFileName || file.fileName || file.label);
+            const fileKey = file.key || `${title.channel?.id || title.id}:${file.messageId}`;
+            const film = {
+              id: fileKey,
+              tipo: "pelicula",
+              nombre: parsedFilm.title || file.label,
+              tmdbId: file.tmdbId,
+              yearHint: parsedFilm.year || file.yearHint,
+              archivos: [file],
+            };
+            try {
+              const metadata = await enrichTitle(film, { signal });
+              if (metadata) {
+                file.metadata = metadata;
+                file.tmdbId = metadata.id;
+                if (metadata.name) file.sagaName = metadata.name;
+                onUpdate?.(title);
+              }
+            } catch (error) {
+              if (error.name !== "AbortError") console.warn("[tmdb saga film]", error.message);
+            }
+          }
+        }
+      } catch (error) { if (error.name !== "AbortError") console.warn("[tmdb]", error.message); }
+      finally {
+        done++;
+        onProgress?.(done, total);
+      }
+    }
+  }));
+}
+
+const seasonCache = new Map();
+
+export async function fetchSeasonEpisodes(tvId, seasonNumber = 1, signal) {
+  if (!tvId) return [];
+  const key = `${tvId}_s${seasonNumber}`;
+  if (seasonCache.has(key)) return seasonCache.get(key);
+  try {
+    const data = await request(`/tv/${tvId}/season/${seasonNumber}`, {}, signal);
+    const list = data.episodes || [];
+    seasonCache.set(key, list);
+    return list;
+  } catch (e) {
+    return [];
+  }
+}
