@@ -3,6 +3,9 @@
 import { loadLibrary } from '../library/channels.js';
 import { Api } from 'telegram';
 import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
+import { showForwardModal } from './forwardModal.js';
+import { parseEpisode } from '../library/parse.js';
+import { seriesNameFromFile } from '../library/titles.js';
 
 function esc(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -21,10 +24,38 @@ function setProgress(taskId, { title, status, percent = 0, done = false, error =
   updateUploadTask(taskId, { title, status, percent, done, error });
 }
 
+export function sortForwardedFiles(files = []) {
+  return files.sort((a, b) => {
+    const nameA = a.seriesName || '';
+    const nameB = b.seriesName || '';
+    if (nameA && nameB && nameA.toLowerCase() !== nameB.toLowerCase()) {
+      return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+    }
+    const aEp = (a.season > 0 || a.episode > 0);
+    const bEp = (b.season > 0 || b.episode > 0);
+    if (aEp && bEp) {
+      if (a.season !== b.season) return a.season - b.season;
+      if (a.episode !== b.episode) return a.episode - b.episode;
+    } else if (aEp && !bEp) {
+      return -1;
+    } else if (!aEp && bEp) {
+      return 1;
+    }
+    const cmp = (a.filename || a.fileName || '').localeCompare(b.filename || b.fileName || '', 'es', { numeric: true, sensitivity: 'base' });
+    if (cmp !== 0) return cmp;
+    return (a.msg?.id || a.messageId || 0) - (b.msg?.id || b.messageId || 0);
+  });
+}
+
+function selectedEntries(selected, byChannel) {
+  const entries = [...byChannel.values()].flat().filter(item => selected.has(item.key));
+  return sortForwardedFiles(entries);
+}
+
 let forwardedDeletedHandler = null;
 
 export async function renderForwardedTab({ mainPanel, client, tg }) {
-  mainPanel.innerHTML = `<div class="admin-panel-header"><div class="admin-panel-title"><h2>Listar vídeos reenviados</h2><p>Selecciona vídeos reenviados de los canales ::tgstorage para descargarlos o resubirlos al canal correspondiente.</p></div><button class="btn-primary" data-focusable id="btn-load-forwarded">Cargar vídeos reenviados</button></div><div id="admin-forwarded-content"><p style="color:#aaa;">Pulsa «Cargar vídeos reenviados» para escanear los canales tgstorage.</p></div>`;
+  mainPanel.innerHTML = `<div class="admin-panel-header"><div class="admin-panel-title"><h2>Listar vídeos reenviados</h2><p>Selecciona vídeos reenviados de los canales ::tgstorage para descargarlos, enviarlos o resubirlos al canal correspondiente.</p></div><button class="btn-primary" data-focusable id="btn-load-forwarded">Cargar vídeos reenviados</button></div><div id="admin-forwarded-content"><p style="color:#aaa;">Pulsa «Cargar vídeos reenviados» para escanear los canales tgstorage.</p></div>`;
   const loadBtn = document.getElementById('btn-load-forwarded');
   const container = document.getElementById('admin-forwarded-content');
   loadBtn?.addEventListener('click', async () => {
@@ -43,7 +74,27 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
             if (!doc || !(String(doc.mimeType || '').startsWith('video/') || msg.media?.video) || !(msg.fwdFrom || msg.fwdHeader)) continue;
             const name = channel.title || channel.name || `Canal ${channel.id}`;
             if (!byChannel.has(name)) byChannel.set(name, []);
-            byChannel.get(name).push({ key: `${channel.id}:${msg.id}`, msg, peer, channel, filename: getFilename(msg), size: Number(doc.size?.toString?.() || doc.size || 0) });
+            const filename = getFilename(msg);
+            const ep = parseEpisode(filename);
+            const seriesName = seriesNameFromFile(filename) || '';
+            byChannel.get(name).push({
+              key: `${channel.id}:${msg.id}`,
+              msg,
+              peer,
+              channel,
+              channelId: channel.id,
+              messageId: msg.id,
+              filename,
+              fileName: filename,
+              captionFileName: filename,
+              rawCaption: msg.message || '',
+              caption: msg.message || '',
+              size: Number(doc.size?.toString?.() || doc.size || 0),
+              season: ep.season,
+              episode: ep.episode,
+              seriesName,
+              date: msg.date || 0,
+            });
           }
         } catch (error) { console.warn('[adminForwarded] No se pudo leer canal', channel.title, error); }
       }
@@ -51,9 +102,16 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
         container.innerHTML = `<p style="color:#aaa;">No se encontraron vídeos reenviados en los ${channels.length} canales tgstorage.</p>`;
         loadBtn.disabled = false; loadBtn.textContent = 'Cargar vídeos reenviados'; return;
       }
+
+      // Ordenar vídeos dentro de cada canal cronológicamente (temporada, capítulo, nombre)
+      for (const [name, files] of byChannel.entries()) {
+        sortForwardedFiles(files);
+      }
+
       const selected = new Set();
       const total = [...byChannel.values()].reduce((sum, files) => sum + files.length, 0);
-      container.innerHTML = `<p style="color:#aaa;margin-bottom:1rem;">${total} vídeos reenviados en ${byChannel.size} canales tgstorage.</p><div class="admin-accordion-list">${[...byChannel.entries()].map(([name, files], idx) => `<div class="admin-accordion-item"><div class="admin-accordion-header" data-focusable tabindex="0" role="button" data-idx="${idx}"><div style="display:flex;align-items:center;gap:.75rem"><input type="checkbox" class="forwarded-channel-check" data-focusable data-channel="${esc(name)}"><strong>${esc(name)}</strong><span>${files.length} vídeos</span></div><span>▼</span></div><div class="admin-accordion-content" id="forwarded-list-${idx}" style="display:none">${files.map(file => `<div class="admin-video-row"><div class="admin-video-info"><input type="checkbox" class="forwarded-file-check" data-focusable data-channel="${esc(name)}" data-key="${esc(file.key)}"><span>${esc(file.filename)}</span></div><span>${formatBytes(file.size)}</span></div>`).join('')}</div></div>`).join('')}</div><div class="admin-sticky-bar" id="forwarded-actions" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(18,18,18,.97);padding:.9rem 1.6rem;justify-content:space-between;align-items:center"><span id="forwarded-count">0 seleccionados</span><div style="display:flex;gap:.75rem"><button class="btn-secondary" data-focusable id="btn-download-forwarded">Descargar</button><button class="btn-primary" data-focusable id="btn-reupload-forwarded">Resubir</button></div></div>`;
+      container.innerHTML = `<p style="color:#aaa;margin-bottom:1rem;">${total} vídeos reenviados en ${byChannel.size} canales tgstorage.</p><div class="admin-accordion-list">${[...byChannel.entries()].map(([name, files], idx) => `<div class="admin-accordion-item"><div class="admin-accordion-header" data-focusable tabindex="0" role="button" data-idx="${idx}"><div style="display:flex;align-items:center;gap:.75rem"><input type="checkbox" class="forwarded-channel-check" data-focusable data-channel="${esc(name)}"><strong>${esc(name)}</strong><span>${files.length} vídeos</span></div><span>▼</span></div><div class="admin-accordion-content" id="forwarded-list-${idx}" style="display:none">${files.map(file => `<div class="admin-video-row"><div class="admin-video-info"><input type="checkbox" class="forwarded-file-check" data-focusable data-channel="${esc(name)}" data-key="${esc(file.key)}"><span>${esc(file.filename)}</span></div><span>${formatBytes(file.size)}</span></div>`).join('')}</div></div>`).join('')}</div><div class="admin-sticky-bar" id="forwarded-actions" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9999;background:rgba(18,18,18,.97);padding:.9rem 1.6rem;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem"><span id="forwarded-count">0 seleccionados</span><div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center"><button class="btn-secondary" data-focusable id="btn-download-forwarded">Descargar</button><button class="btn-secondary" data-focusable id="btn-reupload-forwarded">Resubir</button><button class="btn-primary" data-focusable id="btn-forward-selected" style="background:#2563eb;">⚡ Enviar</button><button class="btn-danger" data-focusable id="btn-forward-delete-selected" style="background:#dc2626;color:#fff;">⚡ Enviar y BORRAR</button></div></div>`;
+
       // Enlaza cada fila con su mensaje para el menú contextual («Enviar/Subir & BORRAR»)
       const itemsByKey = new Map([...byChannel.values()].flat().map(item => [item.key, item]));
       container.querySelectorAll('.forwarded-file-check').forEach(box => {
@@ -90,6 +148,7 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
         (byChannel.get(name) || []).forEach(item => box.checked ? selected.add(item.key) : selected.delete(item.key));
         container.querySelectorAll(`.forwarded-file-check[data-channel="${CSS.escape(name)}"]`).forEach(item => { item.checked = box.checked; }); update();
       }));
+
       // Tras «Enviar/Subir & BORRAR»: quitar la fila del reenvío borrado y actualizar contadores
       if (forwardedDeletedHandler) document.removeEventListener('tgv:forwarded-deleted', forwardedDeletedHandler);
       forwardedDeletedHandler = (ev) => {
@@ -111,8 +170,38 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
         update();
       };
       document.addEventListener('tgv:forwarded-deleted', forwardedDeletedHandler);
+
       document.getElementById('btn-download-forwarded')?.addEventListener('click', () => downloadSelected(selected, byChannel, client));
       document.getElementById('btn-reupload-forwarded')?.addEventListener('click', () => showRenameAndReupload(selected, byChannel, client));
+
+      document.getElementById('btn-forward-selected')?.addEventListener('click', () => {
+        const entries = selectedEntries(selected, byChannel);
+        if (!entries.length) return;
+        showForwardModal(client, tg, entries[0], () => channels, null, null, {
+          selectedFiles: entries,
+          deleteSourceAfter: false,
+        }).catch(err => {
+          console.error('[adminForwarded] Error al abrir modal de envío:', err);
+          alert('Error al abrir envío a tgstorage: ' + (err.message || String(err)));
+        });
+      });
+
+      document.getElementById('btn-forward-delete-selected')?.addEventListener('click', () => {
+        const entries = selectedEntries(selected, byChannel);
+        if (!entries.length) return;
+        showForwardModal(client, tg, entries[0], () => channels, null, null, {
+          selectedFiles: entries,
+          deleteSourceAfter: true,
+          onSourceDeleted: (f) => {
+            const k = f?.key || (f?.channelId && f?.messageId ? `${f.channelId}:${f.messageId}` : null);
+            if (k) document.dispatchEvent(new CustomEvent('tgv:forwarded-deleted', { detail: { key: k } }));
+          },
+        }).catch(err => {
+          console.error('[adminForwarded] Error al abrir modal de envío y borrado:', err);
+          alert('Error al abrir envío y borrado: ' + (err.message || String(err)));
+        });
+      });
+
       loadBtn.disabled = false; loadBtn.textContent = 'Actualizar reenvíos';
     } catch (error) {
       console.error('[adminForwarded]', error); container.innerHTML = `<p style="color:#f87171;">Error al escanear: ${esc(error.message || error)}</p>`;
@@ -121,9 +210,6 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
   });
 }
 
-function selectedEntries(selected, byChannel) {
-  return [...byChannel.values()].flat().filter(item => selected.has(item.key));
-}
 async function downloadSelected(selected, byChannel, client) {
   const entries = selectedEntries(selected, byChannel);
   if (!entries.length) return;

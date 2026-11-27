@@ -516,8 +516,11 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     } catch (_) {}
   }
 
+  const hasSelectedList = Array.isArray(options?.selectedFiles) && options.selectedFiles.length > 0;
   let allFiles = [];
-  if (isSerie && titleData) {
+  if (hasSelectedList) {
+    allFiles = [...options.selectedFiles];
+  } else if (isSerie && titleData) {
     allFiles = filterSeriesFilesByMoves(titleData, pool);
   } else if (isSerie && Array.isArray(titleData?.archivos) && titleData.archivos.length > 0) {
     allFiles = [...titleData.archivos];
@@ -525,8 +528,8 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     allFiles = [file];
   }
 
-  // Consolidar con episodios de la misma serie en el canal si estuvieran en fichas separadas
-  if (isSerie && (curTmdb || titleData?.nombre)) {
+  // Consolidar con episodios de la misma serie en el canal si estuvieran en fichas separadas (solo si no se pasó una lista manual)
+  if (!hasSelectedList && isSerie && (curTmdb || titleData?.nombre)) {
     const sNameNorm = normalizeMovieKey(titleData.metadata?.name || titleData.metadata?.title || titleData.nombre).replace(/(?:19|20)\d{2}/g, '');
 
     const siblings = pool.filter(t => {
@@ -556,28 +559,41 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     }
   }
 
-  // Ordenar episodios
-  allFiles.sort((a, b) => (a.season - b.season) || (a.episode - b.episode) || ((Number(b.size) || 0) - (Number(a.size) || 0)) || (a.date - b.date));
+  // Parsear y asegurar season y episode en todos los archivos antes de ordenar
+  for (const f of allFiles) {
+    let s = Number(f.season);
+    let ep = Number(f.episode);
+    if (!Number.isFinite(s) || s <= 0 || !Number.isFinite(ep) || ep <= 0) {
+      const parsed = parseEpisode(f.captionFileName || f.fileName || f.filename || '');
+      if (!Number.isFinite(s) || s <= 0) f.season = parsed.season || 1;
+      if (!Number.isFinite(ep) || ep <= 0) f.episode = parsed.episode || 1;
+    }
+  }
 
-  // Agrupar temporadas (solo para series, sin mutar películas)
+  // Ordenar episodios cronológicamente (temporada, capítulo, nombre numérico, fecha)
+  allFiles.sort((a, b) => {
+    const sDiff = (Number(a.season) || 1) - (Number(b.season) || 1);
+    if (sDiff !== 0) return sDiff;
+    const epDiff = (Number(a.episode) || 1) - (Number(b.episode) || 1);
+    if (epDiff !== 0) return epDiff;
+    const cmp = (a.fileName || a.filename || '').localeCompare(b.fileName || b.filename || '', 'es', { numeric: true, sensitivity: 'base' });
+    if (cmp !== 0) return cmp;
+    return (a.date || 0) - (b.date || 0);
+  });
+
+  // Agrupar temporadas
   const seasonsMap = new Map();
-  if (isSerie) {
+  if (isSerie || hasSelectedList) {
     for (const f of allFiles) {
-      let s = Number(f.season);
-      if (!Number.isFinite(s) || s <= 0) {
-        const parsed = parseEpisode(f.captionFileName || f.fileName || '');
-        s = parsed.season || 1;
-        f.season = s;
-        if (!f.episode) f.episode = parsed.episode || 1;
-      }
+      const s = Number(f.season) || 1;
       if (!seasonsMap.has(s)) seasonsMap.set(s, []);
       seasonsMap.get(s).push(f);
     }
   }
   const seasonNumbers = Array.from(seasonsMap.keys()).sort((a, b) => a - b);
 
-  if (deleteSourceAfter) allFiles = [file];
-  const isMultiFile = !deleteSourceAfter && isSerie && allFiles.length > 1;
+  if (deleteSourceAfter && !hasSelectedList) allFiles = [file];
+  const isMultiFile = allFiles.length > 1;
   const seriesBaseName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || 'Serie';
   const defaultFilename = formatSuggestedFileName(file, effectiveTitle || titleData);
   const sizeStr = formatBytes(file.size);
@@ -615,7 +631,21 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
         <button id="modal-close-btn" style="background: transparent; border: none; color: #94a3b8; font-size: 1.4rem; cursor: pointer; padding: 0.2rem 0.5rem; border-radius: 4px;">×</button>
       </div>
 
-      ${isMultiFile ? `
+      ${hasSelectedList ? `
+        <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div style="font-size: 0.95rem; color: #fff; font-weight: 600;">
+                ${allFiles.length} archivo${allFiles.length > 1 ? 's' : ''} seleccionado${allFiles.length > 1 ? 's' : ''}
+              </div>
+              <div style="color: #94a3b8; font-size: 0.78rem; margin-top: 0.25rem;">
+                ${deleteSourceAfter ? 'Se enviarán ordenados correlativamente y se <strong style="color:#ef4444;">BORRARÁN</strong> los reenvíos originales.' : 'Se enviarán ordenados correlativamente a la biblioteca tgstorage.'}
+              </div>
+            </div>
+            <span style="font-size: 0.85rem; color: #cbd5e1; font-weight: 600;">${esc(formatBytes(totalSeriesSize))}</span>
+          </div>
+        </div>
+      ` : (isMultiFile ? `
         <div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
           <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.55rem;">
             ¿Qué deseas enviar a tgstorage?
@@ -660,7 +690,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
             <span style="color: #38bdf8;">Formato: "[Serie] - 1x01.mp4", "1x02.mp4"...</span>
           </div>
         </div>
-      ` : ''}
+      ` : '')}
 
       <div id="single-name-container" style="${isMultiFile ? 'display: none;' : ''} background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
         <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
@@ -739,17 +769,24 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
       </div>` : ''}
 
       <div style="display: flex; justify-content: flex-end; gap: 0.8rem;">
-        <button type="button" id="modal-cancel-btn" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 0.6rem 1.2rem; color: #fff; font-size: 0.9rem; cursor: pointer;">
+        <button type="button" id="modal-cancel-btn" data-focusable tabindex="0" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 0.6rem 1.2rem; color: #fff; font-size: 0.9rem; cursor: pointer;">
           Cancelar
         </button>
-        <button type="button" id="modal-send-btn" style="background: var(--theme-accent, #e50914); border: none; border-radius: 6px; padding: 0.6rem 1.4rem; color: #fff; font-size: 0.9rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem;">
-          <span>${deleteSourceAfter ? '⚡ Enviar y BORRAR reenvío' : (isMultiFile ? `⚡ Enviar ${allFiles.length} episodios` : '⚡ Enviar ahora')}</span>
+        <button type="button" id="modal-send-btn" data-focusable tabindex="0" style="background: var(--theme-accent, #e50914); border: none; border-radius: 6px; padding: 0.6rem 1.4rem; color: #fff; font-size: 0.9rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem;">
+          <span>${deleteSourceAfter ? (allFiles.length > 1 ? `⚡ Enviar y BORRAR ${allFiles.length} reenvíos` : '⚡ Enviar y BORRAR reenvío') : (allFiles.length > 1 ? `⚡ Enviar ${allFiles.length} archivos` : '⚡ Enviar ahora')}</span>
         </button>
       </div>
     </div>
   `;
 
   document.body.appendChild(modalOverlay);
+
+  // Autofoco prioritario en el botón de confirmación ("⚡ Enviar y BORRAR reenvío") para máxima rapidez
+  setTimeout(() => {
+    const sendBtnTarget = modalOverlay.querySelector('#modal-send-btn');
+    sendBtnTarget?.focus?.({ preventScroll: true });
+    sendBtnTarget?.classList?.add('dpad-focused');
+  }, 50);
 
   const closeModal = () => modalOverlay.remove();
   modalOverlay.querySelector('#modal-close-btn').onclick = closeModal;
@@ -782,7 +819,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
       if (seriesNameContainer) seriesNameContainer.style.display = 'block';
       if (singleNameContainer) singleNameContainer.style.display = 'none';
       if (seriesStatsLabel) seriesStatsLabel.innerHTML = `Total: <strong>${allFiles.length} episodios (${formatBytes(totalSeriesSize)})</strong>`;
-      sendBtn.innerHTML = `<span>⚡ Enviar serie entera (${allFiles.length} eps)</span>`;
+      sendBtn.innerHTML = `<span>${deleteSourceAfter ? `⚡ Enviar y BORRAR serie (${allFiles.length} eps)` : `⚡ Enviar serie entera (${allFiles.length} eps)`}</span>`;
     } else if (scopeSeasonRadio?.checked) {
       if (seasonSelectorContainer) seasonSelectorContainer.style.display = 'block';
       if (episodeSelectorContainer) episodeSelectorContainer.style.display = 'none';
@@ -792,7 +829,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
       const sFiles = seasonsMap.get(sNum) || [];
       const sSize = sFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0);
       if (seriesStatsLabel) seriesStatsLabel.innerHTML = `Temporada ${sNum}: <strong>${sFiles.length} episodios (${formatBytes(sSize)})</strong>`;
-      sendBtn.innerHTML = `<span>⚡ Enviar Temporada ${sNum} (${sFiles.length} eps)</span>`;
+      sendBtn.innerHTML = `<span>${deleteSourceAfter ? `⚡ Enviar y BORRAR Temporada ${sNum} (${sFiles.length} eps)` : `⚡ Enviar Temporada ${sNum} (${sFiles.length} eps)`}</span>`;
     } else if (scopeSingleRadio?.checked) {
       if (seasonSelectorContainer) seasonSelectorContainer.style.display = 'none';
       if (episodeSelectorContainer) episodeSelectorContainer.style.display = 'block';
@@ -801,7 +838,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
       const chosenKey = episodeSelect?.value;
       const chosenFile = allFiles.find(f => (f.key || `${f.channelId || f.channel?.id}:${f.messageId}`) === chosenKey) || file;
       if (filenameInput) filenameInput.value = formatSuggestedFileName(chosenFile, effectiveTitle || titleData);
-      sendBtn.innerHTML = '<span>⚡ Enviar episodio a tgstorage</span>';
+      sendBtn.innerHTML = `<span>${deleteSourceAfter ? '⚡ Enviar y BORRAR reenvío' : '⚡ Enviar episodio a tgstorage'}</span>`;
     }
   };
 
@@ -850,7 +887,10 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     // Determinar los archivos exactos a enviar según la selección
     let filesToSend = allFiles;
     let uploadJobTitle = '';
-    if (isMultiFile) {
+    if (hasSelectedList) {
+      filesToSend = allFiles;
+      uploadJobTitle = seriesBaseName || 'Lote seleccionado';
+    } else if (isMultiFile) {
       if (isScopeAll) {
         filesToSend = allFiles;
         uploadJobTitle = seriesBaseName;
@@ -940,8 +980,15 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
             percent: pct,
           });
 
-          const fileSourcePeer = await resolvePeer(client, tg, curFile.channel || curFile.channelId || effectiveTitle?.channel || file.channel);
-          const [msg] = await client.getMessages(fileSourcePeer, { ids: [curFile.messageId] });
+          const fileSourcePeer = curFile.peer || (await resolvePeer(client, tg, curFile.channel || curFile.channelId || effectiveTitle?.channel || file.channel));
+          let msg = curFile.msg;
+          if (!msg) {
+            const curMsgId = Number(curFile.messageId || curFile.id);
+            if (fileSourcePeer && curMsgId) {
+              const res = await client.getMessages(fileSourcePeer, { ids: [curMsgId] });
+              msg = res?.[0];
+            }
+          }
           if (!msg || !msg.media) continue;
 
           const cap = parseCaption(curFile.rawCaption || msg.message || '');
@@ -962,11 +1009,12 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
             synopsis: curFile.synopsis || meta?.overview || meta?.synopsis || cap.synopsis || '',
           });
 
+          let sentMsg = null;
           if (isFastUpload) {
             const docMedia = msg.media?.document || msg.media;
             if (docMedia) {
               try {
-                await client.sendFile(targetPeer, {
+                sentMsg = await client.sendFile(targetPeer, {
                   file: docMedia,
                   caption: epCaption,
                   forceDocument: false,
@@ -974,10 +1022,10 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
               } catch (sendErr) {
                 const errMsg = String(sendErr?.message || sendErr || '');
                 if (errMsg.includes('CHAT_FORWARDS_RESTRICTED') || errMsg.includes('FORWARDS_RESTRICTED')) {
-                  console.warn('[contextMenu] Canal con restricción de reenvío (CHAT_FORWARDS_RESTRICTED). Descargando y resubiendo para eludir restricción…', curFilename);
+                  console.warn('[forwardModal] Canal con restricción de reenvío (CHAT_FORWARDS_RESTRICTED). Descargando y resubiendo para eludir restricción…', curFilename);
                   setProgressBar(bar, {
                     id: taskId,
-                    title: `⚡ Enviando serie: ${sBaseName} (${i + 1}/${count})`,
+                    title: `⚡ Enviando: ${sBaseName} (${i + 1}/${count})`,
                     status: `[${i + 1}/${count}] Canal con reenvío protegido: descargando y resubiendo…`,
                     percent: pct,
                   });
@@ -988,7 +1036,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
                     file: new File([blob], curFilename, { type: blob.type }),
                     workers: 1,
                   });
-                  await client.sendFile(targetPeer, {
+                  sentMsg = await client.sendFile(targetPeer, {
                     file: upload,
                     caption: epCaption,
                     forceDocument: !curFilename.toLowerCase().endsWith('.mp4'),
@@ -1007,12 +1055,27 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
               file: new File([blob], curFilename, { type: blob.type }),
               workers: 1,
             });
-            await client.sendFile(targetPeer, {
+            sentMsg = await client.sendFile(targetPeer, {
               file: upload,
               caption: epCaption,
               forceDocument: !curFilename.toLowerCase().endsWith('.mp4'),
               attributes: [new Api.DocumentAttributeFilename({ fileName: curFilename })],
             });
+          }
+
+          if (deleteSourceAfter) {
+            const sentId = Array.isArray(sentMsg) ? sentMsg[0]?.id : sentMsg?.id;
+            if (sentId) {
+              try {
+                const epMsgId = Number(curFile.messageId || curFile.msg?.id || curFile.id);
+                if (fileSourcePeer && epMsgId) {
+                  await client.deleteMessages(fileSourcePeer, [epMsgId], { revoke: true });
+                  try { options?.onSourceDeleted?.(curFile); } catch (_) {}
+                }
+              } catch (delErr) {
+                console.warn('[forwardModal] Error borrando mensaje original en lote:', delErr);
+              }
+            }
           }
 
           if (i < count - 1) {
@@ -1022,8 +1085,8 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
 
         setProgressBar(bar, {
           id: taskId,
-          title: `⚡ Serie enviada con éxito: ${sBaseName}`,
-          status: `Los ${count} episodios se han enviado a "${targetChannelName}"`,
+          title: `⚡ ${deleteSourceAfter ? 'Envío y borrado completado' : 'Envío completado'}: ${sBaseName}`,
+          status: `Los ${count} archivos se han procesado en "${targetChannelName}"${deleteSourceAfter ? ' (reenvíos borrados)' : ''}`,
           percent: 100,
           done: true,
         });
