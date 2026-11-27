@@ -1,12 +1,16 @@
 // src/ui/forwardModal.js
 import { Api } from 'telegram';
-import { fetchTmdbFullDetails, extractTitleAndYear } from '../metadata/tmdb.js';
+import { fetchTmdbFullDetails, extractTitleAndYear, enrichTitle, extractTitlesFromCaption } from '../metadata/tmdb.js';
+import { createKV } from '../core/kv.js';
 import { loadLibrary } from '../library/channels.js';
 import { parseCaption, buildStandardCaption, parseEpisode, prettyEpisodeName } from '../library/parse.js';
 import { normalizeMovieKey } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { EXT_CHANNEL_TITLES_CACHE, getEpisodeSeriesMove, filterSeriesFilesByMoves } from './externalTitlesCache.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
+
+const kv = createKV();
+const LIB_KEY = 'library_v2';
 
 function esc(value) {
   return String(value ?? '')
@@ -94,16 +98,16 @@ function extractYear(titleData, file) {
     const m = String(meta.date).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
-  if (meta?.release_date) {
-    const m = String(meta.release_date).match(/\b((?:19|20)\d{2})\b/);
+  if (meta?.release_date || meta?.releaseDate) {
+    const m = String(meta.release_date || meta.releaseDate).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
-  if (meta?.first_air_date) {
-    const m = String(meta.first_air_date).match(/\b((?:19|20)\d{2})\b/);
+  if (meta?.first_air_date || meta?.firstAirDate) {
+    const m = String(meta.first_air_date || meta.firstAirDate).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
 
-  // 2. Propiedades directas year / yearHint
+  // 2. Propiedades directas year / yearHint / date
   if (titleData?.year) {
     const m = String(titleData.year).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
@@ -120,8 +124,34 @@ function extractYear(titleData, file) {
     const m = String(file.yearHint).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
+  if (titleData?.date || titleData?.release_date) {
+    const m = String(titleData.date || titleData.release_date).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
+  if (file?.date || file?.release_date) {
+    const m = String(file.date || file.release_date).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
 
-  // 3. Extracción desde caption y nombres de archivo de Telegram
+  // 3. Revisar archivos hermanos en el título si existen
+  if (Array.isArray(titleData?.archivos)) {
+    for (const sf of titleData.archivos) {
+      if (sf.year) {
+        const m = String(sf.year).match(/\b((?:19|20)\d{2})\b/);
+        if (m) return m[1];
+      }
+      if (sf.yearHint) {
+        const m = String(sf.yearHint).match(/\b((?:19|20)\d{2})\b/);
+        if (m) return m[1];
+      }
+      if (sf.metadata?.date || sf.metadata?.year) {
+        const m = String(sf.metadata.year || sf.metadata.date).match(/\b((?:19|20)\d{2})\b/);
+        if (m) return m[1];
+      }
+    }
+  }
+
+  // 4. Extracción desde caption y nombres de archivo de Telegram
   const cap = parseCaption(file?.rawCaption || file?.caption || '');
   if (cap.fileName) {
     const parsedCap = extractTitleAndYear(cap.fileName);
@@ -196,12 +226,20 @@ function formatSuggestedFileName(file, titleData) {
   let year = extractYear(titleData, file) || parsedCandidate.year;
 
   // Si el archivo de origen tiene un nombre genérico (tipo "video23", "video_100") pero el caption o metadata tiene el nombre real
-  const isGenericOrig = /^(?:video[_\-\s]*\d+|\d+|input|file|document)$/i.test(cleanBase) || /^[0-9\-_.]+(?:accion|pelicula|movie|fhd|hd|rip)?$/i.test(cleanBase);
+  const isGenericOrig = /^(?:video|vid|mov|clip|stream|track|input|file|doc|document)?[_\-\s]*\d+$/i.test(cleanBase) ||
+    /^(?:video|input|file|document)$/i.test(cleanBase) ||
+    /^[0-9\-_.]+(?:accion|pelicula|movie|fhd|hd|rip)?$/i.test(cleanBase);
+
   const cap = parseCaption(file?.rawCaption || file?.caption || '');
   const captionCandidate = cap.fileName ? cap.fileName.replace(/\.([a-zA-Z0-9]{2,5})$/, '') : (file?.rawCaption || file?.caption || '').trim().split('\n')[0].trim();
   const validCaptionCand = captionCandidate && !captionCandidate.includes(':') && captionCandidate.length >= 2 ? captionCandidate : null;
 
-  let mName = metaTitle || (isGenericOrig && validCaptionCand ? validCaptionCand : null) || parsedCandidate.title || titleData?.nombre || cleanBase;
+  let fallbackName = titleData?.nombre;
+  if (fallbackName && (isGenericOrig || /^(?:video[_\-\s]*\d+|\d+)$/i.test(fallbackName.replace(/\.([a-zA-Z0-9]{2,5})$/, '').trim()))) {
+    fallbackName = validCaptionCand || null;
+  }
+
+  let mName = metaTitle || (isGenericOrig && validCaptionCand ? validCaptionCand : null) || fallbackName || parsedCandidate.title || cleanBase;
 
   // Limpiar extensiones residuales
   mName = mName.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '').trim();
@@ -336,6 +374,106 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     if (ov.title || ov.name) effectiveTitle.nombre = ov.title || ov.name;
     file.metadata = { ...(file.metadata || {}), ...ov };
     if (ov.id && !file.tmdbId) file.tmdbId = ov.id;
+  }
+
+  // 1.1 Si no tenemos fecha/año o metadata en effectiveTitle, buscar en metadataMap persistido
+  if (!effectiveTitle?.metadata?.date && !effectiveTitle?.metadata?.year) {
+    try {
+      const libObj = await kv.get(LIB_KEY).catch(() => null);
+      const metaMap = libObj?.metadataMap || {};
+      const tid = effectiveTitle?.id;
+      const tidRaw = tid ? String(tid).replace(/^ext-/, '') : null;
+      const tidExt = tidRaw ? `ext-${tidRaw}` : null;
+      const foundMeta = metaMap[tid] || (tidRaw ? metaMap[tidRaw] : null) || (tidExt ? metaMap[tidExt] : null) ||
+        (rawTmdbId ? (metaMap[`tmdb_${rawTmdbId}`] || metaMap[String(rawTmdbId)]) : null) ||
+        metaMap[fileKey] || (file.messageId ? metaMap[file.messageId] : null);
+      if (foundMeta) {
+        if (!effectiveTitle) effectiveTitle = { id: fileKey, nombre: foundMeta.name || foundMeta.title, archivos: [file] };
+        effectiveTitle.metadata = { ...(effectiveTitle.metadata || {}), ...foundMeta };
+        if (foundMeta.id && !effectiveTitle.tmdbId) effectiveTitle.tmdbId = foundMeta.id;
+        if (foundMeta.name || foundMeta.title) effectiveTitle.nombre = foundMeta.name || foundMeta.title;
+        file.metadata = { ...(file.metadata || {}), ...foundMeta };
+        if (foundMeta.id && !file.tmdbId) file.tmdbId = foundMeta.id;
+      }
+    } catch (_) {}
+  }
+
+  // 1.2 Si tenemos TMDB ID pero falta fecha/año en metadata, consultar caché TMDB o fetch rápido
+  let curMeta = effectiveTitle?.metadata || file.metadata || null;
+  let effectiveTmdbId = curMeta?.id || effectiveTitle?.tmdbId || file.tmdbId || fileCap.tmdbId;
+  const isSerieEarly = isSeriesTitle(effectiveTitle, file);
+  const mediaTypeEarly = isSerieEarly ? 'tv' : 'movie';
+
+  if (effectiveTmdbId && (!curMeta?.date && !curMeta?.year && !curMeta?.release_date && !extractYear(effectiveTitle, file))) {
+    try {
+      const cached = await kv.get(`tmdb_v2:${mediaTypeEarly}:${effectiveTmdbId}`).catch(() => null);
+      if (cached && (cached.date || cached.year || cached.release_date)) {
+        curMeta = { ...(curMeta || {}), ...cached };
+        if (effectiveTitle) {
+          effectiveTitle.metadata = curMeta;
+          effectiveTitle.tmdbId = effectiveTmdbId;
+          if (cached.name || cached.title) effectiveTitle.nombre = cached.name || cached.title;
+        }
+        file.metadata = { ...(file.metadata || {}), ...curMeta };
+      } else {
+        const full = await fetchTmdbFullDetails(mediaTypeEarly, effectiveTmdbId).catch(() => null);
+        if (full && Object.keys(full).length > 0) {
+          curMeta = { ...(curMeta || {}), ...full };
+          if (effectiveTitle) {
+            effectiveTitle.metadata = curMeta;
+            effectiveTitle.tmdbId = effectiveTmdbId;
+            if (full.name || full.title) effectiveTitle.nombre = full.name || full.title;
+          }
+          file.metadata = { ...(file.metadata || {}), ...curMeta };
+        }
+      }
+    } catch (err) {
+      console.warn('[forwardModal] Error recuperando detalles TMDB por ID:', err);
+    }
+  }
+
+  // 1.3 Si el título aún no tiene metadata ni año (p. ej. vídeo reenviado con nombre video23 y caption "batman"),
+  // intentar enriquecerlo con TMDB antes de mostrar el modal para sugerir el nombre canónico y su año
+  if ((!curMeta || (!curMeta.date && !curMeta.year && !extractYear(effectiveTitle, file))) && effectiveTitle) {
+    try {
+      const origClean = (file.fileName || '').replace(/\.[a-zA-Z0-9]{2,5}$/, '').trim();
+      const isGeneric = /^(?:video|vid|mov|clip|stream|track|input|file|doc|document)?[_\-\s]*\d+$/i.test(origClean) ||
+        /^(?:video|input|file|document)$/i.test(origClean) ||
+        /^[0-9\-_.]+(?:accion|pelicula|movie|fhd|hd|rip)?$/i.test(origClean);
+
+      if (isGeneric && fileCap.fileName) {
+        const parsedCap = extractTitleAndYear(fileCap.fileName);
+        if (parsedCap.title) effectiveTitle.nombre = parsedCap.title;
+        if (parsedCap.year) effectiveTitle.yearHint = parsedCap.year;
+      } else if (isGeneric && (file.rawCaption || file.caption)) {
+        const cands = extractTitlesFromCaption(file.rawCaption || file.caption || '');
+        if (cands.length > 0 && cands[0].title) {
+          effectiveTitle.nombre = cands[0].title;
+          if (cands[0].year) effectiveTitle.yearHint = cands[0].year;
+        } else {
+          const firstLine = (file.rawCaption || file.caption || '').trim().split('\n')[0].trim();
+          if (firstLine && !firstLine.includes(':') && firstLine.length >= 2) {
+            effectiveTitle.nombre = firstLine;
+          }
+        }
+      }
+
+      const enriched = await enrichTitle(effectiveTitle).catch(() => null);
+      if (enriched) {
+        curMeta = enriched;
+        effectiveTitle.metadata = enriched;
+        if (enriched.id) {
+          effectiveTitle.tmdbId = enriched.id;
+          file.tmdbId = enriched.id;
+        }
+        if (enriched.name || enriched.title) {
+          effectiveTitle.nombre = enriched.name || enriched.title;
+        }
+        file.metadata = { ...(file.metadata || {}), ...enriched };
+      }
+    } catch (err) {
+      console.warn('[forwardModal] Error al autoidentificar en TMDB:', err);
+    }
   }
 
   const isSerie = isSeriesTitle(effectiveTitle, file);
@@ -713,13 +851,15 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
 
     const bar = ensureProgressBar();
 
-    // 1. Resolver el título y sus metadatos TMDB completos
-    let effectiveTitle = titleData;
-    if (!effectiveTitle && file) {
-      const internalTitles = (typeof getTitles === 'function' ? (getTitles() || []) : []) || [];
-      const externalTitlesList = Array.from(EXT_CHANNEL_TITLES_CACHE?.values?.() || []).flat();
-      const allTitles = [...internalTitles, ...externalTitlesList];
-      effectiveTitle = allTitles.find(t => t.archivos?.some(f => f.key === file.key || String(f.messageId) === String(file.messageId)));
+    // 1. Asegurar metadatos TMDB completos y detalles adicionales
+    if (!effectiveTitle) {
+      effectiveTitle = titleData;
+      if (!effectiveTitle && file) {
+        const internalTitles = (typeof getTitles === 'function' ? (getTitles() || []) : []) || [];
+        const externalTitlesList = Array.from(EXT_CHANNEL_TITLES_CACHE?.values?.() || []).flat();
+        const allTitles = [...internalTitles, ...externalTitlesList];
+        effectiveTitle = allTitles.find(t => t.archivos?.some(f => f.key === file.key || String(f.messageId) === String(file.messageId)));
+      }
     }
 
     let meta = effectiveTitle?.metadata || file.metadata || null;

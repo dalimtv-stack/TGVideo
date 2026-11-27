@@ -727,7 +727,10 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
         curSaved.metadataMap = curSaved.metadataMap || {};
         for (const t of generatedTitles) {
           if (t.metadata) {
+            const tYear = t.metadata.year || (t.metadata.date ? String(t.metadata.date).slice(0, 4) : null) || t.yearHint || null;
+            const tDate = t.metadata.date || t.metadata.release_date || t.metadata.first_air_date || (tYear ? `${tYear}-01-01` : null);
             curSaved.metadataMap[t.id] = {
+              ...t.metadata,
               id: t.metadata.id,
               name: t.metadata.name,
               poster: t.metadata.poster,
@@ -735,7 +738,10 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
               logo: t.metadata.logo,
               overview: t.metadata.overview,
               tipo: t.metadata.tipo,
-              year: t.metadata.year,
+              year: tYear,
+              date: tDate,
+              release_date: t.metadata.release_date || tDate,
+              first_air_date: t.metadata.first_air_date || tDate,
               ageRating: t.metadata.ageRating,
               genres: t.metadata.genres,
               voteAverage: t.metadata.voteAverage,
@@ -831,7 +837,10 @@ export async function identifyTitlesInBulk(titlesToEnrich = [], { modalTitle = '
     curSaved.metadataMap = curSaved.metadataMap || {};
     for (const t of pending) {
       if (t.metadata) {
+        const tYear = t.metadata.year || (t.metadata.date ? String(t.metadata.date).slice(0, 4) : null) || t.yearHint || null;
+        const tDate = t.metadata.date || t.metadata.release_date || t.metadata.first_air_date || (tYear ? `${tYear}-01-01` : null);
         curSaved.metadataMap[t.id] = {
+          ...t.metadata,
           id: t.metadata.id,
           name: t.metadata.name,
           poster: t.metadata.poster,
@@ -839,7 +848,10 @@ export async function identifyTitlesInBulk(titlesToEnrich = [], { modalTitle = '
           logo: t.metadata.logo,
           overview: t.metadata.overview,
           tipo: t.metadata.tipo,
-          year: t.metadata.year,
+          year: tYear,
+          date: tDate,
+          release_date: t.metadata.release_date || tDate,
+          first_air_date: t.metadata.first_air_date || tDate,
           ageRating: t.metadata.ageRating,
           genres: t.metadata.genres,
           voteAverage: t.metadata.voteAverage,

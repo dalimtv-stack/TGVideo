@@ -6,9 +6,9 @@
 
 import { EXT_CHANNEL_TITLES_CACHE, hideExternalFiles, unhideExternalFiles, isExternalFileHiddenSync } from './externalTitlesCache.js';
 import { isExternalTitle } from '../library/titles.js';
-import { parseEpisode } from '../library/parse.js';
+import { parseEpisode, parseCaption } from '../library/parse.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
-import { extractTitleAndYear } from '../metadata/tmdb.js';
+import { extractTitleAndYear, extractTitlesFromCaption } from '../metadata/tmdb.js';
 import { showMetadataModal } from './metadataModal.js';
 import { createKV } from '../core/kv.js';
 import { removeOverrides } from '../metadata/overrides.js';
@@ -203,17 +203,31 @@ function openInTelegram(file) {
  * Extrae el año de los metadatos TMDB o del archivo con múltiples estrategias.
  */
 function extractYear(titleData, file) {
-  if (titleData?.metadata?.year) return String(titleData.metadata.year);
-  if (titleData?.metadata?.date) {
-    const m = String(titleData.metadata.date).match(/\b((?:19|20)\d{2})\b/);
+  const meta = titleData?.metadata || file?.metadata || null;
+  if (meta?.year) {
+    const m = String(meta.year).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
-  if (titleData?.metadata?.release_date) {
-    const m = String(titleData.metadata.release_date).match(/\b((?:19|20)\d{2})\b/);
+  if (meta?.date) {
+    const m = String(meta.date).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
+  if (meta?.release_date || meta?.releaseDate) {
+    const m = String(meta.release_date || meta.releaseDate).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
+  if (meta?.first_air_date || meta?.firstAirDate) {
+    const m = String(meta.first_air_date || meta.firstAirDate).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
+  if (titleData?.year) return String(titleData.year);
+  if (file?.year) return String(file.year);
   if (titleData?.yearHint) return String(titleData.yearHint);
   if (file?.yearHint) return String(file.yearHint);
+  if (titleData?.date || file?.date) {
+    const m = String(titleData?.date || file?.date).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
   const cand = [file?.captionFileName, file?.fileName, file?.rawCaption, titleData?.nombre].filter(Boolean).join(' ');
   const m = cand.match(/\b((?:19|20)\d{2})\b/);
   return m ? m[1] : null;
@@ -447,12 +461,49 @@ export function showContextMenuForElement(sourceEl, coords = null) {
       // Fila de «Listar vídeos reenviados» que no está en la biblioteca: se construye desde el mensaje escaneado
       const fw = adminRow._forwardedItem;
       if (!targetFile && fw?.msg) {
+        const rawCap = fw.msg.message || '';
+        const capParsed = parseCaption(rawCap);
+        const origBase = String(fw.filename || '').replace(/\.[a-zA-Z0-9]{2,5}$/, '').trim();
+        const isGen = /^(?:video|vid|mov|clip|stream|track|input|file|doc|document)?[_\-\s]*\d+$/i.test(origBase) ||
+          /^(?:video|input|file|document)$/i.test(origBase) ||
+          /^[0-9\-_.]+(?:accion|pelicula|movie|fhd|hd|rip)?$/i.test(origBase);
+
+        let inferredName = fw.filename;
+        let inferredYear = null;
+        if (isGen && capParsed.fileName) {
+          const p = extractTitleAndYear(capParsed.fileName);
+          if (p.title) inferredName = p.title;
+          if (p.year) inferredYear = p.year;
+        } else if (isGen && rawCap) {
+          const cands = extractTitlesFromCaption(rawCap);
+          if (cands.length > 0 && cands[0].title) {
+            inferredName = cands[0].title;
+            if (cands[0].year) inferredYear = cands[0].year;
+          } else {
+            const firstL = rawCap.trim().split('\n')[0].trim();
+            if (firstL && !firstL.includes(':') && firstL.length >= 2) {
+              inferredName = firstL;
+            }
+          }
+        }
+
         targetFile = {
           key: fw.key, messageId: fw.msg.id, channelId: String(fw.channel?.id ?? ''), channel: fw.channel,
-          fileName: fw.filename, label: fw.filename, size: fw.size, rawCaption: fw.msg.message || '', caption: fw.msg.message || '',
+          fileName: fw.filename, label: fw.filename, size: fw.size, rawCaption: rawCap, caption: rawCap,
+          captionFileName: capParsed.fileName || null,
+          tmdbId: capParsed.tmdbId || null,
+          yearHint: inferredYear,
         };
-        targetTitle = { id: fw.key, nombre: fw.filename, tipo: 'pelicula', archivos: [targetFile], channel: fw.channel };
-        titleName = fw.filename;
+        targetTitle = {
+          id: fw.key,
+          nombre: inferredName,
+          tipo: 'pelicula',
+          yearHint: inferredYear,
+          archivos: [targetFile],
+          channel: fw.channel,
+          tmdbId: capParsed.tmdbId || null,
+        };
+        titleName = inferredName;
       }
     } else if (detailEl) {
       const detailTitleId = detailEl?.dataset?.title;

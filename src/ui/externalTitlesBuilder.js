@@ -25,22 +25,38 @@ function resolveExternalMetadata(id, tmdbId, files, virtualId, metadataMap = {})
     files.map(f => getOverride(f.key) || (f.messageId && virtualId ? getOverride(`${virtualId}:${f.messageId}`) : null) || (f.messageId && rawVirtualId ? getOverride(`${rawVirtualId}:${f.messageId}`) : null)).find(Boolean) ||
     (tmdbId ? getOverrideByTmdbId(tmdbId) : null);
 
-  if (override) return override;
+  let finalMeta = null;
+  if (override) {
+    finalMeta = { ...override };
+  } else {
+    // 2. Metadatos manuales guardados en metadataMap
+    const saved = metadataMap[idStr] ||
+      (idRaw ? metadataMap[idRaw] : null) ||
+      (idExt ? metadataMap[idExt] : null) ||
+      (tmdbId ? (metadataMap[`tmdb_${tmdbId}`] || metadataMap[String(tmdbId)]) : null) ||
+      (firstMsgId && virtualId ? metadataMap[`${virtualId}:${firstMsgId}`] : null) ||
+      (firstMsgId && rawVirtualId ? metadataMap[`${rawVirtualId}:${firstMsgId}`] : null) ||
+      files.map(f => metadataMap[f.key] || (f.messageId && virtualId ? metadataMap[`${virtualId}:${f.messageId}`] : null) || (f.messageId && rawVirtualId ? metadataMap[`${rawVirtualId}:${f.messageId}`] : null)).find(Boolean);
 
-  // 2. Metadatos manuales guardados en metadataMap
-  const saved = metadataMap[idStr] ||
-    (idRaw ? metadataMap[idRaw] : null) ||
-    (idExt ? metadataMap[idExt] : null) ||
-    (tmdbId ? (metadataMap[`tmdb_${tmdbId}`] || metadataMap[String(tmdbId)]) : null) ||
-    (firstMsgId && virtualId ? metadataMap[`${virtualId}:${firstMsgId}`] : null) ||
-    (firstMsgId && rawVirtualId ? metadataMap[`${rawVirtualId}:${firstMsgId}`] : null) ||
-    files.map(f => metadataMap[f.key] || (f.messageId && virtualId ? metadataMap[`${virtualId}:${f.messageId}`] : null) || (f.messageId && rawVirtualId ? metadataMap[`${rawVirtualId}:${f.messageId}`] : null)).find(Boolean);
+    if (saved) {
+      finalMeta = { ...saved };
+    } else {
+      // 3. Fallback: Metadatos previos del propio archivo (si vinieron de escaneo válido)
+      const fileWithMeta = files.find(f => f.metadata) || files[0];
+      if (fileWithMeta?.metadata) finalMeta = { ...fileWithMeta.metadata };
+    }
+  }
 
-  if (saved) return saved;
-
-  // 3. Fallback: Metadatos previos del propio archivo (si vinieron de escaneo válido)
-  const fileWithMeta = files.find(f => f.metadata) || files[0];
-  return fileWithMeta?.metadata || null;
+  if (finalMeta && typeof finalMeta === 'object') {
+    if (!finalMeta.year) {
+      const d = finalMeta.date || finalMeta.release_date || finalMeta.first_air_date;
+      if (d) {
+        const ym = String(d).match(/\b((?:19|20)\d{2})\b/);
+        if (ym) finalMeta.year = ym[1];
+      }
+    }
+  }
+  return finalMeta;
 }
 
 const GENERIC_SERIES_NAME_RE = /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|video|file|input|\d+)$/i;
