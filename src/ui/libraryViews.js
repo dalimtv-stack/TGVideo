@@ -855,7 +855,8 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   const seasonsMap = new Map();
   if (t.tipo === "serie" && Array.isArray(t.archivos)) {
     for (const f of t.archivos) {
-      const s = Number.isInteger(f.season) ? f.season : (Number(f.season) || 1);
+      let s = (Number.isInteger(f.season) && f.season > 0) ? f.season : (Number(f.season) || 1);
+      if (s <= 0 && (!f.isSpecial && !/especial|extra/i.test(f.fileName || f.label || ''))) s = 1;
       if (!seasonsMap.has(s)) seasonsMap.set(s, []);
       seasonsMap.get(s).push(f);
     }

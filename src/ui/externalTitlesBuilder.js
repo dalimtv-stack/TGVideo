@@ -80,6 +80,23 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
   const groupName = channelRecord.group || channelRecord.name || channelRecord.title || 'Externo';
 
   applyEpisodeOverrides(detectedFiles);
+
+  // Normalizar y asegurar temporada/episodio en todos los archivos detectados
+  for (const f of detectedFiles) {
+    if (!f) continue;
+    if (!f.season || f.season <= 0 || !f.episode || f.episode <= 0) {
+      const epFile = parseEpisode(f.captionFileName || f.fileName || f.label || '');
+      const epCap = parseEpisode(f.rawCaption || f.caption || '');
+      const sDet = epFile.season > 0 ? epFile.season : epCap.season;
+      const eDet = epFile.episode > 0 ? epFile.episode : epCap.episode;
+      if (sDet > 0 && (!f.season || f.season <= 0)) f.season = sDet;
+      if (eDet > 0 && (!f.episode || f.episode <= 0)) f.episode = eDet;
+    }
+    if (f.season === 0 && (!f.isSpecial && !/especial|extra/i.test(f.captionFileName || f.fileName || f.label || ''))) {
+      f.season = 1;
+    }
+  }
+
   const trailingSeriesMap = detectTrailingSeriesMap(detectedFiles);
 
   if (category === 'Películas') {
@@ -283,6 +300,19 @@ export function buildTitlesForExternalChannel(channelRecord, detectedFiles, meta
         if (!f.episode || f.episode === 0) f.episode = numberedInfo.episode;
       } else if (isValidSeriesCandidate(prefixCandidate)) {
         knownName = prefixCandidate;
+      }
+
+      if (!f.season || f.season <= 0) {
+        const epF = parseEpisode(f.captionFileName || f.fileName || f.label || '');
+        const epC = parseEpisode(f.rawCaption || f.caption || '');
+        const s = epF.season > 0 ? epF.season : epC.season;
+        f.season = s > 0 ? s : 1;
+      }
+      if (!f.episode || f.episode <= 0) {
+        const epF = parseEpisode(f.captionFileName || f.fileName || f.label || '');
+        const epC = parseEpisode(f.rawCaption || f.caption || '');
+        const e = epF.episode > 0 ? epF.episode : epC.episode;
+        if (e > 0) f.episode = e;
       }
 
       // Si el episodio tiene TMDB ID o nombre de serie válido

@@ -119,8 +119,8 @@ export function parseEpisode(name = '') {
   m = clean.match(/\b(?:T(?:emp(?:orada)?)?|S(?:eason)?)[\s,–—.:_-]*(\d{1,2})[\s,–—.:-]+(\d{1,4})(?!\d)/i);
   if (m) return { season: +m[1], episode: +m[2] };
 
-  // 4. Solo episodio: Episodio 3, Cap 3, Capitulo 14, Ep 59, C04, Ch 2
-  m = clean.match(/\b(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*(\d{1,4})(?!\d)/i);
+  // 4. Solo episodio: Episodio 3, Cap 3, Capitulo 14, Ep 59, C04, C 07, Ch 2
+  m = clean.match(/\b(?:ep(?:isodio)?|cap(?:[ií]tulo)?|[Cc])[\s,–—.:_-]*(\d{1,4})(?!\d)/i);
   if (m) return { season: 1, episode: +m[1] };
 
   return { season: 0, episode: 0 };

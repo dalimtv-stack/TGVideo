@@ -542,7 +542,11 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
         const captionFileName = cap.fileName ? cap.fileName.trim() : null;
         const rawFileName = getFileName(msg) || '';
         const fileName = captionFileName || rawFileName || `video_${msg.id}.mp4`;
-        const ep = parseEpisode(fileName);
+        const epFile = parseEpisode(fileName);
+        const epCap = parseEpisode(rawCaption);
+        let epSeason = (epFile.season > 0 ? epFile.season : epCap.season) || (cap.season != null ? cap.season : 0);
+        let epNumber = (epFile.episode > 0 ? epFile.episode : epCap.episode) || (cap.episode != null ? cap.episode : 0);
+        if (epSeason === 0 && epNumber > 0) epSeason = 1;
         const doc = msg.document || msg.media?.document;
         const durAttr = doc?.attributes?.find(a => a.className === 'DocumentAttributeVideo');
 
@@ -575,8 +579,8 @@ async function startScanWithProgress({ dialog, topic, category, groupName, clien
           imdbId: cap.imdbId ? String(cap.imdbId).trim() : null,
           rating: cap.rating ? Number(cap.rating) : null,
           ageRating: cap.ageRating || null,
-          season: ep.season,
-          episode: ep.episode,
+          season: epSeason,
+          episode: epNumber,
           size: Number(doc?.size?.toString?.() || doc?.size || 0),
           duration: durAttr?.duration || 0,
           mimeType: doc?.mimeType || 'video/mp4',
