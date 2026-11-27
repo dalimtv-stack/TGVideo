@@ -140,12 +140,54 @@ html.is-tv .profiles-screen .avatar:not(.small) {
   font-size: 2.5rem;
 }
 
+.profiles-centered-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  gap: 2rem;
+}
+
+.profiles-side-spacer {
+  width: 130px;
+  flex: 0 0 130px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+html.is-tv .profiles-side-spacer {
+  width: 105px;
+  flex: 0 0 105px;
+}
+
+.profiles-add-wrapper {
+  width: 130px;
+  flex: 0 0 130px;
+  display: flex;
+  justify-content: center;
+}
+
+html.is-tv .profiles-add-wrapper {
+  width: 105px;
+  flex: 0 0 105px;
+}
+
 .profiles-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 2rem;
   justify-content: center;
   max-width: 900px;
+}
+
+@media (max-width: 600px) {
+  .profiles-side-spacer {
+    display: none;
+  }
+  .profiles-centered-container {
+    flex-direction: column;
+    gap: 1.5rem;
+  }
 }
 
 .profile-card {

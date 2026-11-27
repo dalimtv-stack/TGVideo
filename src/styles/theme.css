@@ -1,6 +1,10 @@
 /* src/styles/theme.css */
 /* Sistema de diseño y variables preparado para soporte de skins intercambiables */
 :root {
+  /* Títulos de las cuadrículas (skins) */
+  --grid-title-offset: 0.95rem;
+  --grid-title-weight: 700;
+  --grid-title-color: #fff;
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
   --sal: env(safe-area-inset-left, 0px);

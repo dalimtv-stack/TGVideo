@@ -1,3 +1,4 @@
+import { watchProgressiveLoad } from './ui/progressiveLoad.js';
 import { checkForUpdate } from './core/updateCheck.js';
 import { initContextMenu } from './ui/contextMenu.js';
 // Suprimir alerts intrusivos de GramJS (ej. TypeNotFoundError ID 0)
@@ -39,17 +40,27 @@ import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
 import { showProfileMenu, profileAvatar, applyProfileScale, modal } from './ui/settings.js';
 import { showAdminView } from './ui/adminView.js';
-import { buildTitlesForExternalChannel } from './ui/adminChannels.js';
+import { renderExternalsView } from './ui/externalsView.js';
 import { resolveTitleAgeRating } from './ui/ageRating.js';
 import { adjacentSeason, firstUncompleted, centerSeason } from './ui/seasons.js';
 import { mountCarousel, destroyCarousel } from './ui/carouselView.js';
 import { createLibraryViews } from './ui/libraryViews.js';
+import { getEpisodeOverride, saveEpisodeOverride } from './ui/externalTitlesCache.js';
 import { setupTvPlatform, isAndroidApp } from './core/platform.js';
 
 setupTvPlatform();
 
 const kv = createKV();
 const LIB_KEY = 'library_v2';
+// Pestaña "Externos" oculta temporalmente (planteamiento en revisión).
+const SHOW_EXTERNALS_SECTION = true;
+// Caché del procesado de títulos para cambios de pestaña rápidos (sin recalcular overrides/colecciones).
+let HOME_PROCESSED = { ref: null, profileId: null };
+// Títulos ya enviados a identificación TMDB en esta sesión (evita relanzar búsquedas en cada pestaña).
+const TMDB_ATTEMPTED = new Set();
+let BG_ENRICH = null;
+const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const perfLog = (msg) => console.log(`[perf] ${msg}`);
 
 const app = document.getElementById('app');
 
@@ -205,6 +216,7 @@ function promptApiCredentialsUI() {
 
 // ---------- Home con biblioteca ----------
 let TITLES_CACHE = null;
+let CHANNELS_CACHE = [];
 let ACTIVE_HOME_SECTION = 'inicio';
 let metadataController = null;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -212,12 +224,15 @@ const fmtSize = (b) => b > 1e9 ? (b / 1e9).toFixed(2) + ' GB' : (b / 1e6).toFixe
 const fmtDur = (s) => s ? `${Math.floor(s / 3600) ? Math.floor(s / 3600) + 'h ' : ''}${Math.floor(s % 3600 / 60)}min` : '';
 
 function formatPlayButtonLabel(t, st, progress) {
-  if (!st?.next) return '';
-  const isContinue = st.continueWatching && progress[st.next.key] && !progress[st.next.key].is_completed;
-  const actionPrefix = isContinue ? '▶ Continuar' : '▶ Reproducir';
+  const targetFile = st?.next || t?.archivos?.[0];
+  if (!targetFile) return '';
+  const p = progress?.[targetFile.key];
+  const isContinue = Boolean(st?.continueWatching && p && !p.is_completed);
+  const isCompleted = Boolean(p?.is_completed);
+  const actionPrefix = isContinue ? '▶ Continuar' : (isCompleted ? '▶ Volver a ver' : '▶ Reproducir');
 
   if (t.tipo === 'serie') {
-    const nextFile = st.next;
+    const nextFile = targetFile;
     const epNum = (nextFile.season || nextFile.episode)
       ? `T${nextFile.season || 1}·E${String(nextFile.episode || 1).padStart(2, '0')}`
       : '';
@@ -226,7 +241,7 @@ function formatPlayButtonLabel(t, st, progress) {
   }
 
   if (t.isSaga) {
-    const nextFile = st.next;
+    const nextFile = targetFile;
     const filmName = nextFile.metadata?.name || nextFile.sagaName || nextFile.label;
     return `${actionPrefix} ${filmName}`;
   }
@@ -263,7 +278,18 @@ async function persistTitlesMetadata() {
     const saved = await kv.get(LIB_KEY).catch(() => null);
     if (!saved) return;
     saved.metadataMap = saved.metadataMap || {};
+    saved.episodeOverrides = saved.episodeOverrides || {};
     for (const t of (TITLES_CACHE || [])) {
+      if (t.tipo === 'serie' && Array.isArray(t.archivos)) {
+        for (const f of t.archivos) {
+          if (!f.episodeOverride) continue;
+          const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+          const s = Number.isInteger(f.season) ? f.season : (Number(f.season) || 1);
+          const ep = Number.isInteger(f.episode) ? f.episode : (Number(f.episode) || 1);
+          saved.episodeOverrides[fKey] = { season: s, episode: ep, name: f.episodeOverride.name || null };
+          saveEpisodeOverride({ title: t, file: f, season: s, episode: ep, name: f.episodeOverride.name || null });
+        }
+      }
       const meta = metadataForPersist(t);
       if (meta) saved.metadataMap[t.id] = meta;
       if (Array.isArray(t.archivos) && (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1))) {
@@ -292,42 +318,35 @@ const libraryViews = createLibraryViews({
 async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const client = tg.getClient();
   const channels = await loadLibrary(client);
-  const savedObj = force ? null : await kv.get(LIB_KEY).catch(() => null);
+  CHANNELS_CACHE = channels;
+  // En una actualización completa se invalida el caché de los canales TGStorage,
+  // pero se conserva la biblioteca previa para restaurar los canales externos.
+  const previousObj = await kv.get(LIB_KEY).catch(() => null);
+  const savedObj = force ? null : previousObj;
   const saved = savedObj?.cache || {};
-  const savedMeta = savedObj?.metadataMap || {};
+  const savedMeta = previousObj?.metadataMap || {};
+  const savedEpisodeOverrides = previousObj?.episodeOverrides || {};
   const { titles, cache } = await buildTitles(client, channels, tg.peerOf, onProgress, saved);
 
-  // Reintegrar canales externos persistidos en external_sources_v1
+  // Conservar canales externos persistidos en external_sources_v1 sin escanearlos en el arranque
+  // (los títulos de canales externos se cargan bajo demanda en su pestaña dedicada sin ralentizar el inicio)
   const extSources = (await kv.get('external_sources_v1').catch(() => [])) || [];
-  const combinedCache = { ...saved, ...cache };
-
-  for (const ext of extSources) {
-    const extId = String(ext.id);
-    const cachedFiles = combinedCache[extId];
-    if (Array.isArray(cachedFiles) && cachedFiles.length > 0) {
-      combinedCache[extId] = cachedFiles;
-      const channelRecord = savedObj?.channels?.find(c => String(c.id) === extId) || {
-        id: extId,
-        name: ext.groupName || ext.title,
-        group: ext.groupName || ext.title,
-        category: ext.category || 'Películas',
-        title: ext.title,
-        isExternal: true,
-        isTopic: Boolean(ext.isTopic),
-        topicId: ext.topicId || null,
-        channelId: ext.channelId || extId.split('_top_')[0],
-        tgChannelId: ext.channelId || extId.split('_top_')[0],
-        hash: ext.hash || ext.accessHash || '0',
-        accessHash: ext.hash || ext.accessHash || '0',
-      };
-      const extTitles = buildTitlesForExternalChannel(channelRecord, cachedFiles);
-      titles.push(...extTitles);
-    }
-  }
+  const combinedCache = { ...(force ? (previousObj?.cache || {}) : saved), ...cache };
 
   if (savedMeta) {
     for (const t of titles) {
       if (savedMeta[t.id]) t.metadata = savedMeta[t.id];
+      if (t.tipo === 'serie' && Array.isArray(t.archivos)) {
+        for (const f of t.archivos) {
+          const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+          const override = savedEpisodeOverrides[fKey] || getEpisodeOverride(fKey) || getEpisodeOverride(f);
+          if (!override) continue;
+          f.season = Number(override.season) || 1;
+          f.episodeOverride = override;
+          if (override.name) f.metadata = { ...(f.metadata || {}), name: override.name };
+          f.episodeOverride = { season: f.season, episode: f.episode };
+        }
+      }
       if (Array.isArray(t.archivos) && (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1))) {
         for (const f of t.archivos) {
           const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
@@ -342,8 +361,19 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   }
   const sig = channels.map(c => `${c.id}:${c.top}:${c.title}`).sort().join('|');
   const metadataMap = { ...savedMeta };
+  const episodeOverrides = { ...savedEpisodeOverrides };
   for (const t of titles) {
     if (t.metadata) metadataMap[t.id] = metadataForPersist(t);
+    if (t.tipo === 'serie' && Array.isArray(t.archivos)) {
+      for (const f of t.archivos) {
+        if (!f.episodeOverride) continue;
+        const fKey = f.key || `${t.channel?.id || t.id}:${f.messageId}`;
+        episodeOverrides[fKey] = {
+          season: Number(f.season) || 1,
+          episode: Number(f.episode) || 1,
+        };
+      }
+    }
     if (t.isSaga && Array.isArray(t.archivos)) {
       for (const f of t.archivos) {
         if (f.metadata) {
@@ -358,13 +388,19 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   const allChannels = [...channels];
   for (const ext of extSources) {
     const extId = String(ext.id);
-    const existingRec = savedObj?.channels?.find(c => String(c.id) === extId);
+    const existingRec = previousObj?.channels?.find(c => String(c.id) === extId);
     if (existingRec && !allChannels.some(c => String(c.id) === extId)) {
       allChannels.push(existingRec);
     }
   }
 
-  await kv.set(LIB_KEY, { cache: combinedCache, channels: allChannels, sig, metadataMap, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
+  const validChannelIds = new Set(allChannels.map(c => String(c.id)));
+  const cleanedCache = {};
+  for (const [chId, data] of Object.entries(combinedCache)) {
+    if (validChannelIds.has(String(chId))) cleanedCache[chId] = data;
+  }
+
+  await kv.set(LIB_KEY, { cache: cleanedCache, channels: allChannels, sig, metadataMap, episodeOverrides, savedAt: Date.now() }).catch(e => console.warn('[kv]', e));
   return { titles, sig };
 }
 
@@ -394,6 +430,15 @@ function showUpdateDialog({ onQuick, onFull }) {
   }, 50);
 }
 
+
+export function isExternalTitle(t) {
+  return Boolean(
+    t?.origen?.tipo === 'externo' ||
+    t?.channel?.isExternal ||
+    t?.isExternal ||
+    (typeof t?.channel?.id === 'string' && t.channel.id.includes('_top_'))
+  );
+}
 
 let CHECKED = false;
 function getSectionSort(profileId, sectionId) {
@@ -558,9 +603,72 @@ function applyOverridesAndUnbundle(titles = []) {
   return unbundledTitles;
 }
 
-async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
-  // 1. Sincronizar perfil y overrides desde Telegram
-  showLoading('Sincronizando perfil…');
+let BG_LIBRARY_PROMISE = null;
+let BG_LIBRARY_DONE = false;
+let BG_LIBRARY_STATUS = '';
+let WAITING_USER_SCREEN = false;
+
+function updateBackgroundProgress(statusText) {
+  BG_LIBRARY_STATUS = statusText;
+  if (WAITING_USER_SCREEN) {
+    const p = document.querySelector('.screen.center p');
+    if (p) p.textContent = statusText;
+  }
+}
+
+function startBackgroundLibraryCheck(tg) {
+  if (BG_LIBRARY_PROMISE) return BG_LIBRARY_PROMISE;
+  BG_LIBRARY_DONE = false;
+  BG_LIBRARY_STATUS = 'Comprobando nuevos vídeos…';
+
+  BG_LIBRARY_PROMISE = (async () => {
+    try {
+      const onProgress = (d, n) => {
+        updateBackgroundProgress(`Buscando nuevos vídeos… ${d}/${n}`);
+      };
+
+      const refreshed = await refreshLibrary(tg, { force: false, onProgress });
+      let titles = refreshed.titles || [];
+
+      titles = applyOverridesAndUnbundle(titles);
+      titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+      TITLES_CACHE = titles;
+      CHECKED = true;
+
+      const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+      pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
+      if (pendingTitles.length > 0) {
+        updateBackgroundProgress(`Identificando vídeos con TMDB (0/${pendingTitles.length})…`);
+        metadataController?.abort();
+        metadataController = new AbortController();
+        await enrichTitles(pendingTitles, {
+          signal: metadataController.signal,
+          onProgress: (d, total) => {
+            updateBackgroundProgress(`Identificando vídeos con TMDB (${d}/${total})…`);
+          },
+        });
+        persistTitlesMetadata();
+        titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+        TITLES_CACHE = titles;
+      }
+
+      updateBackgroundProgress('Cargando carátulas…');
+      await prewarmPosterCache(titles);
+      BG_LIBRARY_STATUS = '';
+      BG_LIBRARY_DONE = true;
+      return TITLES_CACHE;
+    } catch (err) {
+      console.error('[bgLibrary] Error en segundo plano:', err);
+      BG_LIBRARY_DONE = true;
+      if (!TITLES_CACHE) TITLES_CACHE = [];
+      return TITLES_CACHE;
+    }
+  })();
+
+  return BG_LIBRARY_PROMISE;
+}
+
+async function syncProfileOnly(sync, profile) {
   try {
     if (sync) {
       await loadOverrides(sync).catch(e => console.warn('[overrides] sync error', e));
@@ -602,12 +710,18 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   } catch (err) {
     console.warn('[sync] Error sincronizando perfil', err);
   }
+}
 
-  // 2. Comprobar canales y buscar nuevos vídeos
+async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
+  showLoading('Sincronizando perfil…');
+  await syncProfileOnly(sync, profile);
+
+  BG_LIBRARY_PROMISE = null;
+  BG_LIBRARY_DONE = false;
+  WAITING_USER_SCREEN = true;
   showLoading('Comprobando nuevos vídeos…');
   const onProgress = (d, n) => {
-    const p = document.querySelector('.screen.center p');
-    if (p) p.textContent = `Buscando nuevos vídeos… ${d}/${n}`;
+    updateBackgroundProgress(`Buscando nuevos vídeos… ${d}/${n}`);
   };
 
   try {
@@ -619,13 +733,12 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
   }
   CHECKED = true;
 
-  // 3. Aplicar overrides y separar versiones con identificación distinta
   let titles = applyOverridesAndUnbundle(TITLES_CACHE || []);
   titles = attachAutoCollections(mergeMoviesByTmdb(titles));
   TITLES_CACHE = titles;
 
-  // 4. Identificar vídeos pendientes en TMDB antes de mostrar la home
-  const pendingTitles = titles.filter(t => !t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata)));
+  const pendingTitles = titles.filter(t => !isExternalTitle(t) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+  pendingTitles.forEach(t => TMDB_ATTEMPTED.add(t.id));
   if (pendingTitles.length > 0) {
     showLoading(`Identificando vídeos con TMDB (0/${pendingTitles.length})…`);
     metadataController?.abort();
@@ -633,8 +746,7 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
     await enrichTitles(pendingTitles, {
       signal: metadataController.signal,
       onProgress: (d, total) => {
-        const p = document.querySelector('.screen.center p');
-        if (p) p.textContent = `Identificando vídeos con TMDB (${d}/${total})…`;
+        showLoading(`Identificando vídeos con TMDB (${d}/${total})…`);
       },
     });
     persistTitlesMetadata();
@@ -642,15 +754,16 @@ async function loadAndSyncAll(tg, sync, profile, { force = false } = {}) {
     TITLES_CACHE = titles;
   }
 
-  // 5. Aplicar preferencias de imagen del perfil y precalentar carátulas
   titles.forEach(t => applyImagePrefs(t, profile));
   showLoading('Cargando carátulas…');
   await prewarmPosterCache(titles);
+  WAITING_USER_SCREEN = false;
+  BG_LIBRARY_DONE = true;
 
   return TITLES_CACHE;
 }
 
-async function showHome(tg, sync, profile, { reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusSortToggle = false, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
+async function showHome(tg, sync, profile, { fast = false, reload = false, force = false, focusTitleId = null, focusRowId = null, focusCardIndex = null, focusExpandBtn = false, focusSort = null, focusSortToggle = false, focusViewBtn = false, selectedSection = ACTIVE_HOME_SECTION, fromPointer = false } = {}) {
   applyProfileScale(profile);
   if (selectedSection !== 'inicio') {
     setBackHandler(() => {
@@ -660,20 +773,33 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   } else {
     setBackHandler(() => showProfileSelector(tg, sync));
   }
-    if (reload || !TITLES_CACHE) {
+  const tStart = perfNow();
+  if (reload || !TITLES_CACHE) {
+    TMDB_ATTEMPTED.clear();
+    HOME_PROCESSED = { ref: null, profileId: null };
     await loadAndSyncAll(tg, sync, profile, { force });
+    perfLog(`loadAndSyncAll ${Math.round(perfNow() - tStart)} ms`);
   }
 
   let titles = TITLES_CACHE || [];
-  titles = applyOverridesAndUnbundle(titles);
-  titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
-  titles = attachAutoCollections(mergeMoviesByTmdb(titles));
-  titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
-  TITLES_CACHE = titles;
-  titles.forEach(t => applyImagePrefs(t, profile));
-
-  // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
-  await prewarmPosterCache(titles);
+  const canReuse = fast && !reload && HOME_PROCESSED.ref === TITLES_CACHE && HOME_PROCESSED.profileId === profile.id;
+  if (canReuse) {
+    perfLog(`showHome(${selectedSection}): procesado reutilizado (${titles.length} títulos)`);
+  } else {
+    const tProc = perfNow();
+    titles = applyOverridesAndUnbundle(titles);
+    titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
+    titles = attachAutoCollections(mergeMoviesByTmdb(titles));
+    titles = titles.filter(t => isTitleAllowedByProfileAge(t, profile));
+    TITLES_CACHE = titles;
+    titles.forEach(t => applyImagePrefs(t, profile));
+    const tPrewarm = perfNow();
+    // Precalentar carátulas cacheadas en memoria para que se muestren en 0 ms
+    await prewarmPosterCache(titles);
+    perfLog(`showHome(${selectedSection}): procesado ${Math.round(tPrewarm - tProc)} ms, prewarm carátulas ${Math.round(perfNow() - tPrewarm)} ms (${titles.length} títulos)`);
+    HOME_PROCESSED = { ref: titles, profileId: profile.id };
+  }
+  const tBuild = perfNow();
 
   const progress = loadProgress(profile.id);
   const rows = buildHomeRows(titles, progress, getNewsPrefs(profile));
@@ -701,11 +827,13 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       favoriteTitles.push(t);
     }
   }
-  const collectionTitles = titles.filter(t => t.isSaga || t.metadata?.tipo === 'collection');
-  const movieTitles = titles.filter(t => t.tipo === 'pelicula' && !t.isSaga && t.metadata?.tipo !== 'collection');
-  const seriesTitles = titles.filter(t => t.tipo === 'serie');
-  const sportTitles = titles.filter(t => t.tipo === 'deporte');
-  const musicTitles = titles.filter(t => t.tipo === 'musica');
+  const extSources = (await kv.get("external_sources_v1").catch(() => [])) || [];
+  const externalTitles = titles.filter(t => isExternalTitle(t));
+  const collectionTitles = titles.filter(t => (t.isSaga || t.metadata?.tipo === 'collection') && !isExternalTitle(t));
+  const movieTitles = titles.filter(t => t.tipo === 'pelicula' && !t.isSaga && t.metadata?.tipo !== 'collection' && !isExternalTitle(t));
+  const seriesTitles = titles.filter(t => t.tipo === 'serie' && !isExternalTitle(t));
+  const sportTitles = titles.filter(t => t.tipo === 'deporte' && !isExternalTitle(t));
+  const musicTitles = titles.filter(t => t.tipo === 'musica' && !isExternalTitle(t));
 
   const sectionDefs = [
     ...(titles.length ? [{ id: 'inicio', label: 'Inicio', items: titles }] : []),
@@ -715,13 +843,15 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     ...(sportTitles.length ? [{ id: 'deportes', label: 'Deportes', items: sportTitles }] : []),
     ...(musicTitles.length ? [{ id: 'musica', label: 'Música', items: musicTitles }] : []),
     ...(collectionTitles.length ? [{ id: 'colecciones', label: 'Colecciones', items: collectionTitles }] : []),
+    ...(SHOW_EXTERNALS_SECTION && (externalTitles.length || extSources.length) ? [{ id: 'externos', label: 'Externo', items: externalTitles }] : []),
   ];
   const isSearch = selectedSection === 'buscar' && titles.length > 0;
   if (!isSearch && !sectionDefs.some(section => section.id === selectedSection)) selectedSection = sectionDefs[0]?.id || 'inicio';
   ACTIVE_HOME_SECTION = selectedSection;
   const activeSection = sectionDefs.find(section => section.id === selectedSection);
 
-  const isCategorySection = selectedSection !== 'inicio' && !isSearch;
+  const isExternalsTab = selectedSection === 'externos';
+  const isCategorySection = selectedSection !== 'inicio' && !isSearch && !isExternalsTab;
   const currentView = isCategorySection ? getSectionViewMode(profile.id, selectedSection) : 'grid';
   const isCarousel = isCategorySection && (currentView === 'posters' || currentView === 'logos');
 
@@ -750,18 +880,20 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
   };
 
 
-  const body = !titles.length ? `
+  const body = (!titles.length && !isExternalsTab) ? `
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
         <p style="opacity:.6;margin-top:.5rem">Los canales deben terminar en <code>::Series::tgstorage</code> o <code>::Películas::tgstorage</code></p></div>`
     : isSearch ? searchViewHtml()
+    : isExternalsTab ? '<div id="externals-view-mount"></div>'
     : selectedSection !== 'inicio' ? (() => {
         const currentSort = getSectionSort(profile.id, selectedSection);
         const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
         const sortedItems = sortTitles(activeSection?.items || [], currentSort, currentOrder);
+        const initialChunk = isCarousel ? sortedItems : sortedItems.slice(0, 80);
         return `
       <section class="category-view ${isCarousel ? 'category-view--carousel' : 'category-view--grid'}" aria-label="${esc(activeSection?.label || '')}">
-        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${sortedItems.map(t => cardHtml(t, progress)).join('')}</div>`}
+        ${isCarousel ? `<div class="carousel-host" id="carousel-host"></div>` : `<div class="category-grid">${initialChunk.map(t => cardHtml(t, progress)).join('')}</div>`}
       </section>`;
       })()
     : rows.map(r => `
@@ -808,9 +940,25 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       button.blur();
       button.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
       destroyCarousel();
-      showHome(tg, sync, profile, { selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
+      perfLog(`click pestaña -> ${button.dataset.section}`);
+      showHome(tg, sync, profile, { fast: true, selectedSection: button.dataset.section, fromPointer: e.detail > 0 });
     };
   });
+  if (isExternalsTab) {
+    const extMount = document.getElementById('externals-view-mount');
+    if (extMount) {
+      renderExternalsView({
+        tg,
+        sync,
+        profile,
+        externalTitles,
+        extSources,
+        libraryViews,
+        showHome,
+        app: extMount,
+      });
+    }
+  }
   if (isSearch) {
     mountSearchView({
       titles,
@@ -888,7 +1036,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         setSectionSort(profile.id, selectedSection, sortType);
         setSectionSortOrder(profile.id, selectedSection, defaultOrder);
       }
-      showHome(tg, sync, profile, { selectedSection, focusSortToggle: true, fromPointer: e.detail > 0 });
+      showHome(tg, sync, profile, { fast: true, selectedSection, focusSortToggle: true, fromPointer: e.detail > 0 });
     };
   });
   const viewBtn = document.querySelector('.category-view-btn');
@@ -898,7 +1046,7 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       const current = getSectionViewMode(profile.id, selectedSection);
       const next = nextViewMode(current);
       setSectionViewMode(profile.id, selectedSection, next);
-      showHome(tg, sync, profile, { selectedSection, focusViewBtn: true, fromPointer: e.detail > 0 });
+      showHome(tg, sync, profile, { fast: true, selectedSection, focusViewBtn: true, fromPointer: e.detail > 0 });
     };
   }
 
@@ -950,16 +1098,52 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     };
   });
   document.querySelectorAll('#app .category-grid .lib-card[data-title]').forEach(card => {
+    const t = titles.find(x => String(x.id) === String(card.dataset.title));
+    if (t) card._titleData = t;
     card.onclick = () => {
-      const t = titles.find(x => String(x.id) === String(card.dataset.title));
       if (t) libraryViews.showDetail(tg, sync, profile, t);
     };
   });
+
+  // Carga progresiva en cuadrícula de sección (evita bloquear la interfaz en colecciones de miles de títulos)
+  if (!isCarousel && isCategorySection && activeSection?.items) {
+    const currentSort = getSectionSort(profile.id, selectedSection);
+    const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
+    const fullSorted = sortTitles(activeSection.items || [], currentSort, currentOrder);
+    const gridEl = document.querySelector('.category-grid');
+    if (gridEl && fullSorted.length > gridEl.querySelectorAll('.lib-card[data-title]').length) {
+      // Se continúa desde las tarjetas ya pintadas (las primeras vienen en el HTML inicial)
+      let loadedCards = gridEl.querySelectorAll('.lib-card[data-title]').length;
+      watchProgressiveLoad({
+        listEl: gridEl,
+        hasMore: () => loadedCards < fullSorted.length,
+        loadMore: () => {
+          const nextBatch = fullSorted.slice(loadedCards, loadedCards + 60);
+          loadedCards += nextBatch.length;
+          const range = document.createRange();
+          const frag = range.createContextualFragment(nextBatch.map(t => cardHtml(t, progress)).join(''));
+          frag.querySelectorAll('.lib-card[data-title]').forEach(card => {
+            const t = titles.find(x => String(x.id) === String(card.dataset.title));
+            if (t) card._titleData = t;
+            card.onclick = () => {
+              if (t) libraryViews.showDetail(tg, sync, profile, t);
+            };
+          });
+          frag.querySelectorAll('.lib-card-poster img.poster-image').forEach(img => {
+            const url = img.getAttribute('data-poster-url') || img.src;
+            if (url) loadPoster(img, url);
+          });
+          gridEl.appendChild(frag);
+        },
+      });
+    }
+  }
   document.querySelectorAll('#app .row').forEach(rowEl => {
     const rowId = rowEl.dataset.rowId;
     rowEl.querySelectorAll('.lib-card[data-title]').forEach((card, idx) => {
+      const t = titles.find(x => String(x.id) === String(card.dataset.title));
+      if (t) card._titleData = t;
       card.onclick = () => {
-        const t = titles.find(x => String(x.id) === String(card.dataset.title));
         if (t) libraryViews.showDetail(tg, sync, profile, t, { fromRowId: rowId, fromCardIndex: idx + 1 });
       };
     });
@@ -1018,8 +1202,8 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
       }
     }
   }, 80);
-  metadataController?.abort();
-  metadataController = new AbortController();
+  perfLog(`showHome(${selectedSection}): render HTML+eventos ${Math.round(perfNow() - tBuild)} ms, total ${Math.round(perfNow() - tStart)} ms`);
+  requestAnimationFrame(() => requestAnimationFrame(() => perfLog(`showHome(${selectedSection}): pintado en pantalla ${Math.round(perfNow() - tStart)} ms`)));
 
   let metaSaveTimer = null;
   const saveMetaDebounced = () => {
@@ -1044,8 +1228,17 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
     }, 2500);
   };
 
-  const pendingBg = titles.filter(t => !t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata)));
-  if (pendingBg.length > 0) {
+  const pendingBg = titles.filter(t => !isExternalTitle(t) && !TMDB_ATTEMPTED.has(t.id) && (!t.metadata || (t.isSaga && t.archivos?.some(f => !f.metadata))));
+  if (BG_ENRICH && BG_ENRICH.profileId === profile.id) {
+    if (pendingBg.length) perfLog(`TMDB en segundo plano ya en curso; ${pendingBg.length} pendientes nuevos esperan`);
+  } else if (pendingBg.length > 0) {
+    metadataController?.abort();
+    metadataController = new AbortController();
+    pendingBg.forEach(t => TMDB_ATTEMPTED.add(t.id));
+    const bgRun = { profileId: profile.id };
+    BG_ENRICH = bgRun;
+    const tEnrich = perfNow();
+    perfLog(`TMDB segundo plano: ${pendingBg.length} títulos`);
     enrichTitles(pendingBg, { signal: metadataController.signal, onUpdate: title => {
       applyImagePrefs(title, profile);
       saveMetaDebounced();
@@ -1084,10 +1277,13 @@ async function showHome(tg, sync, profile, { reload = false, force = false, focu
         const before = TITLES_CACHE.length;
         TITLES_CACHE = attachAutoCollections(mergeMoviesByTmdb(TITLES_CACHE));
         if (TITLES_CACHE.length !== before && document.querySelector('.home-screen') && !document.querySelector('.carousel-stage:focus, .carousel-stage.dpad-focused') && (selectedSection === 'inicio' || selectedSection === 'colecciones')) {
-          showHome(tg, sync, profile, { focusSort: getSectionSort(profile.id, selectedSection), fromPointer: true });
+          showHome(tg, sync, profile, { selectedSection: ACTIVE_HOME_SECTION, focusSort: getSectionSort(profile.id, ACTIVE_HOME_SECTION), fromPointer: true });
         }
       }
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => {
+      perfLog(`TMDB segundo plano terminado en ${Math.round(perfNow() - tEnrich)} ms`);
+      if (BG_ENRICH === bgRun) BG_ENRICH = null;
+    });
   }
 }
 
@@ -1120,9 +1316,14 @@ async function showProfileSelector(tg, sync) {
   showScreen(`
     <div class="screen profiles-screen">
       <h1 class="profiles-title">¿Quién está ahí?</h1>
-      <div class="profiles-grid">
-        ${cards}
-        ${addCard}
+      <div class="profiles-centered-container">
+        <div class="profiles-side-spacer" aria-hidden="true"></div>
+        <div class="profiles-grid">
+          ${cards}
+        </div>
+        <div class="profiles-add-wrapper">
+          ${addCard}
+        </div>
       </div>
       <button id="btn-logout" data-focusable class="logout-btn">Cerrar sesión</button>
     </div>
@@ -1151,7 +1352,19 @@ async function showProfileSelector(tg, sync) {
         localStorage.setItem('tgvideo_last_profile_id', profile.id);
       }
       if (profile) {
-        await loadAndSyncAll(tg, sync, profile);
+        showLoading('Sincronizando perfil…');
+        await syncProfileOnly(sync, profile);
+
+        if (BG_LIBRARY_PROMISE && !BG_LIBRARY_DONE) {
+          if (BG_LIBRARY_STATUS) {
+            showLoading(BG_LIBRARY_STATUS);
+          }
+          WAITING_USER_SCREEN = true;
+          await BG_LIBRARY_PROMISE;
+          WAITING_USER_SCREEN = false;
+        }
+
+        (TITLES_CACHE || []).forEach(t => applyImagePrefs(t, profile));
 
         if (isDevLogEnabled()) {
           startDevLogging({
@@ -1240,10 +1453,14 @@ async function start() {
 
     window.tg = tg;
     window.sync = sync;
-    initContextMenu({ tg, getTitles: () => TITLES_CACHE });
+    initContextMenu({ tg, getTitles: () => TITLES_CACHE, getChannels: () => CHANNELS_CACHE });
 
     await loadGlobalConfig(sync);
     await loadOverrides(sync).catch(e => console.warn('[overrides]', e));
+
+    // Arrancar comprobación de biblioteca en segundo plano mientras el usuario elige perfil
+    startBackgroundLibraryCheck(tg);
+
     await showProfileSelector(tg, sync);
 
   } catch (err) {

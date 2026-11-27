@@ -794,3 +794,13 @@ html.is-tv .carousel-trailer-modal {
 .carousel-mode-posters .age-rating-badge {
   font-size: calc(0.76rem * var(--carousel-posters-scale, 1.83));
 }
+/* Punto 11: En modo carrusel portadas, elevar ligeramente la info bajo la portada */
+.carousel-mode-posters .carousel-stage {
+  padding-bottom: 23.5px !important;
+}
+
+.carousel-mode-posters .carousel-info {
+  position: relative !important;
+  top: -0.5px !important;
+  transform: translateY(-0.5px) !important;
+}

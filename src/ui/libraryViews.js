@@ -1,3 +1,14 @@
+// src/ui/libraryViews.js
+
+import { enrichTitles } from "../metadata/tmdb.js";
+import { createKV } from "../core/kv.js";
+import { modal } from "./settings.js";
+import { prewarmPosterCache } from "../metadata/posterCache.js";
+import { identifyTitlesInBulk } from './adminChannels.js';
+import { EXT_CHANNEL_TITLES_CACHE, isExternalFileHiddenSync, getEpisodeOverride, saveEpisodeOverride, applyEpisodeOverrides, filterSeriesFilesByMoves } from './externalTitlesCache.js';
+import { showEpisodeIdentificationModal } from './episodeIdentificationModal.js';
+import { showMoveEpisodeModal, executeEpisodeMove } from './moveEpisodeModal.js';
+import { groupTitles, unbundleTitles } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { prettyEpisodeName } from '../library/parse.js';
 import { extractTitleAndYear } from '../metadata/tmdb.js';
@@ -7,6 +18,7 @@ import { assignMovieToCollection, removeMovieFromCollection } from '../metadata/
 import { renderAgeBadgeHtml } from './ageRating.js';
 import { getTitleTrailers, openFullscreenTrailer } from './carouselView.js';
 import { fetchTmdbAgeRating, fetchImdbRating, fetchExternalIds } from '../metadata/tmdb.js';
+import { watchProgressiveLoad } from './progressiveLoad.js';
 
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
@@ -19,16 +31,290 @@ export function createLibraryViews(deps) {
     isFavorite, toggleFavorite, toggleAllWatched, focusFirst, showHome, app,
     persistMetadata,
   } = deps;
+  const kv = createKV();
+  const LIB_KEY = 'library_v2';
   let lastOpenedTitleId = null;
+  let refreshExternalGrid = null;
+  window.addEventListener('tgvideo:external-hidden-changed', () => {
+    try { refreshExternalGrid?.(); } catch (e) { console.warn('[libraryViews] No se pudo refrescar la cuadrícula externa', e); }
+  });
 
-  function showGroupGrid(tg, sync, profile, row, { focusTitleId = null } = {}) {
+  function showGroupGrid(tg, sync, profile, row, { focusTitleId = null, initialSearch = null } = {}) {
     applyProfileScale(profile);
-    const back = () => showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
+    const isExt = Boolean(row.isExternal || String(row.id || "").startsWith("ext-"));
+    const back = () => isExt ? showHome(tg, sync, profile, { selectedSection: "externos" }) : showHome(tg, sync, profile, { focusRowId: row.id, focusExpandBtn: true });
     setBackHandler(back);
+
+    const cleanChId = String(row.channel?.id || row.id || "").replace(/^ext-/, "");
+    if (isExt && cleanChId) {
+      const cached = EXT_CHANNEL_TITLES_CACHE.get(cleanChId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${cleanChId}`);
+      if (Array.isArray(cached) && cached.length > 0) {
+        row.gridItems = cached;
+        row.items = cached;
+      }
+    }
 
     const titles = getTitles() || [];
     const progress = loadProgress(profile.id);
-    const currentItems = (row.gridItems || row.items).map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+    const baseItems = isExt
+      ? (row.gridItems || row.items || [])
+      : (row.gridItems || row.items || []).map(it => titles.find(t => String(t.id) === String(it.id)) || it);
+
+    if (row.isExternal) {
+      baseItems.forEach(t => {
+        if (profile) applyImagePrefs(t, profile);
+      });
+      prewarmPosterCache(baseItems).catch(() => {});
+
+      // Auto-enriquecer en segundo plano los títulos que aún no tengan metadatos
+      const pendingExt = baseItems.filter(t => !t.metadata && (t.tmdbId || ["pelicula", "serie", "documental"].includes(t.tipo)));
+      if (pendingExt.length > 0) {
+        enrichTitles(pendingExt, {
+          onUpdate: (updatedTitle) => {
+            const cardEl = document.querySelector(`.grid-screen .lib-card[data-title="${esc(updatedTitle.id)}"]`);
+            if (cardEl) {
+              cardEl._titleData = updatedTitle;
+              const displayName = updatedTitle.metadata?.name || updatedTitle.metadata?.title || updatedTitle.nombre;
+              const nameEl = cardEl.querySelector(".lib-card-name");
+              if (nameEl) nameEl.textContent = displayName;
+              const posterEl = cardEl.querySelector(".lib-card-poster");
+              const posterUrl = updatedTitle.metadata?.poster;
+              if (posterEl && posterUrl) {
+                posterEl.classList.add("has-poster");
+                let img = posterEl.querySelector("img.poster-image");
+                if (!img) {
+                  img = document.createElement("img");
+                  img.className = "poster-image";
+                  img.alt = displayName;
+                  img.loading = "lazy";
+                  posterEl.prepend(img);
+                }
+                loadPoster(img, posterUrl);
+              }
+            }
+          },
+        }).then(async () => {
+          try {
+            const libObj = (await kv.get(LIB_KEY).catch(() => null)) || {};
+            libObj.metadataMap = libObj.metadataMap || {};
+            for (const t of pendingExt) {
+              if (t.metadata && !getOverride(t.id) && !getOverride(String(t.id).replace(/^ext-/, ""))) {
+                libObj.metadataMap[t.id] = {
+                  id: t.metadata.id,
+                  name: t.metadata.name || t.metadata.title,
+                  poster: t.metadata.poster,
+                  background: t.metadata.background || t.metadata.backdrop,
+                  backdrop: t.metadata.backdrop || t.metadata.background,
+                  logo: t.metadata.logo,
+                  overview: t.metadata.overview,
+                  tipo: t.metadata.tipo,
+                  year: t.metadata.year,
+                  ageRating: t.metadata.ageRating,
+                  genres: t.metadata.genres,
+                  voteAverage: t.metadata.voteAverage,
+                };
+              }
+            }
+            await kv.set(LIB_KEY, libObj).catch(() => {});
+          } catch (_) {}
+        }).catch(() => {});
+      }
+    }
+
+    const getGridSort = () => {
+      try { return localStorage.getItem(`tg_grid_sort_${profile.id}`) || 'subida'; }
+      catch (_) { return 'subida'; }
+    };
+    const setGridSort = (val) => {
+      try { localStorage.setItem(`tg_grid_sort_${profile.id}`, val); } catch (_) {}
+    };
+    const getGridSortDir = (currentSort = 'subida') => {
+      try {
+        const saved = localStorage.getItem(`tg_grid_sort_dir_${profile.id}`);
+        if (saved === 'asc' || saved === 'desc') return saved;
+      } catch (_) {}
+      return currentSort === 'nombre' ? 'asc' : 'desc';
+    };
+    const setGridSortDir = (val) => {
+      try { localStorage.setItem(`tg_grid_sort_dir_${profile.id}`, val); } catch (_) {}
+    };
+    const getGridFilterUnidentified = () => {
+      try { return localStorage.getItem(`tg_grid_unident_${profile.id}`) === 'true'; }
+      catch (_) { return false; }
+    };
+    const setGridFilterUnidentified = (val) => {
+      try { localStorage.setItem(`tg_grid_unident_${profile.id}`, val ? 'true' : 'false'); } catch (_) {}
+    };
+
+    let currentSort = getGridSort();
+    if (currentSort === 'tamano' && !row.isExternal) currentSort = 'subida';
+    let currentDir = getGridSortDir(currentSort);
+    let onlyUnidentified = getGridFilterUnidentified();
+    const getGridGrouped = () => {
+      try { return localStorage.getItem(`tg_grid_grouped_${profile.id}`) === "true"; }
+      catch (_) { return false; }
+    };
+    const setGridGrouped = (val) => {
+      try { localStorage.setItem(`tg_grid_grouped_${profile.id}`, val ? "true" : "false"); } catch (_) {}
+    };
+    let isGrouped = getGridGrouped();
+    let showHiddenExternal = false;
+
+    const isIdentified = (t) => Boolean(t.metadata?.id || t.tmdbId);
+
+    const sortGridItems = (items, sortType, sortDir) => {
+      const list = [...items];
+      const mult = sortDir === 'asc' ? 1 : -1;
+      if (sortType === 'subida') {
+        return list.sort((a, b) => {
+          const msgA = a.ultimoMensajeFecha || 0;
+          const msgB = b.ultimoMensajeFecha || 0;
+          if (msgB !== msgA) return (msgA - msgB) * mult;
+          const nameA = String(a.metadata?.name || a.metadata?.title || a.nombre || '');
+          const nameB = String(b.metadata?.name || b.metadata?.title || b.nombre || '');
+          return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+        });
+      }
+      if (sortType === 'nombre') {
+        return list.sort((a, b) => {
+          const nameA = String(a.metadata?.name || a.metadata?.title || a.nombre || '');
+          const nameB = String(b.metadata?.name || b.metadata?.title || b.nombre || '');
+          return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' }) * mult;
+        });
+      }
+      if (sortType === 'tamano') {
+        const sizeOf = (title) => (title.archivos || []).reduce((sum, file) => sum + (Number(file.size) || 0), 0);
+        return list.sort((a, b) => (sizeOf(a) - sizeOf(b)) * mult);
+      }
+      if (sortType === 'estreno') {
+        return list.sort((a, b) => {
+          const dateA = String(a.metadata?.date || a.yearHint || a.metadata?.release_date || a.metadata?.first_air_date || '');
+          const dateB = String(b.metadata?.date || b.yearHint || b.metadata?.release_date || b.metadata?.first_air_date || '');
+          if (dateA && dateB && dateA !== dateB) return dateA.localeCompare(dateB) * mult;
+          if (dateA && !dateB) return -1 * mult;
+          if (!dateA && dateB) return 1 * mult;
+          const nameA = String(a.metadata?.name || a.metadata?.title || a.nombre || '');
+          const nameB = String(b.metadata?.name || b.metadata?.title || b.nombre || '');
+          return nameA.localeCompare(nameB, 'es', { numeric: true, sensitivity: 'base' });
+        });
+      }
+      return list;
+    };
+
+    let searchTerm = initialSearch != null ? initialSearch : (row._savedSearch || "");
+
+    const getProcessedItems = () => {
+      let sourceItems = baseItems;
+      if (row.isExternal && !showHiddenExternal) {
+        sourceItems = baseItems.map(t => {
+          const files = (t.archivos || []).filter(f => !isExternalFileHiddenSync(f));
+          return files.length ? { ...t, archivos: files } : null;
+        }).filter(Boolean);
+      }
+      let filtered = isGrouped ? groupTitles(sourceItems) : unbundleTitles(sourceItems);
+      if (onlyUnidentified) {
+        filtered = filtered.filter(t => !isIdentified(t));
+      }
+      const q = (searchTerm || "").trim().toLowerCase();
+      if (q) {
+        filtered = filtered.filter(t => {
+          const tName = String(t.nombre || "").toLowerCase();
+          const metaName = String(t.metadata?.name || t.metadata?.title || "").toLowerCase();
+          const origName = String(t.metadata?.original_title || t.metadata?.original_name || "").toLowerCase();
+          const tmdbId = String(t.tmdbId || t.metadata?.id || "").toLowerCase();
+          const imdbId = String(t.imdbId || t.metadata?.imdbId || t.metadata?.imdb_id || "").toLowerCase();
+          const year = String(t.yearHint || t.metadata?.year || t.metadata?.date || "").toLowerCase();
+          const overview = String(t.metadata?.overview || t.metadata?.synopsis || "").toLowerCase();
+          const director = String(t.metadata?.director || "").toLowerCase();
+          const cast = String(t.metadata?.cast || "").toLowerCase();
+          const genres = Array.isArray(t.metadata?.genres)
+            ? t.metadata.genres.map(g => (typeof g === "object" ? g.name : g)).join(" ").toLowerCase()
+            : "";
+
+          if (
+            tName.includes(q) ||
+            metaName.includes(q) ||
+            origName.includes(q) ||
+            tmdbId.includes(q) ||
+            imdbId.includes(q) ||
+            year.includes(q) ||
+            overview.includes(q) ||
+            director.includes(q) ||
+            cast.includes(q) ||
+            genres.includes(q)
+          ) {
+            return true;
+          }
+
+          if (Array.isArray(t.archivos)) {
+            for (const f of t.archivos) {
+              const fName = String(f.fileName || "").toLowerCase();
+              const capName = String(f.captionFileName || "").toLowerCase();
+              const rawName = String(f.rawFileName || "").toLowerCase();
+              const rawCap = String(f.rawCaption || "").toLowerCase();
+              const label = String(f.label || "").toLowerCase();
+              const syn = String(f.synopsis || "").toLowerCase();
+              const msgId = String(f.messageId || "").toLowerCase();
+              const sec = String(f.section || "").toLowerCase();
+              if (
+                fName.includes(q) ||
+                capName.includes(q) ||
+                rawName.includes(q) ||
+                rawCap.includes(q) ||
+                label.includes(q) ||
+                syn.includes(q) ||
+                msgId.includes(q) ||
+                sec.includes(q)
+              ) {
+                return true;
+              }
+              if (f.season && f.episode) {
+                const ep1 = `${f.season}x${f.episode}`.toLowerCase();
+                const ep2 = `${f.season}x${String(f.episode).padStart(2, "0")}`.toLowerCase();
+                const ep3 = `s${f.season}e${f.episode}`.toLowerCase();
+                const ep4 = `s${String(f.season).padStart(2, "0")}e${String(f.episode).padStart(2, "0")}`.toLowerCase();
+                if (ep1.includes(q) || ep2.includes(q) || ep3.includes(q) || ep4.includes(q)) {
+                  return true;
+                }
+              }
+            }
+          }
+          return false;
+        });
+      }
+      return sortGridItems(filtered, currentSort, currentDir);
+    };
+
+    const renderToolsHtml = () => `
+      <div class="grid-sort-bar" role="group" aria-label="Ordenar títulos">
+        <span class="grid-sort-label">Ordenar:</span>
+        <button type="button" class="grid-sort-btn ${currentSort === 'subida' ? 'active' : ''}" data-focusable data-sort="subida" aria-pressed="${currentSort === 'subida'}" title="Ordenar por fecha de subida (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Subida${currentSort === 'subida' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+        <button type="button" class="grid-sort-btn ${currentSort === 'nombre' ? 'active' : ''}" data-focusable data-sort="nombre" aria-pressed="${currentSort === 'nombre'}" title="Ordenar por nombre (${currentDir === 'asc' ? 'A-Z' : 'Z-A'})">Nombre${currentSort === 'nombre' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+        <button type="button" class="grid-sort-btn ${currentSort === 'estreno' ? 'active' : ''}" data-focusable data-sort="estreno" aria-pressed="${currentSort === 'estreno'}" title="Ordenar por fecha de estreno (${currentDir === 'asc' ? 'antiguos primero' : 'recientes primero'})">Estreno${currentSort === 'estreno' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>
+        ${row.isExternal ? `<button type="button" class="grid-sort-btn ${currentSort === 'tamano' ? 'active' : ''}" data-focusable data-sort="tamano" aria-pressed="${currentSort === 'tamano'}" title="Ordenar por tamaño total de los vídeos">Tamaño${currentSort === 'tamano' ? (currentDir === 'asc' ? ' ↑' : ' ↓') : ''}</button>` : ''}
+        ${row.isExternal ? `<button type="button" class="grid-filter-group-btn ${showHiddenExternal ? 'active' : ''}" data-focusable id="grid-filter-hidden-btn" role="checkbox" aria-checked="${showHiddenExternal}" title="Mostrar u ocultar archivos ya gestionados"><span class="grid-filter-icon" aria-hidden="true">${showHiddenExternal ? '☑' : '☐'}</span><span class="grid-filter-text">${showHiddenExternal ? 'Ocultos visibles' : 'Ver ocultos'}</span></button>` : ''}
+        ${row.isExternal ? `
+          <button type="button" class="grid-filter-group-btn ${isGrouped ? "active" : ""}" id="grid-filter-group-btn" data-focusable role="checkbox" aria-checked="${isGrouped}" title="Agrupar series y películas">
+            <span class="grid-filter-icon" aria-hidden="true">${isGrouped ? "☑" : "☐"}</span>
+            <span class="grid-filter-text">Agrupar</span>
+          </button>
+          <button type="button" class="grid-filter-unidentified-btn ${onlyUnidentified ? 'active' : ''}" data-focusable role="checkbox" aria-checked="${onlyUnidentified}" title="Mostrar solo títulos sin identificar en TMDB">
+            <span class="grid-filter-icon" aria-hidden="true">${onlyUnidentified ? '☑' : '☐'}</span>
+            <span class="grid-filter-text">No identificados</span>
+          </button>
+        ` : ''}
+        ${row.isExternal ? `
+          <button type="button" class="grid-filter-unidentified-btn" id="grid-btn-tools-identify" data-focusable title="Identificar vídeos de este canal con TMDB">
+            <span class="grid-filter-icon" aria-hidden="true">✨</span>
+            <span class="grid-filter-text">Identificar</span>
+          </button>
+        ` : ''}
+      </div>`;
+
+    const initialItems = getProcessedItems();
+    const CHUNK_SIZE = 80;
+    let activeGridItems = initialItems;
+    let renderedCount = 0;
 
     showScreen(`
       <div class="screen grid-screen" data-grid-id="${esc(row.id)}">
@@ -36,27 +322,326 @@ export function createLibraryViews(deps) {
           <button class="btn-icon" data-focusable id="grid-btn-back" title="Volver al inicio" aria-label="Volver">←</button>
           <div class="grid-header-info">
             <h1>${esc(row.title)}</h1>
-            <span class="grid-count">${currentItems.length} ${currentItems.length === 1 ? "título" : "títulos"}</span>
+            <span class="grid-count">${initialItems.length} ${initialItems.length === 1 ? "título" : "títulos"}</span>
+          </div>
+          ${row.isExternal ? `
+            <div class="grid-search-container" style="display: flex; align-items: center; position: relative; min-width: 190px; max-width: 320px; flex: 1 1 auto; margin: 0 0.5rem;">
+              <span style="position: absolute; left: 0.75rem; color: #94a3b8; font-size: 0.9rem; pointer-events: none;">🔍</span>
+              <input type="search" id="grid-search-input" class="grid-search-input" data-focusable placeholder="Buscar archivo, título, TMDB..." value="${esc(searchTerm)}" style="width: 100%; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 9999px; padding: 0.4rem 2rem 0.4rem 2.2rem; color: #fff; font-size: 0.88rem; outline: none; transition: border-color 0.2s, background 0.2s;" />
+              <button type="button" id="grid-search-clear" style="position: absolute; right: 0.5rem; display: none; background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 0.85rem; padding: 0.2rem;" title="Limpiar búsqueda">✕</button>
+            </div>
+          ` : ''}
+          ${row.isExternal ? `
+            <button class="btn-icon" data-focusable id="grid-btn-reload" title="Actualizar canal" aria-label="Actualizar canal" style="font-size: 1.2rem; margin-right: 0.4rem;">↻</button>
+            <button class="btn-icon" data-focusable id="grid-btn-identify" title="Identificar vídeos sin metadatos en TMDB" aria-label="Identificar con TMDB" style="font-size: 1.1rem; margin-right: 0.4rem; color: #c084fc;">✨</button>
+          ` : ''}
+          <div class="grid-tools" role="region" aria-label="Herramientas de ordenación de cuadrícula">
+            ${renderToolsHtml()}
           </div>
         </header>
-        <main class="grid-cards">
-          ${currentItems.map(t => cardHtml(t, progress)).join("")}
-        </main>
+        <main class="grid-cards"></main>
       </div>`);
 
     document.getElementById("grid-btn-back").onclick = back;
 
-    document.querySelectorAll("#app .grid-cards .lib-card").forEach(card => {
-      card.onclick = () => {
-        const t = currentItems.find(x => String(x.id) === String(card.dataset.title));
-        if (t) showDetail(tg, sync, profile, t, { fromGrid: row });
-      };
-    });
+    const appendGridBatch = (mainEl, items) => {
+      if (!mainEl || renderedCount >= items.length) return;
+      const batch = items.slice(renderedCount, renderedCount + CHUNK_SIZE);
+      renderedCount += batch.length;
+      const frag = document.createRange().createContextualFragment(
+        batch.map(t => cardHtml(t, progress)).join("")
+      );
+      frag.querySelectorAll(".lib-card[data-title]").forEach(card => {
+        const t = items.find(x => String(x.id) === String(card.dataset.title));
+        if (t) card._titleData = t;
+        card.onclick = () => {
+          row._savedSearch = searchTerm;
+          if (t) {
+            t._isExternalContext = Boolean(row.isExternal || isExt);
+            showDetail(tg, sync, profile, t, { fromGrid: row, savedSearch: searchTerm });
+          }
+        };
+      });
+      frag.querySelectorAll(".lib-card-poster img.poster-image").forEach(img => {
+        const url = img.getAttribute("data-poster-url") || img.src;
+        if (url) loadPoster(img, url);
+      });
+      mainEl.appendChild(frag);
+    };
 
-    document.querySelectorAll("#app .grid-cards .lib-card-poster img.poster-image").forEach(img => {
-      const url = img.getAttribute("data-poster-url") || img.src;
-      if (url) loadPoster(img, url);
-    });
+    const renderCards = (items) => {
+      activeGridItems = items;
+      renderedCount = 0;
+      const mainEl = document.querySelector(".grid-screen .grid-cards");
+      const countEl = document.querySelector(".grid-screen .grid-count");
+      if (countEl) {
+        countEl.textContent = `${items.length} ${items.length === 1 ? "título" : "títulos"}`;
+      }
+      if (mainEl) {
+        mainEl.innerHTML = "";
+        if (items.length > 0) {
+          appendGridBatch(mainEl, items);
+          gridLoader?.check();
+        } else {
+          if (searchTerm.trim()) {
+            mainEl.innerHTML = `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;">
+              <p style="font-size: 1.1rem; margin-bottom: 0.4rem; color: #fff;">Sin resultados para "<strong>${esc(searchTerm)}</strong>"</p>
+              <p style="color: #888; font-size: 0.88rem;">Busca por nombre de archivo, capítulo (ej: 1x02), título o ID de TMDB.</p>
+              <button class="btn btn-secondary" id="grid-empty-reset-search" style="margin-top: 1.2rem; padding: 0.5rem 1.2rem;">Restablecer búsqueda</button>
+            </div>`;
+            mainEl.querySelector("#grid-empty-reset-search")?.addEventListener("click", () => {
+              if (searchInput) searchInput.value = "";
+              searchTerm = "";
+              if (searchClear) searchClear.style.display = "none";
+              renderCards(getProcessedItems());
+            });
+          } else {
+            mainEl.innerHTML = `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;"><p>No se encontraron vídeos ${onlyUnidentified ? "sin identificar " : ""}en este canal.</p></div>`;
+          }
+        }
+      }
+    };
+
+    // Carga progresiva: escucha el scroll real del contenedor y el foco del mando (no solo window)
+    let gridLoader = null;
+    const ensureGridLoader = () => {
+      const mainEl = document.querySelector(".grid-screen .grid-cards");
+      if (!mainEl) return;
+      if (!gridLoader) {
+        gridLoader = watchProgressiveLoad({
+          listEl: mainEl,
+          hasMore: () => renderedCount < activeGridItems.length,
+          loadMore: () => appendGridBatch(mainEl, activeGridItems),
+        });
+      } else {
+        gridLoader.check();
+      }
+    };
+
+    renderCards(initialItems);
+    ensureGridLoader();
+    refreshExternalGrid = row.isExternal ? () => renderCards(getProcessedItems()) : null;
+
+    const searchInput = document.getElementById("grid-search-input");
+    const searchClear = document.getElementById("grid-search-clear");
+    if (searchInput) {
+      let searchTimeout = null;
+      if (searchTerm && searchClear) {
+        searchClear.style.display = "inline-block";
+      }
+      searchInput.addEventListener("input", () => {
+        searchTerm = searchInput.value;
+        row._savedSearch = searchTerm;
+        if (searchClear) searchClear.style.display = searchTerm ? "inline-block" : "none";
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+          renderCards(getProcessedItems());
+        }, 150);
+      });
+      searchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          searchInput.value = "";
+          searchTerm = "";
+          row._savedSearch = "";
+          if (searchClear) searchClear.style.display = "none";
+          renderCards(getProcessedItems());
+        }
+      });
+    }
+    if (searchClear) {
+      searchClear.addEventListener("click", () => {
+        if (searchInput) {
+          searchInput.value = "";
+          searchTerm = "";
+          row._savedSearch = "";
+          searchClear.style.display = "none";
+          searchInput.focus();
+          renderCards(getProcessedItems());
+        }
+      });
+    }
+
+    const updateToolsUI = () => {
+      document.querySelectorAll(".grid-sort-btn").forEach(btn => {
+        const s = btn.dataset.sort;
+        const isActive = s === currentSort;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-pressed", String(isActive));
+        const baseName = s === "subida" ? "Subida" : s === "nombre" ? "Nombre" : s === "tamano" ? "Tamaño" : "Estreno";
+        const arrow = isActive ? (currentDir === "asc" ? " ↑" : " ↓") : "";
+        btn.textContent = `${baseName}${arrow}`;
+      });
+      const gBtn = document.getElementById("grid-filter-group-btn");
+      if (gBtn) {
+        gBtn.classList.toggle("active", isGrouped);
+        gBtn.setAttribute("aria-checked", String(isGrouped));
+        const icon = gBtn.querySelector(".grid-filter-icon");
+        if (icon) icon.textContent = isGrouped ? "☑" : "☐";
+      }
+      const hiddenBtn = document.getElementById("grid-filter-hidden-btn");
+      if (hiddenBtn) {
+        hiddenBtn.classList.toggle("active", showHiddenExternal);
+        hiddenBtn.setAttribute("aria-checked", String(showHiddenExternal));
+        const icon = hiddenBtn.querySelector(".grid-filter-icon");
+        const label = hiddenBtn.querySelector(".grid-filter-text");
+        if (icon) icon.textContent = showHiddenExternal ? "☑" : "☐";
+        if (label) label.textContent = showHiddenExternal ? "Ocultos visibles" : "Ver ocultos";
+      }
+      const fBtn = document.querySelector(".grid-filter-unidentified-btn");
+      if (fBtn) {
+        fBtn.classList.toggle("active", onlyUnidentified);
+        fBtn.setAttribute("aria-checked", String(onlyUnidentified));
+        const icon = fBtn.querySelector(".grid-filter-icon");
+        if (icon) icon.textContent = onlyUnidentified ? "☑" : "☐";
+      }
+    };
+
+    const bindTools = () => {
+      document.querySelectorAll(".grid-sort-btn").forEach(btn => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const sortType = btn.dataset.sort;
+          if (sortType === currentSort) {
+            currentDir = currentDir === "desc" ? "asc" : "desc";
+          } else {
+            currentSort = sortType;
+            currentDir = sortType === "nombre" ? "asc" : "desc";
+          }
+          setGridSort(currentSort);
+          setGridSortDir(currentDir);
+          updateToolsUI();
+          renderCards(getProcessedItems());
+        };
+      });
+
+      const hiddenBtn = document.getElementById("grid-filter-hidden-btn");
+      if (hiddenBtn) {
+        hiddenBtn.onclick = (e) => {
+          e.stopPropagation();
+          showHiddenExternal = !showHiddenExternal;
+          updateToolsUI();
+          renderCards(getProcessedItems());
+        };
+      }
+
+      const groupBtn = document.getElementById("grid-filter-group-btn");
+      if (groupBtn) {
+        groupBtn.onclick = (e) => {
+          e.stopPropagation();
+          isGrouped = !isGrouped;
+          setGridGrouped(isGrouped);
+          updateToolsUI();
+          renderCards(getProcessedItems());
+        };
+      }
+
+      const filterBtn = document.querySelector(".grid-filter-unidentified-btn");
+      if (filterBtn) {
+        filterBtn.onclick = (e) => {
+          e.stopPropagation();
+          onlyUnidentified = !onlyUnidentified;
+          setGridFilterUnidentified(onlyUnidentified);
+          updateToolsUI();
+          renderCards(getProcessedItems());
+        };
+      }
+
+      const reloadBtn = document.getElementById("grid-btn-reload");
+      if (reloadBtn && row.isExternal && typeof row.onRefreshRequested === "function") {
+        reloadBtn.onclick = (e) => {
+          e.stopPropagation();
+          const { overlay, close } = modal("Actualizar canal externo", `
+            <div style="display:flex;flex-direction:column;gap:1rem;">
+              <p style="color:#aaa;font-size:0.95rem;margin:0 0 0.2rem;">Selecciona el modo de actualización para este canal:</p>
+              <div class="update-options-list" style="display:flex;flex-direction:column;gap:0.8rem;">
+                <button class="btn btn-update-option" id="ext-opt-quick" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
+                  <div style="font-weight:700;font-size:1.05rem;color:#fff;">⚡ Actualización rápida</div>
+                  <div style="font-size:0.85rem;color:#bbb;margin-top:0.25rem;">Comprueba solo mensajes nuevos posteriores al último escaneo.</div>
+                </button>
+                <button class="btn btn-secondary btn-update-option" id="ext-opt-full" data-focusable style="text-align:left;padding:0.9rem 1.1rem;line-height:1.4;">
+                  <div style="font-weight:700;font-size:1.05rem;color:#fff;">🔄 Forzar actualización completa</div>
+                  <div style="font-size:0.85rem;color:#bbb;margin-top:0.25rem;">Reescanea todo el canal desde el principio.</div>
+                </button>
+              </div>
+            </div>
+          `, "Comprueba nuevos vídeos o reescanea el canal");
+
+          overlay.querySelector("#ext-opt-quick").onclick = async () => {
+            close();
+            reloadBtn.style.animation = "spinUpload 1s linear infinite";
+            try {
+              const freshTitles = await row.onRefreshRequested(false);
+              if (Array.isArray(freshTitles)) {
+                baseItems.length = 0;
+                baseItems.push(...freshTitles);
+                renderCards(getProcessedItems());
+              }
+            } catch (err) {
+              console.error("[libraryViews] Error en actualización rápida:", err);
+              alert("Error al actualizar canal: " + (err.message || String(err)));
+            } finally {
+              reloadBtn.style.animation = "";
+            }
+          };
+
+          overlay.querySelector("#ext-opt-full").onclick = async () => {
+            close();
+            reloadBtn.style.animation = "spinUpload 1s linear infinite";
+            try {
+              const freshTitles = await row.onRefreshRequested(true);
+              if (Array.isArray(freshTitles)) {
+                baseItems.length = 0;
+                baseItems.push(...freshTitles);
+                renderCards(getProcessedItems());
+              }
+            } catch (err) {
+              console.error("[libraryViews] Error en actualización completa:", err);
+              alert("Error al actualizar canal: " + (err.message || String(err)));
+            } finally {
+              reloadBtn.style.animation = "";
+            }
+          };
+
+          setTimeout(() => {
+            overlay.querySelector("#ext-opt-quick")?.focus();
+          }, 50);
+        };
+      }
+
+      const runBulkIdentify = async () => {
+        await identifyTitlesInBulk(baseItems, {
+          modalTitle: `Identificar: ${row.title || 'Canal externo'}`,
+          onComplete: (enriched) => {
+            const extChId = String(row.channel?.id ?? row.id ?? '').replace(/^ext-/, '');
+            if (extChId) {
+              EXT_CHANNEL_TITLES_CACHE.set(extChId, baseItems);
+            }
+            if (typeof persistMetadata === 'function') {
+              persistMetadata();
+            }
+            renderCards(getProcessedItems());
+          },
+        });
+      };
+
+      const topIdentifyBtn = document.getElementById("grid-btn-identify");
+      if (topIdentifyBtn) {
+        topIdentifyBtn.onclick = (e) => {
+          e.stopPropagation();
+          runBulkIdentify();
+        };
+      }
+
+      const toolIdentifyBtn = document.getElementById("grid-btn-tools-identify");
+      if (toolIdentifyBtn) {
+        toolIdentifyBtn.onclick = (e) => {
+          e.stopPropagation();
+          runBulkIdentify();
+        };
+      }
+    };
+
+    bindTools();
 
     setTimeout(() => {
       let el = null;
@@ -72,8 +657,6 @@ export function createLibraryViews(deps) {
       }
     }, 80);
   }
-
-
 
 function applySagaFilmMetadata(t) {
   const detail = document.querySelector('.detail');
@@ -211,7 +794,6 @@ function applyDetailMetadata(t, profile) {
     info.innerHTML = [yearStr, ratingWithAge].filter(Boolean).join(' · ');
   }
 
-
   // Actualizar botón de reproducir con el nombre TMDB si está disponible
   const playBtn = detail.querySelector('#d-play');
   if (playBtn && profile?.id) {
@@ -222,7 +804,7 @@ function applyDetailMetadata(t, profile) {
   }
 }
 
-function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = null, fromGrid = null } = {}) {
+function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = null, fromGrid = null, savedSearch = null } = {}) {
   lastOpenedTitleId = t.id;
   if (t.isSaga && Array.isArray(t.archivos)) {
     const allTitles = getTitles() || [];
@@ -245,7 +827,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   }
   const back = () => {
     if (fromGrid) {
-      showGroupGrid(tg, sync, profile, fromGrid, { focusTitleId: t.id });
+      showGroupGrid(tg, sync, profile, fromGrid, { focusTitleId: t.id, initialSearch: savedSearch || fromGrid._savedSearch });
     } else {
       showHome(tg, sync, profile, { focusTitleId: t.id, focusRowId: fromRowId, focusCardIndex: fromCardIndex });
     }
@@ -253,17 +835,28 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
   setBackHandler(back);
   const progress = loadProgress(profile.id);
   const st = titleState(t, progress);
-  const nextLabel = formatPlayButtonLabel(t, st, progress);
+  const targetFileToPlay = st.next || t.archivos?.[0] || null;
+  const nextLabel = formatPlayButtonLabel(t, st, progress) || (targetFileToPlay ? (progress?.[targetFileToPlay.key]?.is_completed ? "▶ Volver a ver" : "▶ Reproducir") : "");
 
-  const seasonsMap = new Map();
-  if (t.tipo === 'serie') for (const f of t.archivos) {
-    const s = f.season || 1;
-    if (!seasonsMap.has(s)) seasonsMap.set(s, []);
-    seasonsMap.get(s).push(f);
+  if (t.tipo === "serie" && Array.isArray(t.archivos)) {
+    const isExt = Boolean(t._isExternalContext || fromGrid?.isExternal || String(fromGrid?.id || "").startsWith("ext-") || t.origen?.tipo === "externo");
+    const cleanChId = String(t.channel?.id || fromGrid?.channel?.id || fromGrid?.id || "").replace(/^ext-/, "");
+    const pool = isExt
+      ? (fromGrid?.gridItems || fromGrid?.items || EXT_CHANNEL_TITLES_CACHE.get(cleanChId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${cleanChId}`) || [])
+      : (typeof getTitles === "function" ? getTitles() || [] : []);
+    filterSeriesFilesByMoves(t, pool);
   }
-  const seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
+  const seasonsMap = new Map();
+  if (t.tipo === "serie" && Array.isArray(t.archivos)) {
+    for (const f of t.archivos) {
+      const s = Number.isInteger(f.season) ? f.season : (Number(f.season) || 1);
+      if (!seasonsMap.has(s)) seasonsMap.set(s, []);
+      seasonsMap.get(s).push(f);
+    }
+  }
+  let seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
   let currentSeason = st.next?.season && seasonsMap.has(st.next.season) ? st.next.season : (seasons[0] || 1);
-  const hasSeasons = t.tipo === 'serie' && seasons.length > 1;
+  let hasSeasons = t.tipo === 'serie' && seasons.length > 1;
   const seasonsBarHtml = hasSeasons ? `
     <div class="seasons-bar"><div class="seasons-label">Temporadas</div>
       <div class="seasons-track">${seasons.map(s => `<button class="season-btn ${s === currentSeason ? 'active' : ''}" data-focusable data-season="${s}">Temporada ${s}</button>`).join('')}</div>
@@ -296,7 +889,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
             <button class="btn-syn-toggle" type="button" hidden data-focusable>más</button>
           </div>
           <div class="detail-actions-row">
-            ${st.next ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p>Este canal todavía no tiene vídeos.</p>'}
+            ${targetFileToPlay ? `<button class="btn" data-focusable id="d-play">${nextLabel}</button>` : '<p class="detail-no-videos">No hay archivos de vídeo disponibles para este título.</p>'}
             <button class="btn-icon-action" data-focusable id="d-fav" type="button" title="Añadir a favoritos" aria-label="Añadir a favoritos">
               <span class="btn-action-icon" aria-hidden="true">★</span>
               <span class="btn-action-tooltip">Añadir a favoritos</span>
@@ -364,7 +957,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       const attachFn = attachAutoCollections || (x => x);
       if (getTitles()) setTitles(attachFn(mergeMoviesByTmdb(getTitles())));
       applyDetailMetadata(t, profile);
-      showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid });
+      showDetail(tg, sync, profile, t, { fromRowId, fromCardIndex, fromGrid, savedSearch });
     }, { client: tg?.getClient?.(), peerOf: tg?.peerOf, profile, sync });
   };
 
@@ -439,7 +1032,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     playFile({
       client: tg.getClient(), peerOf: tg.peerOf, file: f, title: targetTitle, profile,
       resumeAt: p && !p.is_completed ? p.current_time : 0, mount: app,
-      onClose: () => showDetail(tg, sync, profile, targetTitle, { fromRowId, fromCardIndex, fromGrid }),
+      onClose: () => showDetail(tg, sync, profile, targetTitle, { fromRowId, fromCardIndex, fromGrid, savedSearch }),
       sync,
       nextFile,
       onNext: (nf) => play(nf, nextTitle),
@@ -463,7 +1056,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     container.innerHTML = files.map((f) => {
       const p = progress[f.key];
       const pct = p?.duration ? Math.min(100, p.current_time / p.duration * 100) : 0;
-      const ep = f.season || f.episode ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
+      const ep = (t.tipo === 'serie' && (f.season || f.episode)) ? `T${f.season || 1}·E${String(f.episode).padStart(2, '0')}` : '';
       const filmYear = f.metadata?.date?.slice(0, 4) || f.fileName.match(/\b(?:19|20)\d{2}\b/)?.[0] || t.metadata?.date?.slice(0, 4) || '';
       const normalizedMovieName = t.metadata?.name || t.metadata?.title || t.nombre;
       const filmTitle = t.isSaga
@@ -493,6 +1086,7 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
           ${synopsis}${pct ? `<div class="poster-progress"><i style="width:${pct}%"></i></div>` : ''}</div>
         <div class="ep-state">
           ${p?.is_completed ? '<span class="ep-visto-badge">✓ Visto</span>' : pct ? Math.round(pct) + '%' : ''}
+          ${t.tipo === 'serie' ? `<button class="btn-icon-circle episode-move-btn" data-focusable type="button" data-key="${esc(f.key)}" title="Mover a otra serie" aria-label="Mover episodio a otra serie">⇄</button><button class="btn-icon-circle episode-identification-btn" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir temporada y episodio" aria-label="Corregir identificación del episodio">✎</button>` : ''}
           ${(t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1)) ? `<button class="btn-icon-circle saga-film-btn-meta" data-focusable type="button" data-key="${esc(f.key)}" title="Corregir identificación (TMDB)" aria-label="Identificación TMDB">ⓘ</button>` : ''}
         </div>
       </div>`;
@@ -500,6 +1094,91 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     container.querySelectorAll('.ep').forEach(el => {
       el.onclick = () => { const f = t.archivos.find(x => x.key === el.dataset.key); if (f) play(f); };
     });
+    if (t.tipo === 'serie') {
+      container.querySelectorAll('.episode-move-btn').forEach(moveBtn => {
+        moveBtn.onclick = (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const f = t.archivos.find(x => x.key === moveBtn.dataset.key);
+          if (!f) return;
+          const isExt = Boolean(t._isExternalContext || fromGrid?.isExternal || String(fromGrid?.id || "").startsWith("ext-") || t.origen?.tipo === "externo");
+          const channelId = String(t.channel?.id || fromGrid?.channel?.id || fromGrid?.id || "").replace(/^ext-/, "");
+          const availableTitles = isExt
+            ? (fromGrid?.gridItems || fromGrid?.items || EXT_CHANNEL_TITLES_CACHE.get(channelId) || EXT_CHANNEL_TITLES_CACHE.get(`ext-${channelId}`) || [])
+            : (getTitles() || []);
+
+          showMoveEpisodeModal({
+            file: f,
+            currentTitle: t,
+            allTitles: availableTitles,
+            esc,
+            onMoved: async ({ targetSeriesId, targetSeriesName, newSeason, newEpisode, targetTitle }) => {
+              const res = await executeEpisodeMove({
+                file: f,
+                sourceTitle: t,
+                targetTitle,
+                targetSeriesId,
+                targetSeriesName,
+                newSeason,
+                newEpisode,
+                isExt,
+                fromGrid,
+                channelId,
+                getTitles,
+                setTitles,
+                persistMetadata,
+              });
+
+              if (res.isEmpty) {
+                back();
+                return;
+              }
+
+              seasonsMap.clear();
+              for (const fItem of t.archivos) {
+                const s = Number.isInteger(fItem.season) ? fItem.season : (Number(fItem.season) || 1);
+                if (!seasonsMap.has(s)) seasonsMap.set(s, []);
+                seasonsMap.get(s).push(fItem);
+              }
+              seasons = [...seasonsMap.keys()].sort((a, b) => a - b);
+              hasSeasons = t.tipo === "serie" && seasons.length > 1;
+
+              if (!seasons.includes(currentSeason)) {
+                currentSeason = seasons[0] || 1;
+              }
+              renderEpisodes(currentSeason);
+              loadSeasonMeta(currentSeason);
+            },
+          });
+        };
+      });
+
+      container.querySelectorAll('.episode-identification-btn').forEach(editBtn => {
+        editBtn.onclick = (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const f = t.archivos.find(x => x.key === editBtn.dataset.key);
+          if (!f) return;
+          showEpisodeIdentificationModal({
+            title: t,
+            file: f,
+            client: tg?.getClient?.() || tg?.client,
+            peerOf: tg?.peerOf,
+            seasonsMap,
+            persistMetadata,
+            renderEpisodes,
+            loadSeasonMeta,
+            centerCurrentSeason,
+            changeSeason,
+            profile,
+            loadProgress,
+            formatPlayButtonLabel,
+            titleState,
+            esc,
+          });
+        };
+      });
+    }
     if (t.isSaga || (t.tipo === 'pelicula' && t.archivos.length > 1)) {
       container.querySelectorAll('.saga-film-btn-meta').forEach(metaBtn => {
         metaBtn.onclick = (e) => {
@@ -651,7 +1330,10 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
     observer.observe(track);
   }
   document.getElementById('d-back').onclick = back;
-  document.getElementById('d-play')?.addEventListener('click', () => play(st.next));
+  document.getElementById('d-play')?.addEventListener('click', () => {
+    const toPlay = st.next || t.archivos?.[0];
+    if (toPlay) play(toPlay);
+  });
 
   const favBtn = document.getElementById('d-fav');
   const watchedBtn = document.getElementById('d-watched');
@@ -701,7 +1383,8 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
       const newSt = titleState(t, prg);
       const playBtnEl = document.getElementById('d-play');
       if (playBtnEl) {
-        const lbl = formatPlayButtonLabel(t, newSt, prg);
+        const fileToPlay = newSt.next || t.archivos?.[0];
+        const lbl = formatPlayButtonLabel(t, newSt, prg) || (fileToPlay && prg[fileToPlay.key]?.is_completed ? "▶ Volver a ver" : "▶ Reproducir");
         if (lbl) playBtnEl.textContent = lbl;
       }
       renderEpisodes(currentSeason);
@@ -793,7 +1476,6 @@ function showDetail(tg, sync, profile, t, { fromRowId = null, fromCardIndex = nu
 
   focusFirst('#d-play, .season-btn.active, #ep-list .ep[data-focusable]');
 }
-
 
   return { showGroupGrid, showDetail, applyDetailMetadata, applySagaFilmMetadata };
 }
