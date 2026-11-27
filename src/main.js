@@ -1,3 +1,4 @@
+import { watchProgressiveLoad } from './ui/progressiveLoad.js';
 import { checkForUpdate } from './core/updateCheck.js';
 import { initContextMenu } from './ui/contextMenu.js';
 // Suprimir alerts intrusivos de GramJS (ej. TypeNotFoundError ID 0)
@@ -1110,14 +1111,13 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     const currentOrder = getSectionSortOrder(profile.id, selectedSection, currentSort);
     const fullSorted = sortTitles(activeSection.items || [], currentSort, currentOrder);
     const gridEl = document.querySelector('.category-grid');
-    if (gridEl && fullSorted.length > 80) {
-      let loadedCards = 80;
-      const onCategoryScroll = () => {
-        if (!gridEl.isConnected || loadedCards >= fullSorted.length) {
-          window.removeEventListener('scroll', onCategoryScroll);
-          return;
-        }
-        if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 800) {
+    if (gridEl && fullSorted.length > gridEl.querySelectorAll('.lib-card[data-title]').length) {
+      // Se continúa desde las tarjetas ya pintadas (las primeras vienen en el HTML inicial)
+      let loadedCards = gridEl.querySelectorAll('.lib-card[data-title]').length;
+      watchProgressiveLoad({
+        listEl: gridEl,
+        hasMore: () => loadedCards < fullSorted.length,
+        loadMore: () => {
           const nextBatch = fullSorted.slice(loadedCards, loadedCards + 60);
           loadedCards += nextBatch.length;
           const range = document.createRange();
@@ -1134,9 +1134,8 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
             if (url) loadPoster(img, url);
           });
           gridEl.appendChild(frag);
-        }
-      };
-      window.addEventListener('scroll', onCategoryScroll, { passive: true });
+        },
+      });
     }
   }
   document.querySelectorAll('#app .row').forEach(rowEl => {

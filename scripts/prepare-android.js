@@ -14,163 +14,8 @@ function ensureAppUpdaterPlugin() {
   }
 
   const pluginPath = path.join(javaDir, 'AppUpdaterPlugin.java');
-  const pluginCode = `package com.tgvideo.app;
-
-import android.content.Context;
-import android.content.Intent;
-import android.net.Uri;
-import android.os.Build;
-import androidx.core.content.FileProvider;
-
-import com.getcapacitor.JSObject;
-import com.getcapacitor.Plugin;
-import com.getcapacitor.PluginCall;
-import com.getcapacitor.PluginMethod;
-import com.getcapacitor.annotation.CapacitorPlugin;
-
-import java.io.BufferedInputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-
-@CapacitorPlugin(name = "AppUpdaterPlugin")
-public class AppUpdaterPlugin extends Plugin {
-
-    @Override
-    public void load() {
-        super.load();
-        cleanOldUpdateApk();
-    }
-
-    private void cleanOldUpdateApk() {
-        try {
-            Context context = getContext();
-            if (context == null) return;
-            File cacheDir = context.getExternalCacheDir();
-            if (cacheDir != null) {
-                File f = new File(cacheDir, "tgvideo_update.apk");
-                if (f.exists()) f.delete();
-            }
-            File intCache = context.getCacheDir();
-            if (intCache != null) {
-                File f = new File(intCache, "tgvideo_update.apk");
-                if (f.exists()) f.delete();
-            }
-        } catch (Exception ignored) {}
-    }
-
-    @PluginMethod
-    public void downloadAndInstall(PluginCall call) {
-        String urlString = call.getString("url");
-        if (urlString == null || urlString.isEmpty()) {
-            call.reject("URL de descarga no proporcionada");
-            return;
-        }
-
-        call.resolve();
-
-        new Thread(() -> {
-            HttpURLConnection connection = null;
-            InputStream input = null;
-            OutputStream output = null;
-            try {
-                Context context = getContext();
-                File cacheDir = context.getExternalCacheDir();
-                if (cacheDir == null) cacheDir = context.getCacheDir();
-
-                File apkFile = new File(cacheDir, "tgvideo_update.apk");
-                if (apkFile.exists()) {
-                    apkFile.delete();
-                }
-
-                URL url = new URL(urlString);
-                int redirectCount = 0;
-                while (redirectCount < 5) {
-                    connection = (HttpURLConnection) url.openConnection();
-                    connection.setInstanceFollowRedirects(true);
-                    connection.setRequestProperty("User-Agent", "TGVideo-AppUpdater");
-                    connection.connect();
-
-                    int status = connection.getResponseCode();
-                    if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
-                        status == HttpURLConnection.HTTP_MOVED_PERM ||
-                        status == 307 || status == 308) {
-                        String newUrl = connection.getHeaderField("Location");
-                        connection.disconnect();
-                        url = new URL(newUrl);
-                        redirectCount++;
-                    } else {
-                        break;
-                    }
-                }
-
-                int fileLength = connection.getContentLength();
-                input = new BufferedInputStream(connection.getInputStream(), 8192);
-                output = new FileOutputStream(apkFile);
-
-                byte[] data = new byte[8192];
-                long total = 0;
-                int count;
-                long lastNotifyTime = 0;
-
-                while ((count = input.read(data)) != -1) {
-                    total += count;
-                    output.write(data, 0, count);
-
-                    long now = System.currentTimeMillis();
-                    if (now - lastNotifyTime > 250 && fileLength > 0) {
-                        lastNotifyTime = now;
-                        int percent = (int) ((total * 100) / fileLength);
-                        JSObject progressObj = new JSObject();
-                        progressObj.put("percent", percent);
-                        progressObj.put("bytesDownloaded", total);
-                        progressObj.put("totalBytes", fileLength);
-                        notifyListeners("onUpdateProgress", progressObj);
-                    }
-                }
-
-                output.flush();
-                output.close();
-                output = null;
-                input.close();
-                input = null;
-
-                // Notificar 100% completado
-                JSObject doneObj = new JSObject();
-                doneObj.put("percent", 100);
-                doneObj.put("bytesDownloaded", total);
-                doneObj.put("totalBytes", total);
-                notifyListeners("onUpdateProgress", doneObj);
-
-                // Lanzar instalador nativo del paquete APK
-                Uri apkUri = FileProvider.getUriForFile(
-                    context,
-                    context.getPackageName() + ".fileprovider",
-                    apkFile
-                );
-
-                Intent intent = new Intent(Intent.ACTION_VIEW);
-                intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                context.startActivity(intent);
-
-            } catch (Exception e) {
-                JSObject errObj = new JSObject();
-                errObj.put("error", e.getMessage());
-                notifyListeners("onUpdateError", errObj);
-            } finally {
-                try { if (output != null) output.close(); } catch (Exception ignored) {}
-                try { if (input != null) input.close(); } catch (Exception ignored) {}
-                if (connection != null) connection.disconnect();
-            }
-        }).start();
-    }
-}
-`;
+  // Una sola fuente del plugin para builds locales y para GitHub Actions
+  const pluginCode = fs.readFileSync(path.resolve('native/android/AppUpdaterPlugin.java'), 'utf-8');
   fs.writeFileSync(pluginPath, pluginCode, 'utf-8');
   console.log('[prepare-android] AppUpdaterPlugin.java inyectado con éxito.');
 }
@@ -392,6 +237,14 @@ function configureMainActivity() {
     public boolean dispatchKeyEvent(android.view.KeyEvent event) {
         int action = event.getAction();
         int keyCode = event.getKeyCode();
+        // Tecla Menú (tres rayas) de Fire TV / Android TV: se avisa a la web con un evento propio
+        if (keyCode == android.view.KeyEvent.KEYCODE_MENU) {
+            if (action == android.view.KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 &&
+                getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().evaluateJavascript("window.dispatchEvent(new CustomEvent('tgvideo:menukey'))", null);
+            }
+            return true;
+        }
         if (action == android.view.KeyEvent.ACTION_DOWN) {
             if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
                 keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||

@@ -306,6 +306,16 @@ function move(dir) {
     const viewBtn = document.querySelector('.category-views-bar [data-focusable], .category-view-btn');
     if (viewBtn && viewBtn.offsetParent && !viewBtn.disabled) return viewBtn;
 
+    // Pestaña Externo: banners de canales externos
+    const extBanner = [...document.querySelectorAll('.home-main .ext-channel-banner[data-focusable], .ext-channel-banner[data-focusable]')]
+      .find(e => e.offsetParent && !e.disabled);
+    if (extBanner) return extBanner;
+
+    // Cualquier otra vista montada bajo la cabecera (futuras pestañas): primer elemento enfocable visible
+    const anyContent = [...document.querySelectorAll('.home-main [data-focusable]')]
+      .find(e => e.offsetParent && !e.disabled && !e.closest('.home-header'));
+    if (anyContent) return anyContent;
+
     return null;
   }
 
@@ -607,11 +617,28 @@ function move(dir) {
         const aboveCards = cards.filter(c => c.getBoundingClientRect().bottom <= curRect.top + 15);
         if (aboveCards.length === 0) {
           // Primera fila: subir a las herramientas o cabecera
+          // Antes se tomaba el botón de orden activo aunque estuviese oculto (barra de orden plegada,
+          // display:none): el foco no se movía y solo se podía salir con Atrás. Ahora se elige el
+          // primer candidato realmente visible.
           const screen = cur.closest('.grid-screen, .home-screen') || document;
-          const target = screen.querySelector('.grid-sort-bar [data-focusable].active, .category-sort-bar [data-focusable].active')
-            || screen.querySelector('.grid-sort-bar [data-focusable], .category-sort-bar [data-focusable]')
-            || screen.querySelector('#grid-btn-back, .home-nav-item.active, .home-nav-item');
-          if (target && target.offsetParent && !target.disabled) {
+          const isVisible = (el) => el && el.offsetParent && !el.disabled && el.getClientRects().length > 0;
+          const selectors = [
+            '.grid-sort-bar [data-focusable].active',
+            '.category-sort-bar [data-focusable].active',
+            '.grid-sort-bar [data-focusable]',
+            '.category-sort-bar [data-focusable]',
+            '.category-views-bar [data-focusable]',
+            '#grid-btn-back',
+            '.home-nav-item.active',
+            '.home-nav-item',
+            '#home-logo[data-focusable]',
+          ];
+          let target = null;
+          for (const sel of selectors) {
+            target = [...screen.querySelectorAll(sel)].find(isVisible) || null;
+            if (target) break;
+          }
+          if (target) {
             target.focus();
             target.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
             return;

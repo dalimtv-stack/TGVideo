@@ -32,8 +32,12 @@ function getUpdaterPlugin() {
  * Muestra el diálogo modal de descarga y actualización con barra de progreso.
  * @param {object} updateInfo Datos de la release obtenidos por checkForUpdate()
  */
+let updateInProgress = false;
+
 export async function startAppUpdate(updateInfo) {
   if (!updateInfo) return;
+  // Evita abrir dos descargas a la vez (doble pulsación del mando)
+  if (updateInProgress || document.querySelector('.update-download-overlay')) return;
 
   const isAndroid = typeof window !== 'undefined' &&
     (Capacitor?.isNativePlatform?.() || Capacitor?.getPlatform?.() === 'android');
@@ -49,6 +53,7 @@ export async function startAppUpdate(updateInfo) {
 
   // Comprobar si el plugin nativo de actualización está disponible
   const updaterPlugin = getUpdaterPlugin();
+  updateInProgress = true;
 
   const overlay = document.createElement('div');
   overlay.className = 'settings-overlay update-download-overlay';
@@ -84,16 +89,38 @@ export async function startAppUpdate(updateInfo) {
   const statusEl = overlay.querySelector('#update-status-label');
   const bytesEl = overlay.querySelector('#update-bytes-label');
   const cancelBtn = overlay.querySelector('#update-cancel-btn');
+  const actionsEl = cancelBtn.parentElement;
 
   let cancelled = false;
-  let progressListener = null;
-  let errorListener = null;
+  const listeners = [];
 
   const close = () => {
     cancelled = true;
-    try { progressListener?.remove?.(); } catch (_) {}
-    try { errorListener?.remove?.(); } catch (_) {}
+    updateInProgress = false;
+    listeners.forEach((l) => { try { l?.remove?.(); } catch (_) {} });
+    listeners.length = 0;
     overlay.remove();
+  };
+
+  const showRetryInstall = () => {
+    if (overlay.querySelector('#update-retry-btn')) return;
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.id = 'update-retry-btn';
+    retry.className = 'btn';
+    retry.setAttribute('data-focusable', '');
+    retry.style.padding = '0.6rem 1.6rem';
+    retry.textContent = 'Instalar ahora';
+    retry.onclick = async () => {
+      try {
+        await updaterPlugin.retryInstall();
+        if (statusEl) statusEl.textContent = 'Abriendo instalador de Android…';
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Error: ${err?.message || err}`;
+      }
+    };
+    actionsEl.prepend(retry);
+    retry.focus();
   };
 
   cancelBtn.onclick = () => close();
@@ -102,32 +129,48 @@ export async function startAppUpdate(updateInfo) {
   if (updaterPlugin && typeof updaterPlugin.downloadAndInstall === 'function') {
     try {
       if (typeof updaterPlugin.addListener === 'function') {
-        progressListener = await updaterPlugin.addListener('onUpdateProgress', (data) => {
+        listeners.push(await updaterPlugin.addListener('onUpdateProgress', (data) => {
           if (cancelled) return;
           const percent = Math.min(100, Math.max(0, Number(data?.percent) || 0));
           const downloaded = Number(data?.bytesDownloaded) || 0;
           const total = Number(data?.totalBytes) || 0;
-
           if (barEl) barEl.style.width = `${percent}%`;
           if (bytesEl) {
             bytesEl.textContent = total > 0
               ? `${percent}% (${formatBytes(downloaded)} / ${formatBytes(total)})`
               : `${percent}%`;
           }
-
-          if (percent >= 100) {
-            if (statusEl) statusEl.textContent = 'Descarga lista. Abriendo instalador de Android…';
-            setTimeout(close, 3500);
-          } else {
-            if (statusEl) statusEl.textContent = 'Descargando actualización…';
+          if (statusEl) {
+            statusEl.textContent = percent >= 100 ? 'Descarga verificada. Preparando instalación…' : 'Descargando actualización…';
           }
-        });
+        }));
 
-        errorListener = await updaterPlugin.addListener('onUpdateError', (data) => {
+        // Estado de la instalación: permiso pendiente, permiso denegado o instalador abierto
+        listeners.push(await updaterPlugin.addListener('onUpdateState', (data) => {
           if (cancelled) return;
+          const state = data?.state;
+          if (state === 'permission') {
+            if (statusEl) statusEl.textContent = 'Activa «Instalar apps desconocidas» para TGVideo y vuelve: la instalación seguirá sola.';
+            if (bytesEl) bytesEl.textContent = '';
+          } else if (state === 'permission-denied') {
+            if (statusEl) statusEl.textContent = 'Falta el permiso «Instalar apps desconocidas». La descarga está guardada.';
+            if (bytesEl) bytesEl.textContent = '';
+            showRetryInstall();
+          } else if (state === 'installer') {
+            if (statusEl) statusEl.textContent = 'Instalador de Android abierto. Pulsa «Actualizar» para terminar.';
+            if (bytesEl) bytesEl.textContent = '';
+            showRetryInstall();
+            const retry = overlay.querySelector('#update-retry-btn');
+            if (retry) retry.textContent = 'Abrir instalador otra vez';
+          }
+        }));
+
+        listeners.push(await updaterPlugin.addListener('onUpdateError', (data) => {
+          if (cancelled) return;
+          updateInProgress = false;
           if (statusEl) statusEl.textContent = `Error: ${data?.error || 'Fallo en la descarga'}`;
           if (bytesEl) bytesEl.textContent = 'Reintentar más tarde';
-        });
+        }));
       }
 
       await updaterPlugin.downloadAndInstall({ url: targetUrl, version });

@@ -18,6 +18,7 @@ import { assignMovieToCollection, removeMovieFromCollection } from '../metadata/
 import { renderAgeBadgeHtml } from './ageRating.js';
 import { getTitleTrailers, openFullscreenTrailer } from './carouselView.js';
 import { fetchTmdbAgeRating, fetchImdbRating, fetchExternalIds } from '../metadata/tmdb.js';
+import { watchProgressiveLoad } from './progressiveLoad.js';
 
 // Pantallas de biblioteca: fichas y cuadrículas separadas del orquestador.
 export function createLibraryViews(deps) {
@@ -380,6 +381,7 @@ export function createLibraryViews(deps) {
         mainEl.innerHTML = "";
         if (items.length > 0) {
           appendGridBatch(mainEl, items);
+          gridLoader?.check();
         } else {
           if (searchTerm.trim()) {
             mainEl.innerHTML = `<div class="grid-cards-empty" style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: #aaa;">
@@ -400,19 +402,24 @@ export function createLibraryViews(deps) {
       }
     };
 
-    const onGridScroll = () => {
+    // Carga progresiva: escucha el scroll real del contenedor y el foco del mando (no solo window)
+    let gridLoader = null;
+    const ensureGridLoader = () => {
       const mainEl = document.querySelector(".grid-screen .grid-cards");
-      if (!mainEl?.isConnected) {
-        window.removeEventListener("scroll", onGridScroll);
-        return;
-      }
-      if (renderedCount < activeGridItems.length && window.innerHeight + window.scrollY >= document.body.offsetHeight - 800) {
-        appendGridBatch(mainEl, activeGridItems);
+      if (!mainEl) return;
+      if (!gridLoader) {
+        gridLoader = watchProgressiveLoad({
+          listEl: mainEl,
+          hasMore: () => renderedCount < activeGridItems.length,
+          loadMore: () => appendGridBatch(mainEl, activeGridItems),
+        });
+      } else {
+        gridLoader.check();
       }
     };
-    window.addEventListener("scroll", onGridScroll, { passive: true });
 
     renderCards(initialItems);
+    ensureGridLoader();
     refreshExternalGrid = row.isExternal ? () => renderCards(getProcessedItems()) : null;
 
     const searchInput = document.getElementById("grid-search-input");

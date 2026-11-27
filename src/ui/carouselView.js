@@ -311,20 +311,10 @@ export function mountCarousel(host, { items: rawItems, mode = 'posters', initial
   destroyCarousel();
   if (!host || !rawItems?.length) return null;
 
-  // Un carrusel es un escaparate dinámico para navegación fluida a 60 FPS.
-  // Si la colección es masiva (ej. miles de títulos), limitamos el escaparate a 150 items
-  // centrados en el elemento inicial para evitar colapsar la memoria y el DOM.
-  const maxCarouselItems = 150;
-  let initialIdx = rawItems.findIndex((t) => String(t.id) === String(initialId));
-  let items = rawItems;
-  if (rawItems.length > maxCarouselItems) {
-    if (initialIdx > 100) {
-      const start = Math.max(0, initialIdx - 50);
-      items = rawItems.slice(start, start + maxCarouselItems);
-    } else {
-      items = rawItems.slice(0, maxCarouselItems);
-    }
-  }
+  // Sin límite de títulos: antes se recortaba a 150 y el resto de la sección no aparecía.
+  // Cada elemento es un <div> vacío hasta que entra en la ventana de carga (LOAD_WINDOW) o en
+  // pantalla (IntersectionObserver), así que miles de títulos no cargan imágenes de golpe.
+  const items = rawItems;
 
   const logos = mode === 'logos';
   let cur = Math.max(0, items.findIndex((t) => String(t.id) === String(initialId)));

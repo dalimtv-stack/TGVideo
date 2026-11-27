@@ -2,7 +2,7 @@
 // Orden y límites de las filas "Novedades · Películas" y "Novedades · Series".
 //  - 'upload':  fecha de subida a Telegram (más recientes primero)
 //  - 'release': estreno (películas) / emisión del último capítulo (series)
-import { loadProgress } from '../player/progress.js';
+import { patchRemoteProfile } from '../settings/profileSync.js';
 
 export const NEWS_HOME_LIMIT = 20;
 export const NEWS_GRID_LIMIT = 60;
@@ -26,17 +26,8 @@ export function setNewsPref(profile, kind, mode, sync) {
   const next = { ...getNewsPrefs(profile), [kind]: valid(mode) };
   profile.news = next;
   try { localStorage.setItem(key(profile), JSON.stringify(next)); } catch (_) {}
-  (async () => {
-    try {
-      const remote = await sync?.pullProfile?.(profile.id);
-      if (!remote) return;
-      await sync.pushProfile({
-        ...remote,
-        profile: { ...remote.profile, news: next },
-        progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {}),
-      });
-    } catch (err) { console.warn('[news] No se pudo sincronizar', err); }
-  })();
+  // Cola secuencial compartida con el resto de ajustes: no pisa otros cambios recientes
+  patchRemoteProfile(profile, sync, remoteProfile => ({ ...remoteProfile, news: next }), 'Novedades');
   return next;
 }
 

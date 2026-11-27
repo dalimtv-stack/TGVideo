@@ -9,6 +9,7 @@ import { loadProgress } from '../player/progress.js';
 import { getPosterCacheStats, optimizePosterCache, clearPosterCache, loadPoster } from '../metadata/posterCache.js';
 import { getDevicePosterSize, getDevicePosterQuality, setDevicePosterSettings } from '../settings/device.js';
 import { pruneOverrides, getOverridesSizeBytes } from '../metadata/overrides.js';
+import { patchRemoteProfile, saveDeviceEntry } from '../settings/profileSync.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -570,22 +571,8 @@ function profileSettings(profile, sync, onChanged) {
     close();
     onChanged();
 
-    // Sincronizar en segundo plano con Telegram sin bloquear la interfaz
-    (async () => {
-      try {
-        const remote = await sync.pullProfile(profile.id);
-        if (!remote) return;
-        const changed = { ...remote.profile, name, avatar };
-        await sync.pushProfile({
-          ...remote,
-          profile: changed,
-          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
-        });
-        Object.assign(profile, changed);
-      } catch (err) {
-        console.warn('[settings] Error al sincronizar nombre/avatar del perfil:', err);
-      }
-    })();
+    // Sincronizar en segundo plano con Telegram (cola secuencial: no pisa otros ajustes guardados)
+    patchRemoteProfile(profile, sync, remoteProfile => ({ ...remoteProfile, name, avatar }), 'nombre/avatar del perfil');
   };
 }
 
@@ -775,48 +762,15 @@ function deviceSettings(profile, sync, onChanged) {
       localStorage.setItem(`tgvideo_skip_${profile.id}`, String(skipSeconds));
     }
 
-    // Guardado en memoria en el perfil bajo la clave de este dispositivo
-    if (!profile.devices) profile.devices = {};
-    profile.devices[deviceId] = {
-      ...(profile.devices[deviceId] || {}),
-      player,
-      skip_seconds: skipSeconds,
-      updated_at: Date.now()
-    };
-    profile.player = player;
-    profile.skip_seconds = skipSeconds;
+    // Guardado en memoria y en Telegram bajo la clave de este dispositivo.
+    // Se conserva todo lo guardado antes desde Skin (escalas, resolución…).
+    saveDeviceEntry(profile, sync, deviceId,
+      { player, skip_seconds: skipSeconds },
+      { player, skip_seconds: skipSeconds },
+      'ajustes de dispositivo');
 
     close();
     onChanged();
-
-    // Sincronizar en segundo plano dentro del JSON de perfil en Telegram
-    (async () => {
-      try {
-        const remote = await sync.pullProfile(profile.id);
-        if (!remote) return;
-        const remoteDevices = remote.profile?.devices || {};
-        remoteDevices[deviceId] = {
-          ...(remoteDevices[deviceId] || {}),
-          player,
-          skip_seconds: skipSeconds,
-          updated_at: Date.now()
-        };
-        const changed = {
-          ...remote.profile,
-          devices: remoteDevices,
-          player,
-          skip_seconds: skipSeconds
-        };
-        await sync.pushProfile({
-          ...remote,
-          profile: changed,
-          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
-        });
-        Object.assign(profile, changed);
-      } catch (err) {
-        console.warn('[settings] Error al sincronizar ajustes de dispositivo:', err);
-      }
-    })();
   };
 }
 
@@ -911,15 +865,13 @@ function showSkinSettings(profile, sync, onChanged) {
       localStorage.setItem('tgvideo_device_pixel_zoom', String(pixelZoom));
       localStorage.setItem(`tgvideo_scale_${profile.id}`, String(uiScale));
     }
-    if (!profile.devices) profile.devices = {};
-    profile.devices[deviceId] = {
-      ...(profile.devices[deviceId] || {}),
+    const skinPatch = {
       ui_scale: uiScale,
       carousel_posters_scale: carouselPostersScale,
       carousel_logos_scale: carouselLogosScale,
       pixel_zoom: pixelZoom,
-      updated_at: Date.now()
     };
+    saveDeviceEntry(profile, sync, deviceId, skinPatch, { ui_scale: uiScale }, 'ajustes de Skin');
     applyDevicePixelZoom(pixelZoom);
     applyProfileScale(profile);
     close();
@@ -935,30 +887,6 @@ function showSkinSettings(profile, sync, onChanged) {
     };
     focusPrevModal();
     setTimeout(focusPrevModal, 50);
-    (async () => {
-      try {
-        const remote = await sync.pullProfile(profile.id);
-        if (!remote) return;
-        const devices = remote.profile?.devices || {};
-        devices[deviceId] = {
-          ...(devices[deviceId] || {}),
-          ui_scale: uiScale,
-          carousel_posters_scale: carouselPostersScale,
-          carousel_logos_scale: carouselLogosScale,
-          pixel_zoom: pixelZoom,
-          updated_at: Date.now()
-        };
-        const changed = { ...remote.profile, devices, ui_scale: uiScale };
-        await sync.pushProfile({
-          ...remote,
-          profile: changed,
-          progress: sync.mergeProgress(loadProgress(profile.id), remote.progress || {})
-        });
-        Object.assign(profile, changed);
-      } catch (err) {
-        console.warn('[settings] Error al sincronizar ajustes de Skin:', err);
-      }
-    })();
   };
 }
 

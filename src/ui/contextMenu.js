@@ -347,6 +347,19 @@ export function openContextMenuForFocusedElement() {
   if (!candidate || candidate === document.body) {
     candidate = document.querySelector('.dpad-focused');
   }
+  // En el carrusel el foco está en la pista (.carousel-stage): el elemento es la portada/logo activo
+  if (candidate?.closest?.('.carousel-stage')) {
+    candidate = candidate.closest('.carousel-stage').querySelector('.carousel-item.is-active') || candidate;
+  }
+  // Banners de Canales Externos: tienen su propio menú (oncontextmenu)
+  const banner = candidate?.closest?.('.ext-channel-banner');
+  if (banner) {
+    const r = banner.getBoundingClientRect();
+    banner.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+    }));
+    return true;
+  }
   let target = candidate?.closest?.('.ep, .lib-card, .carousel-item, .admin-video-row, .detail');
   if (!target) {
     const detailEl = document.querySelector('.detail');
@@ -1030,6 +1043,17 @@ export function initContextMenu(config) {
       }
     }
   }, true);
+
+  // Tecla Menú (tres rayas) enviada desde la parte nativa de la APK (Fire TV / Android TV)
+  window.addEventListener('tgvideo:menukey', () => {
+    if (activeMenuEl) {
+      removeActiveMenu();
+    } else if (document.getElementById('banner-context-menu')) {
+      document.getElementById('banner-context-menu').remove();
+    } else {
+      openContextMenuForFocusedElement();
+    }
+  });
 
   document.addEventListener('contextmenu', (e) => {
     const handled = showContextMenuForElement(e.target, { clientX: e.clientX, clientY: e.clientY });

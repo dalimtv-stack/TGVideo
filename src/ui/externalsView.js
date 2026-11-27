@@ -446,7 +446,37 @@ export function renderExternalsView({
       menu.querySelectorAll('.banner-menu-item').forEach(it => {
         it.addEventListener('mouseenter', () => { it.style.backgroundColor = '#252d3d'; });
         it.addEventListener('mouseleave', () => { it.style.backgroundColor = 'transparent'; });
+        // Navegable con mando (Android TV / Fire TV)
+        it.tabIndex = 0;
+        it.addEventListener('focus', () => { it.style.backgroundColor = '#252d3d'; it.style.outline = '2px solid #38bdf8'; it.style.outlineOffset = '-2px'; });
+        it.addEventListener('blur', () => { it.style.backgroundColor = 'transparent'; it.style.outline = 'none'; });
       });
+
+      // Teclado / mando dentro del menú: arriba/abajo recorre opciones, OK ejecuta, Atrás cierra
+      const menuItems = Array.from(menu.querySelectorAll('.banner-menu-item'));
+      menu.addEventListener('keydown', (ev) => {
+        const idx = menuItems.indexOf(document.activeElement);
+        if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const step = ev.key === 'ArrowDown' ? 1 : -1;
+          const next = menuItems[(idx + step + menuItems.length) % menuItems.length];
+          next?.focus();
+        } else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+          ev.preventDefault();
+          ev.stopPropagation();
+        } else if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          ev.stopPropagation();
+          document.activeElement?.click();
+        } else if (ev.key === 'Escape' || ev.key === 'Backspace' || ev.key === 'GoBack' || ev.keyCode === 4) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          removeBannerMenu();
+          banner.focus();
+        }
+      });
+      setTimeout(() => menuItems[0]?.focus(), 30);
 
       menu.querySelectorAll('.change-cat-btn').forEach(btn => {
         btn.onclick = async (ev) => {
