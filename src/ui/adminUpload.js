@@ -1,6 +1,6 @@
 // src/ui/adminUpload.js
 // Módulo para configurar y realizar la subida de vídeos a canales ::tgstorage en segundo plano con barra inferior.
-import { Api } from 'telegram';
+import { Api, helpers } from 'telegram';
 import { loadLibrary } from '../library/channels.js';
 import { buildStandardCaption, prettyName, parseEpisode } from '../library/parse.js';
 import { searchTmdbManual, cleanSearchName, extractTitleAndYear, parseTmdbId } from '../metadata/tmdb.js';
@@ -666,6 +666,98 @@ async function startConcurrentUploads({ files, seriesName, defaultSeason, tmdbId
  * Inicia la subida de un vídeo a Telegram en segundo plano.
  * Usa workers: 1 (como en TGComic) para máxima velocidad de arranque y evitar que se quede en 'Preparando subida'.
  */
+/**
+ * Sube archivos a Telegram en bloques de 512 KB directamente desde el objeto File/Blob.
+ * Evita el desbordamiento de memoria y el error "TypeError: Failed to fetch"
+ * provocado por GramJS al intentar leer archivos grandes (> 2 GB) con Response.arrayBuffer().
+ * Soporta archivos de hasta 4 GB para usuarios con Telegram Premium.
+ */
+async function uploadFileChunked(client, { file, name, onProgress }) {
+  const size = file.size;
+  const fileName = name || file.name || 'video.mp4';
+  const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024;
+  const isLarge = size > LARGE_FILE_THRESHOLD;
+  const partSize = 512 * 1024; // 512 KB por bloque (estándar Telegram para vídeos/archivos grandes)
+  const partCount = Math.ceil(size / partSize);
+
+  let fileId;
+  if (helpers?.readBigIntFromBuffer && helpers?.generateRandomBytes) {
+    fileId = helpers.readBigIntFromBuffer(helpers.generateRandomBytes(8), true, true);
+  } else {
+    const arr = new Uint8Array(8);
+    crypto.getRandomValues(arr);
+    let id = 0n;
+    for (let i = 0; i < 8; i++) {
+      id = (id << 8n) | BigInt(arr[i]);
+    }
+    fileId = id;
+  }
+
+  await client.getSender(client.session.dcId).catch(() => {});
+
+  let uploadedBytes = 0;
+  for (let j = 0; j < partCount; j++) {
+    const start = j * partSize;
+    const end = Math.min(size, (j + 1) * partSize);
+    const chunkBlob = file.slice(start, end);
+    const arrayBuffer = await chunkBlob.arrayBuffer();
+    const bytes = Buffer.from(arrayBuffer);
+
+    let sent = false;
+    let retries = 0;
+    while (!sent) {
+      let sender = null;
+      try {
+        sender = await client.getSender(client.session.dcId);
+        if (isLarge) {
+          await sender.send(new Api.upload.SaveBigFilePart({
+            fileId,
+            filePart: j,
+            fileTotalParts: partCount,
+            bytes,
+          }));
+        } else {
+          await sender.send(new Api.upload.SaveFilePart({
+            fileId,
+            filePart: j,
+            bytes,
+          }));
+        }
+        sent = true;
+      } catch (err) {
+        retries++;
+        if (sender && !sender.isConnected?.()) {
+          await new Promise(r => setTimeout(r, 1000));
+        } else if (err?.className === 'FloodWaitError' || err?.errorMessage === 'FLOOD_WAIT') {
+          await new Promise(r => setTimeout(r, (err.seconds || 2) * 1000));
+        } else if (retries < 8) {
+          await new Promise(r => setTimeout(r, 1000 * retries));
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    uploadedBytes += (end - start);
+    if (typeof onProgress === 'function') {
+      onProgress(uploadedBytes / size);
+    }
+  }
+
+  return isLarge
+    ? new Api.InputFileBig({
+        id: fileId,
+        parts: partCount,
+        name: fileName,
+      })
+    : new Api.InputFile({
+        id: fileId,
+        parts: partCount,
+        name: fileName,
+        md5Checksum: '',
+      });
+}
+
 export async function startBackgroundUpload({
   file,
   finalFilename,
@@ -714,12 +806,11 @@ export async function startBackgroundUpload({
       peer = targetChannelId;
     }
 
-    // Subida con workers: 1 (patrón robusto y rápido de TGComic que evita cuelgues)
     setTaskStatus(`Iniciando transferencia de ${formatBytes(file.size)}…`, 1);
 
-    const inputFile = await client.uploadFile({
+    const inputFile = await uploadFileChunked(client, {
       file,
-      workers: 1,
+      name: finalFilename,
       onProgress: (progress) => {
         const pct = Math.min(100, Math.round(progress * 100));
         const uploadedBytes = Math.round(progress * file.size);

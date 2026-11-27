@@ -452,24 +452,7 @@ export function createTelegramSync({ getClient, peerOf }) {
     let remoteFavs = mergeFavorites(data.favorites || [], data.profile?.favorites || []);
     let remoteImg = mergeImagePrefMaps(data.image_prefs || {}, data.profile?.image_prefs || {});
 
-    // Si hay más versiones en Telegram (hasta 3), fusionar favoritos e imágenes recientes
-    // para no perder datos si otro dispositivo subió un snapshot incompleto o desfasado
-    if (matching.length > 1) {
-      for (let i = 1; i < Math.min(matching.length, 3); i++) {
-        try {
-          const [prevMsg] = await client.getMessages(peer, { ids: [matching[i].messageId] });
-          if (!prevMsg?.media) continue;
-          const prevBuf = await client.downloadMedia(prevMsg.media, {});
-          const prevData = JSON.parse(new TextDecoder().decode(prevBuf));
-          const prevFavs = mergeFavorites(prevData.favorites || [], prevData.profile?.favorites || []);
-          if (prevFavs.length) {
-            remoteFavs = mergeFavorites(remoteFavs, prevFavs);
-          }
-          const prevImg = { ...(prevData.image_prefs || {}), ...(prevData.profile?.image_prefs || {}) };
-          remoteImg = mergeImagePrefMaps(remoteImg, prevImg);
-        } catch (_) {}
-      }
-    }
+    // La versión más reciente ya contiene favoritos, progreso e imágenes fusionados de forma atómica
 
     return {
       ...data,

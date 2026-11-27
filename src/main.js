@@ -34,7 +34,7 @@ import { showMetadataModal } from './ui/metadataModal.js';
 import { pickAvatar } from './ui/avatarCarousel.js';
 import { showImagePicker } from './ui/imagePickerModal.js';
 import { getAutoLogo } from './metadata/autoLogo.js';
-import { applyImagePrefs, restoreOriginalImage, pullAndMergeImagePrefs, metadataForPersist } from './metadata/imagePrefs.js';
+import { applyImagePrefs, restoreOriginalImage, syncImagePrefsWithRemote, metadataForPersist } from './metadata/imagePrefs.js';
 import { hookConsole, isDevLogEnabled, startDevLogging } from './utils/devLogger.js';
 import { loadGlobalConfig } from './settings/global.js';
 import { loadOverrides, getOverride, getOverrideByTmdbId } from './metadata/overrides.js';
@@ -666,9 +666,6 @@ function startBackgroundLibraryCheck(tg) {
 
 async function syncProfileOnly(sync, profile) {
   try {
-    if (sync) {
-      await loadOverrides(sync).catch(e => console.warn('[overrides] sync error', e));
-    }
     if (sync && profile?.id) {
       const remote = await sync.pullProfile(profile.id).catch(e => { console.warn('[sync] pullProfile error', e); return null; });
       if (remote) {
@@ -683,8 +680,14 @@ async function syncProfileOnly(sync, profile) {
         profile.favorites = mergedFavs;
 
         const remoteImg = { ...(remote.image_prefs || {}), ...(remote.profile?.image_prefs || {}) };
-        const mergedImg = await pullAndMergeImagePrefs(profile, sync, remoteImg);
+        const mergedImg = syncImagePrefsWithRemote(profile, remoteImg);
         profile.image_prefs = mergedImg;
+
+        if (sync?.pullImagePrefs) {
+          sync.pullImagePrefs(profile.id).then(dedicated => {
+            if (dedicated) profile.image_prefs = syncImagePrefsWithRemote(profile, dedicated);
+          }).catch(() => {});
+        }
 
         if (remote.profile?.devices) {
           profile.devices = { ...(remote.profile.devices || {}), ...(profile.devices || {}) };
@@ -1337,7 +1340,10 @@ async function showProfileSelector(tg, sync) {
         }
         if (profile) {
           showLoading('Sincronizando perfil…');
-          await syncProfileOnly(sync, profile);
+          await Promise.race([
+            syncProfileOnly(sync, profile),
+            new Promise(r => setTimeout(r, 1200))
+          ]);
 
           if (!TITLES_CACHE && BG_LIBRARY_PROMISE && !BG_LIBRARY_DONE) {
             if (BG_LIBRARY_STATUS) {
