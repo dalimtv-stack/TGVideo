@@ -234,12 +234,17 @@ function formatSuggestedFileName(file, titleData) {
   const captionCandidate = cap.fileName ? cap.fileName.replace(/\.([a-zA-Z0-9]{2,5})$/, '') : (file?.rawCaption || file?.caption || '').trim().split('\n')[0].trim();
   const validCaptionCand = captionCandidate && !captionCandidate.includes(':') && captionCandidate.length >= 2 ? captionCandidate : null;
 
-  let fallbackName = titleData?.nombre;
-  if (fallbackName && (isGenericOrig || /^(?:video[_\-\s]*\d+|\d+)$/i.test(fallbackName.replace(/\.([a-zA-Z0-9]{2,5})$/, '').trim()))) {
-    fallbackName = validCaptionCand || null;
+  let cleanFallback = titleData?.nombre;
+  if (cleanFallback) {
+    const pFb = extractTitleAndYear(cleanFallback);
+    if (pFb.title) cleanFallback = pFb.title;
+    if (!year && pFb.year) year = pFb.year;
+  }
+  if (cleanFallback && (isGenericOrig || /^(?:video[_\-\s]*\d+|\d+)$/i.test(cleanFallback.replace(/\.([a-zA-Z0-9]{2,5})$/, '').trim()))) {
+    cleanFallback = validCaptionCand || null;
   }
 
-  let mName = metaTitle || (isGenericOrig && validCaptionCand ? validCaptionCand : null) || fallbackName || parsedCandidate.title || cleanBase;
+  let mName = metaTitle || parsedCandidate.title || (isGenericOrig && validCaptionCand ? validCaptionCand : null) || cleanFallback || cleanBase;
 
   // Limpiar extensiones residuales
   mName = mName.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '').trim();
@@ -326,6 +331,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
   }
 
   const fileKey = file.key || `${file.channelId || file.channel?.id}:${file.messageId}`;
+  const fileChannelId = String(file.channelId || file.channel?.id || '').trim();
   const fileCap = parseCaption(file.rawCaption || file.caption || '');
   if (fileCap.fileName && !file.captionFileName) file.captionFileName = fileCap.fileName;
   if (fileCap.tmdbId && !file.tmdbId) file.tmdbId = fileCap.tmdbId;
@@ -347,15 +353,34 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
   if (pool.length > 0) {
     const matched = pool.find(t =>
       (t.id && (t.id === titleData?.id || t.id === fileKey)) ||
-      t.archivos?.some(f => (f.key && f.key === fileKey) || (file.messageId && String(f.messageId) === String(file.messageId)))
+      t.archivos?.some(f =>
+        (f.key && f.key === fileKey) ||
+        (fileChannelId && String(f.channelId || f.channel?.id || t.channel?.id || t.origen?.channelId || '') === fileChannelId && String(f.messageId) === String(file.messageId))
+      )
     );
     if (matched) {
+      const hasSpecificTitle = titleData?.nombre && !/^(?:video[_\-\s]*\d+|\d+|sin t[ií]tulo)$/i.test(String(titleData.nombre).trim());
       effectiveTitle = {
         ...matched,
         ...(titleData || {}),
-        metadata: matched.metadata || titleData?.metadata || null,
-        tmdbId: matched.tmdbId || titleData?.tmdbId || null,
-        nombre: matched.nombre || titleData?.nombre,
+        metadata: (titleData?.metadata && Object.keys(titleData.metadata).length > 0) ? titleData.metadata : (matched.metadata || null),
+        tmdbId: titleData?.tmdbId || file.tmdbId || fileCap.tmdbId || matched.tmdbId || null,
+        nombre: hasSpecificTitle ? titleData.nombre : (matched.nombre || titleData?.nombre),
+      };
+    }
+  }
+
+  // Si tenemos TMDB ID conocido en el archivo o caption pero falta en effectiveTitle, asociarlo con títulos de pool con el mismo TMDB ID
+  const directTmdbId = titleData?.tmdbId || file.tmdbId || fileCap.tmdbId;
+  if (!effectiveTitle?.metadata && directTmdbId) {
+    const wantedTmdb = String(directTmdbId).trim();
+    const tmdbMatch = pool.find(t => String(t.tmdbId || t.metadata?.id || '').trim() === wantedTmdb);
+    if (tmdbMatch?.metadata) {
+      effectiveTitle = {
+        ...(effectiveTitle || {}),
+        metadata: tmdbMatch.metadata,
+        nombre: tmdbMatch.metadata.name || tmdbMatch.metadata.title || effectiveTitle?.nombre,
+        tmdbId: wantedTmdb,
       };
     }
   }
@@ -363,7 +388,6 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
   // Buscar overrides de identificación previa en TMDB
   const rawTmdbId = effectiveTitle?.tmdbId || effectiveTitle?.metadata?.id || file.tmdbId || fileCap.tmdbId;
   const ov = getOverride(fileKey) ||
-    (file.messageId ? getOverride(file.messageId) : null) ||
     (effectiveTitle?.id ? getOverride(effectiveTitle.id) : null) ||
     (rawTmdbId ? getOverrideByTmdbId(rawTmdbId) : null);
 
@@ -386,7 +410,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
       const tidExt = tidRaw ? `ext-${tidRaw}` : null;
       const foundMeta = metaMap[tid] || (tidRaw ? metaMap[tidRaw] : null) || (tidExt ? metaMap[tidExt] : null) ||
         (rawTmdbId ? (metaMap[`tmdb_${rawTmdbId}`] || metaMap[String(rawTmdbId)]) : null) ||
-        metaMap[fileKey] || (file.messageId ? metaMap[file.messageId] : null);
+        metaMap[fileKey];
       if (foundMeta) {
         if (!effectiveTitle) effectiveTitle = { id: fileKey, nombre: foundMeta.name || foundMeta.title, archivos: [file] };
         effectiveTitle.metadata = { ...(effectiveTitle.metadata || {}), ...foundMeta };
@@ -398,16 +422,18 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     } catch (_) {}
   }
 
-  // 1.2 Si tenemos TMDB ID pero falta fecha/año en metadata, consultar caché TMDB o fetch rápido
+  // 1.2 Si tenemos TMDB ID pero falta metadata completa (nombre o fecha/año), consultar caché TMDB o fetch rápido
   let curMeta = effectiveTitle?.metadata || file.metadata || null;
   let effectiveTmdbId = curMeta?.id || effectiveTitle?.tmdbId || file.tmdbId || fileCap.tmdbId;
   const isSerieEarly = isSeriesTitle(effectiveTitle, file);
   const mediaTypeEarly = isSerieEarly ? 'tv' : 'movie';
 
-  if (effectiveTmdbId && (!curMeta?.date && !curMeta?.year && !curMeta?.release_date && !extractYear(effectiveTitle, file))) {
+  const hasCompleteMeta = Boolean(curMeta && (curMeta.title || curMeta.name) && (curMeta.date || curMeta.year || curMeta.release_date));
+
+  if (effectiveTmdbId && !hasCompleteMeta) {
     try {
       const cached = await kv.get(`tmdb_v2:${mediaTypeEarly}:${effectiveTmdbId}`).catch(() => null);
-      if (cached && (cached.date || cached.year || cached.release_date)) {
+      if (cached && (cached.date || cached.year || cached.release_date || cached.name || cached.title)) {
         curMeta = { ...(curMeta || {}), ...cached };
         if (effectiveTitle) {
           effectiveTitle.metadata = curMeta;
@@ -858,7 +884,10 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
         const internalTitles = (typeof getTitles === 'function' ? (getTitles() || []) : []) || [];
         const externalTitlesList = Array.from(EXT_CHANNEL_TITLES_CACHE?.values?.() || []).flat();
         const allTitles = [...internalTitles, ...externalTitlesList];
-        effectiveTitle = allTitles.find(t => t.archivos?.some(f => f.key === file.key || String(f.messageId) === String(file.messageId)));
+        effectiveTitle = allTitles.find(t => t.archivos?.some(f =>
+          (f.key && f.key === file.key) ||
+          (fileChannelId && String(f.channelId || f.channel?.id || t.channel?.id || '') === fileChannelId && String(f.messageId) === String(file.messageId))
+        ));
       }
     }
 

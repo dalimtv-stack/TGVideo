@@ -431,12 +431,13 @@ export function showContextMenuForElement(sourceEl, coords = null) {
       const titleId = cardEl.dataset.title;
       let t = (titleId ? allTitles.find(x => String(x.id) === String(titleId)) : null) || cardEl._titleData;
       if (!t && titleId) {
-        t = allTitles.find(x => x.archivos?.some(f => f.key === titleId || `${f.channelId || f.channel?.id}:${f.messageId}` === titleId || String(f.messageId) === String(titleId)));
+        t = allTitles.find(x => x.archivos?.some(f => f.key === titleId || `${f.channelId || f.channel?.id}:${f.messageId}` === titleId));
       }
       if (!t && titleId && String(titleId).includes(':')) {
         const parts = String(titleId).split(':');
+        const chId = parts[0];
         const mId = parts[parts.length - 1];
-        t = allTitles.find(x => x.archivos?.some(f => String(f.messageId) === String(mId)));
+        t = allTitles.find(x => x.archivos?.some(f => (f.key === titleId) || (String(f.channelId || f.channel?.id || x.channel?.id || x.origen?.channelId || '') === chId && String(f.messageId) === mId)));
       }
       if (t && t.archivos && t.archivos.length > 0) {
         // En tarjetas tomamos el primer archivo (o película principal)
@@ -458,9 +459,19 @@ export function showContextMenuForElement(sourceEl, coords = null) {
           }
         }
       }
-      // Fila de «Listar vídeos reenviados» que no está en la biblioteca: se construye desde el mensaje escaneado
+      // Fila de «Listar vídeos reenviados»: complementar o construir desde el mensaje escaneado
       const fw = adminRow._forwardedItem;
-      if (!targetFile && fw?.msg) {
+      if (targetFile && fw?.msg) {
+        if (!targetFile.channel && fw.channel) targetFile.channel = fw.channel;
+        if (!targetFile.rawCaption && fw.msg.message) {
+          targetFile.rawCaption = fw.msg.message;
+          targetFile.caption = fw.msg.message;
+        }
+        if (!targetFile.size && fw.size) targetFile.size = fw.size;
+        const capParsed = parseCaption(fw.msg.message || '');
+        if (!targetFile.tmdbId && capParsed.tmdbId) targetFile.tmdbId = capParsed.tmdbId;
+        if (!targetTitle?.tmdbId && capParsed.tmdbId) targetTitle.tmdbId = capParsed.tmdbId;
+      } else if (!targetFile && fw?.msg) {
         const rawCap = fw.msg.message || '';
         const capParsed = parseCaption(rawCap);
         const origBase = String(fw.filename || '').replace(/\.[a-zA-Z0-9]{2,5}$/, '').trim();
@@ -470,35 +481,41 @@ export function showContextMenuForElement(sourceEl, coords = null) {
 
         let inferredName = fw.filename;
         let inferredYear = null;
-        if (isGen && capParsed.fileName) {
-          const p = extractTitleAndYear(capParsed.fileName);
-          if (p.title) inferredName = p.title;
-          if (p.year) inferredYear = p.year;
-        } else if (isGen && rawCap) {
-          const cands = extractTitlesFromCaption(rawCap);
-          if (cands.length > 0 && cands[0].title) {
-            inferredName = cands[0].title;
-            if (cands[0].year) inferredYear = cands[0].year;
-          } else {
-            const firstL = rawCap.trim().split('\n')[0].trim();
-            if (firstL && !firstL.includes(':') && firstL.length >= 2) {
-              inferredName = firstL;
+
+        const candToParse = capParsed.fileName || fw.filename;
+        const p = extractTitleAndYear(candToParse);
+        if (p.title) inferredName = p.title;
+        if (p.year) inferredYear = p.year;
+
+        if (isGen) {
+          if (rawCap) {
+            const cands = extractTitlesFromCaption(rawCap);
+            if (cands.length > 0 && cands[0].title) {
+              inferredName = cands[0].title;
+              if (cands[0].year) inferredYear = cands[0].year;
+            } else {
+              const firstL = rawCap.trim().split('\n')[0].trim();
+              if (firstL && !firstL.includes(':') && firstL.length >= 2) {
+                inferredName = firstL;
+              }
             }
           }
         }
 
         targetFile = {
           key: fw.key, messageId: fw.msg.id, channelId: String(fw.channel?.id ?? ''), channel: fw.channel,
-          fileName: fw.filename, label: fw.filename, size: fw.size, rawCaption: rawCap, caption: rawCap,
+          fileName: fw.filename, label: inferredName, size: fw.size, rawCaption: rawCap, caption: rawCap,
           captionFileName: capParsed.fileName || null,
           tmdbId: capParsed.tmdbId || null,
           yearHint: inferredYear,
+          year: inferredYear,
         };
         targetTitle = {
           id: fw.key,
           nombre: inferredName,
           tipo: 'pelicula',
           yearHint: inferredYear,
+          year: inferredYear,
           archivos: [targetFile],
           channel: fw.channel,
           tmdbId: capParsed.tmdbId || null,
