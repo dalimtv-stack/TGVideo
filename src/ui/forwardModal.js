@@ -28,7 +28,6 @@ function formatBytes(bytes) {
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
 }
 
-async 
 export function isGenericSeriesName(str) {
   if (!str) return true;
   const s = String(str).trim();
