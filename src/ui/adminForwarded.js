@@ -4,7 +4,7 @@ import { loadLibrary } from '../library/channels.js';
 import { Api } from 'telegram';
 import { startUploadTask, updateUploadTask, finishUploadTask, failUploadTask } from './uploadTasks.js';
 import { showForwardModal } from './forwardModal.js';
-import { parseEpisode } from '../library/parse.js';
+import { parseEpisode, parseCaption } from '../library/parse.js';
 import { seriesNameFromFile } from '../library/titles.js';
 
 function esc(value) {
@@ -76,7 +76,21 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
             if (!byChannel.has(name)) byChannel.set(name, []);
             const filename = getFilename(msg);
             const ep = parseEpisode(filename);
-            const seriesName = seriesNameFromFile(filename) || '';
+            let seriesName = seriesNameFromFile(filename) || '';
+            if (!seriesName) {
+              const cap = parseCaption(msg.message || '');
+              if (cap.section && !/^(?:series?|pel[ií]culas?|video|videos|tgstorage)$/i.test(cap.section.trim())) {
+                seriesName = cap.section.trim();
+              } else if (cap.fileName) {
+                seriesName = seriesNameFromFile(cap.fileName) || '';
+              }
+            }
+            if (!seriesName && channel.title?.includes('::')) {
+              const cand = channel.title.split('::')[0].replace(/\s*\((?:19|20)\d{2}\)$/, '').trim();
+              if (cand && !/^(?:series?|pel[ií]culas?|video|videos|tgstorage)$/i.test(cand)) {
+                seriesName = cand;
+              }
+            }
             byChannel.get(name).push({
               key: `${channel.id}:${msg.id}`,
               msg,
@@ -177,7 +191,13 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
       document.getElementById('btn-forward-selected')?.addEventListener('click', () => {
         const entries = selectedEntries(selected, byChannel);
         if (!entries.length) return;
-        showForwardModal(client, tg, entries[0], () => channels, null, null, {
+        const candidateSeries = entries.find(e => e.seriesName)?.seriesName || '';
+        const syntheticTitle = candidateSeries ? {
+          nombre: candidateSeries,
+          tipo: 'serie',
+          archivos: entries,
+        } : null;
+        showForwardModal(client, tg, entries[0], () => channels, syntheticTitle, getTitles || (() => titles || []), {
           selectedFiles: entries,
           deleteSourceAfter: false,
         }).catch(err => {
@@ -189,7 +209,13 @@ export async function renderForwardedTab({ mainPanel, client, tg }) {
       document.getElementById('btn-forward-delete-selected')?.addEventListener('click', () => {
         const entries = selectedEntries(selected, byChannel);
         if (!entries.length) return;
-        showForwardModal(client, tg, entries[0], () => channels, null, null, {
+        const candidateSeries = entries.find(e => e.seriesName)?.seriesName || '';
+        const syntheticTitle = candidateSeries ? {
+          nombre: candidateSeries,
+          tipo: 'serie',
+          archivos: entries,
+        } : null;
+        showForwardModal(client, tg, entries[0], () => channels, syntheticTitle, getTitles || (() => titles || []), {
           selectedFiles: entries,
           deleteSourceAfter: true,
           onSourceDeleted: (f) => {

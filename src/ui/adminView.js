@@ -107,7 +107,7 @@ export async function showAdminView({ tg, sync, profile, titles = [], onBack }) 
 
     if (tabId === 'age') renderAgeFiltersTab();
     else if (tabId === 'channels') renderChannelsTab({ mainPanel, client, kv, titles, tg });
-    else if (tabId === 'forwarded') renderForwardedTab({ mainPanel, client, tg });
+    else if (tabId === 'forwarded') renderForwardedTab({ mainPanel, client, tg, titles, getTitles: () => titles });
     else if (tabId === 'upload') renderUploadTab({ mainPanel, client, tg });
     else if (tabId === 'listings') renderListingsTab();
   };

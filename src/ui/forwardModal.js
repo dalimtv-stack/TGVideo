@@ -1,10 +1,10 @@
 // src/ui/forwardModal.js
 import { Api } from 'telegram';
-import { fetchTmdbFullDetails, extractTitleAndYear, enrichTitle, extractTitlesFromCaption } from '../metadata/tmdb.js';
+import { fetchTmdbFullDetails, extractTitleAndYear, enrichTitle, extractTitlesFromCaption, searchTmdbManual } from '../metadata/tmdb.js';
 import { createKV } from '../core/kv.js';
 import { loadLibrary } from '../library/channels.js';
 import { parseCaption, buildStandardCaption, parseEpisode, prettyEpisodeName } from '../library/parse.js';
-import { normalizeMovieKey } from '../library/titles.js';
+import { normalizeMovieKey, seriesNameFromFile } from '../library/titles.js';
 import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { EXT_CHANNEL_TITLES_CACHE, getEpisodeSeriesMove, filterSeriesFilesByMoves } from './externalTitlesCache.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
@@ -26,6 +26,62 @@ function formatBytes(bytes) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
   return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
+
+async 
+export function isGenericSeriesName(str) {
+  if (!str) return true;
+  const s = String(str).trim();
+  return /^(?:serie|series|video|videos|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|\d+)$/i.test(s) ||
+    /^serie\s+desconocida/i.test(s);
+}
+
+export function isGenericCategory(str) {
+  if (!str) return true;
+  const s = String(str).trim();
+  return /^(?:series?|pel[ií]culas?|video|videos|general|animaci[oó]n|anime|documentales?|infantil|cine|tgstorage)$/i.test(s) ||
+    isGenericSeriesName(s);
+}
+
+export function detectSeriesName(file, allFiles = [], channel = null, pool = []) {
+  if (file?.seriesName && !isGenericSeriesName(file.seriesName)) {
+    return file.seriesName.trim();
+  }
+  const fromFile = seriesNameFromFile(file?.captionFileName || file?.fileName || file?.filename || '');
+  if (fromFile && !isGenericSeriesName(fromFile)) {
+    return fromFile.trim();
+  }
+  for (const f of allFiles) {
+    if (f === file) continue;
+    if (f.seriesName && !isGenericSeriesName(f.seriesName)) return f.seriesName.trim();
+    const sf = seriesNameFromFile(f.captionFileName || f.fileName || f.filename || '');
+    if (sf && !isGenericSeriesName(sf)) return sf.trim();
+  }
+  const cap = parseCaption(file?.rawCaption || file?.caption || file?.msg?.message || '');
+  if (cap.section && !isGenericCategory(cap.section)) {
+    return cap.section.trim();
+  }
+  if (cap.fileName) {
+    const fromCapFile = seriesNameFromFile(cap.fileName);
+    if (fromCapFile && !isGenericSeriesName(fromCapFile)) return fromCapFile.trim();
+  }
+  const chTitle = channel?.title || channel?.name || file?.channel?.title || file?.channel?.name || '';
+  if (chTitle && chTitle.includes('::')) {
+    const parts = chTitle.split('::').map(s => s.trim());
+    const candidate = parts[0];
+    if (candidate && !isGenericCategory(candidate)) {
+      return candidate.replace(/\s*\((?:19|20)\d{2}\)$/, '').trim();
+    }
+  }
+  if (Array.isArray(pool) && pool.length > 0) {
+    const match = pool.find(t =>
+      t.archivos?.some(f => (f.key && f.key === file.key) || (f.messageId && f.messageId === file.messageId))
+    );
+    if (match?.nombre && !isGenericSeriesName(match.nombre)) {
+      return match.nombre.trim();
+    }
+  }
+  return '';
 }
 
 async function resolvePeer(client, tg, target) {
@@ -210,7 +266,13 @@ function formatSuggestedFileName(file, titleData) {
   const isSerie = isSerieExplicit || (!isMovieExplicit && hasEp);
 
   if (isSerie) {
-    const sName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || file.section || cleanBase;
+    let sName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || file?.seriesName;
+    if (!sName || isGenericSeriesName(sName)) {
+      const fromOrig = seriesNameFromFile(file?.captionFileName || file?.fileName || file?.filename || cleanBase);
+      if (fromOrig && !isGenericSeriesName(fromOrig)) sName = fromOrig;
+      else if (file?.section && !isGenericCategory(file.section)) sName = file.section;
+    }
+    sName = (sName && !isGenericSeriesName(sName)) ? sName.trim() : cleanBase;
     const season = fileSeason > 0 ? fileSeason : (parsedEp.season > 0 ? parsedEp.season : 1);
     const episode = fileEpisode > 0 ? fileEpisode : (parsedEp.episode > 0 ? parsedEp.episode : 1);
     const epStr = String(episode).padStart(2, '0');
@@ -348,8 +410,20 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     } catch (_) {}
   }
 
-  // Si titleData viene incompleto o genérico, resolver desde pool
+  const rawSelected = Array.isArray(options?.selectedFiles) && options.selectedFiles.length > 0 ? options.selectedFiles : [file];
+  const detectedSeries = detectSeriesName(file, rawSelected, file.channel, pool);
+
+  // Si titleData no viene o es genérico, inicializar desde detectedSeries o file
   let effectiveTitle = titleData;
+  if (!effectiveTitle || isGenericSeriesName(effectiveTitle.nombre)) {
+    effectiveTitle = {
+      ...(titleData || {}),
+      id: fileKey,
+      nombre: detectedSeries || file.seriesName || seriesNameFromFile(file.fileName || file.filename || file.captionFileName || '') || file.fileName || file.filename || '',
+      tipo: (isSeriesTitle(null, file) || file.season > 0 || file.episode > 0 || Boolean(detectedSeries)) ? 'serie' : (file.tipo || 'video'),
+      archivos: rawSelected,
+    };
+  }
   if (pool.length > 0) {
     const matched = pool.find(t =>
       (t.id && (t.id === titleData?.id || t.id === fileKey)) ||
@@ -594,7 +668,13 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
 
   if (deleteSourceAfter && !hasSelectedList) allFiles = [file];
   const isMultiFile = allFiles.length > 1;
-  const seriesBaseName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || 'Serie';
+  const seriesBaseName = detectedSeries ||
+    (effectiveTitle?.metadata?.name && !isGenericSeriesName(effectiveTitle.metadata.name) ? effectiveTitle.metadata.name : null) ||
+    (effectiveTitle?.nombre && !isGenericSeriesName(effectiveTitle.nombre) ? effectiveTitle.nombre : null) ||
+    (titleData?.metadata?.name && !isGenericSeriesName(titleData.metadata.name) ? titleData.metadata.name : null) ||
+    (titleData?.nombre && !isGenericSeriesName(titleData.nombre) ? titleData.nombre : null) ||
+    (file.seriesName && !isGenericSeriesName(file.seriesName) ? file.seriesName : null) ||
+    'Serie';
   const defaultFilename = formatSuggestedFileName(file, effectiveTitle || titleData);
   const sizeStr = formatBytes(file.size);
   const totalSeriesSize = allFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0);
@@ -679,7 +759,9 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
             </div>
           </div>
         </div>
+      ` : '')}
 
+      ${(isSerie || isMultiFile) ? `
         <div id="series-name-container" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
           <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
             Nombre base de la serie (editable):
@@ -690,9 +772,9 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
             <span style="color: #38bdf8;">Formato: "[Serie] - 1x01.mp4", "1x02.mp4"...</span>
           </div>
         </div>
-      ` : '')}
+      ` : ''}
 
-      <div id="single-name-container" style="${isMultiFile ? 'display: none;' : ''} background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
+      <div id="single-name-container" style="${(isMultiFile || isSerie) ? 'display: none;' : ''} background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.2rem; font-size: 0.88rem;">
         <label style="display: block; font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">
           Nombre del archivo en Telegram (editable):
         </label>
@@ -934,16 +1016,47 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     let meta = effectiveTitle?.metadata || file.metadata || null;
     let effectiveTmdbId = meta?.id || effectiveTitle?.tmdbId || file.tmdbId;
 
-    if (effectiveTmdbId && (!meta?.director || !meta?.cast)) {
+    const querySearchName = sBaseName && !isGenericSeriesName(sBaseName) ? sBaseName : (effectiveTitle?.nombre || filename);
+    const isTvTarget = isSerie || effectiveTitle?.tipo === 'serie' || isBatchMulti;
+
+    if (!effectiveTmdbId && querySearchName && !isGenericSeriesName(querySearchName)) {
       try {
-        const isTv = effectiveTitle?.tipo === 'serie' || isSerie;
-        const full = await fetchTmdbFullDetails(isTv ? 'tv' : 'movie', effectiveTmdbId);
+        const results = await searchTmdbManual(querySearchName, isTvTarget ? 'tv' : 'movie').catch(() => null);
+        const match = Array.isArray(results) ? results[0] : null;
+        if (match?.id) {
+          effectiveTmdbId = match.id;
+          const full = await fetchTmdbFullDetails(isTvTarget ? 'tv' : 'movie', match.id).catch(() => null);
+          meta = {
+            ...(meta || {}),
+            ...(match || {}),
+            ...(full || {}),
+            id: match.id,
+            name: match.name || querySearchName,
+          };
+          if (effectiveTitle) {
+            effectiveTitle.metadata = meta;
+            effectiveTitle.tmdbId = match.id;
+            effectiveTitle.nombre = match.name || querySearchName;
+          }
+        }
+      } catch (err) {
+        console.warn('[forwardModal] Error autoidentificando en TMDB al enviar:', err);
+      }
+    }
+
+    if (effectiveTmdbId && (!meta?.director || !meta?.cast || !meta?.synopsis)) {
+      try {
+        const full = await fetchTmdbFullDetails(isTvTarget ? 'tv' : 'movie', effectiveTmdbId);
         if (full && Object.keys(full).length > 0) {
-          meta = { ...(meta || {}), ...full };
+          meta = {
+            ...(meta || {}),
+            ...full,
+            synopsis: full.overview || full.synopsis || meta?.overview || meta?.synopsis || '',
+          };
           if (effectiveTitle) effectiveTitle.metadata = meta;
         }
       } catch (err) {
-        console.warn('[contextMenu] No se pudieron cargar detalles adicionales de TMDB', err);
+        console.warn('[forwardModal] No se pudieron cargar detalles adicionales de TMDB', err);
       }
     }
 
