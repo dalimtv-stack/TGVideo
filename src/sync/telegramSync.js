@@ -7,6 +7,36 @@ import { createImagePrefsSync } from './imagePrefsSync.js';
 
 const SYNC_CHANNEL_TITLE = 'Perfiles::TGVideo::tgstorage';
 const MAX_VERSIONS = 5; // 1 versión activa + 4 backups (5 en total)
+const CACHED_SYNC_CHANNEL_KEY = 'tg_sync_channel_v1';
+const CACHED_PROFILES_KEY = 'tgvideo_cached_profiles_v1';
+
+export function getCachedProfiles() {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(CACHED_PROFILES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getStoredSyncChannel() {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(CACHED_SYNC_CHANNEL_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredSyncChannel(channel) {
+  if (typeof localStorage === 'undefined' || !channel) return;
+  try {
+    localStorage.setItem(CACHED_SYNC_CHANNEL_KEY, JSON.stringify(channel));
+  } catch (_) {}
+}
+
 
 function nowTimestamp() {
   const d = new Date();
@@ -75,7 +105,12 @@ export function createTelegramSync({ getClient, peerOf }) {
   let pushTimer = null;
 
   async function findOrCreateSyncChannel() {
-    if (cachedChannel) return cachedChannel;
+    if (cachedChannel && cachedChannel.id && cachedChannel.hash) return cachedChannel;
+    const stored = getStoredSyncChannel();
+    if (stored && stored.id && stored.hash) {
+      cachedChannel = stored;
+      return cachedChannel;
+    }
     const client = await getClient();
 
     // 1. Buscar en diálogos activos
@@ -90,6 +125,7 @@ export function createTelegramSync({ getClient, peerOf }) {
           hash: String(entity.accessHash),
           title: entity.title,
         };
+        saveStoredSyncChannel(cachedChannel);
         return cachedChannel;
       }
     }
@@ -130,45 +166,67 @@ export function createTelegramSync({ getClient, peerOf }) {
       hash: String(chat.accessHash),
       title: chat.title,
     };
+    saveStoredSyncChannel(cachedChannel);
     return cachedChannel;
   }
 
-  async function listSyncFiles() {
-    const client = await getClient();
-    const ch = await findOrCreateSyncChannel();
-    const peer = peerOf(ch);
-    const files = [];
+  let listFilesCache = null;
+  let listFilesCacheTime = 0;
+  let listFilesPromise = null;
 
-    for await (const msg of client.iterMessages(peer, { limit: 200 })) {
-      const doc = msg.media?.document;
-      if (!doc) continue;
-
-      const attr = doc.attributes?.find(
-        (a) => a.className === 'DocumentAttributeFilename'
-      );
-      const filename = attr?.fileName;
-      if (!filename) continue;
-
-      const parsed = parseSyncFilename(filename);
-      if (!parsed) continue;
-      if (parsed.profileId === 'perfil' || parsed.profileId === 'default') continue;
-
-      files.push({
-        ...parsed,
-        messageId: msg.id,
-        date: msg.date || 0,
-      });
+  async function listSyncFiles({ force = false } = {}) {
+    const now = Date.now();
+    if (!force && listFilesCache && (now - listFilesCacheTime < 20000)) {
+      return listFilesCache;
+    }
+    if (!force && listFilesPromise) {
+      return listFilesPromise;
     }
 
-    // Ordenar de más reciente a más antiguo:
-    // Primero por timestamp normalizado (14 dígitos YYYYMMDDHHMMSS)
-    // Desempate por messageId de Telegram (los más recientes tienen mayor ID)
-    return files.sort((a, b) => {
-      if (b.timestamp !== a.timestamp) {
-        return b.timestamp.localeCompare(a.timestamp);
+    listFilesPromise = (async () => {
+      try {
+        const client = await getClient();
+        const ch = await findOrCreateSyncChannel();
+        const peer = peerOf(ch);
+        const files = [];
+
+        for await (const msg of client.iterMessages(peer, { limit: 200 })) {
+          const doc = msg.media?.document;
+          if (!doc) continue;
+
+          const attr = doc.attributes?.find(
+            (a) => a.className === 'DocumentAttributeFilename'
+          );
+          const filename = attr?.fileName;
+          if (!filename) continue;
+
+          const parsed = parseSyncFilename(filename);
+          if (!parsed) continue;
+          if (parsed.profileId === 'perfil' || parsed.profileId === 'default') continue;
+
+          files.push({
+            ...parsed,
+            messageId: msg.id,
+            date: msg.date || 0,
+          });
+        }
+
+        const sorted = files.sort((a, b) => {
+          if (b.timestamp !== a.timestamp) {
+            return b.timestamp.localeCompare(a.timestamp);
+          }
+          return (b.messageId || 0) - (a.messageId || 0);
+        });
+
+        listFilesCache = sorted;
+        listFilesCacheTime = Date.now();
+        return sorted;
+      } finally {
+        listFilesPromise = null;
       }
-      return (b.messageId || 0) - (a.messageId || 0);
-    });
+    })();
+
+    return listFilesPromise;
   }
 
   async function pullGlobalConfig() {
@@ -186,6 +244,7 @@ export function createTelegramSync({ getClient, peerOf }) {
 
   let globalQueue = Promise.resolve();
   function pushGlobalConfig(config) {
+    listFilesCache = null;
     const snapshot = structuredClone(config);
     const task = globalQueue.catch(() => {}).then(async () => {
       const client = await getClient();
@@ -236,6 +295,7 @@ export function createTelegramSync({ getClient, peerOf }) {
 
   let overridesQueue = Promise.resolve();
   function pushMetadataOverrides(data) {
+    listFilesCache = null;
     const snapshot = structuredClone(data);
     const task = overridesQueue.catch(() => {}).then(async () => {
       const client = await getClient();
@@ -355,7 +415,13 @@ export function createTelegramSync({ getClient, peerOf }) {
       }
     }
 
-    return profiles.sort((a, b) => a.name.localeCompare(b.name));
+    const sortedProfiles = profiles.sort((a, b) => a.name.localeCompare(b.name));
+    if (typeof localStorage !== 'undefined' && sortedProfiles.length > 0) {
+      try {
+        localStorage.setItem(CACHED_PROFILES_KEY, JSON.stringify(sortedProfiles));
+      } catch (_) {}
+    }
+    return sortedProfiles;
   }
 
   async function pullProfile(profileId) {
@@ -417,6 +483,7 @@ export function createTelegramSync({ getClient, peerOf }) {
    */
   let profileQueue = Promise.resolve();
   function pushProfile(profileData) {
+    listFilesCache = null;
     const snapshot = structuredClone(profileData);
     const task = profileQueue.catch(() => {}).then(async () => {
       const client = await getClient();
@@ -559,6 +626,7 @@ export function createTelegramSync({ getClient, peerOf }) {
     pullMetadataOverrides,
     pushMetadataOverrides,
     listProfiles,
+    getCachedProfiles,
     pullProfile,
     pushProfile,
     schedulePush,

@@ -18,7 +18,7 @@ let LAST_OPENED_TITLE_ID = null;
 import { searchViewHtml, mountSearchView } from './ui/searchView.js';
 import './style.css';
 import { createTelegramClient } from './core/telegram.js';
-import { createTelegramSync } from './sync/telegramSync.js';
+import { createTelegramSync, getCachedProfiles } from './sync/telegramSync.js';
 import { loadLibrary } from './library/channels.js';
 import { buildTitles, mergeMoviesByTmdb, attachAutoCollections } from './library/titles.js';
 import { buildHomeRows, posterColor } from './ui/home.js';
@@ -63,7 +63,6 @@ const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : 
 const perfLog = (msg) => console.log(`[perf] ${msg}`);
 
 const app = document.getElementById('app');
-
 
 function isTitleAllowedByProfileAge(title, profile) {
   const limit = profile?.maxAgeRating;
@@ -212,7 +211,6 @@ function promptApiCredentialsUI() {
     idInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') hashInput?.focus(); });
   });
 }
-
 
 // ---------- Home con biblioteca ----------
 let TITLES_CACHE = null;
@@ -404,7 +402,6 @@ async function refreshLibrary(tg, { force = false, onProgress } = {}) {
   return { titles, sig };
 }
 
-
 function showUpdateDialog({ onQuick, onFull }) {
   const { overlay, close } = modal("Actualizar biblioteca", `
     <div style="display:flex;flex-direction:column;gap:1rem;">
@@ -429,7 +426,6 @@ function showUpdateDialog({ onQuick, onFull }) {
     overlay.querySelector("#btn-update-quick")?.focus();
   }, 50);
 }
-
 
 export function isExternalTitle(t) {
   return Boolean(
@@ -879,7 +875,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
       </div>`;
   };
 
-
   const body = (!titles.length && !isExternalsTab) ? `
       <div class="home-empty"><h2>Hola, ${esc(profile.name)}</h2>
         <p>No se han encontrado canales de vídeo.</p>
@@ -1153,7 +1148,6 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
     if (url) loadPoster(img, url);
   });
 
-
   setTimeout(() => {
     let el = null;
     if (focusViewBtn) {
@@ -1290,140 +1284,154 @@ async function showHome(tg, sync, profile, { fast = false, reload = false, force
 // ---------- Selector de perfiles ----------
 async function showProfileSelector(tg, sync) {
   applyProfileScale(null);
-  showLoading('Cargando perfiles…');
 
-  let profiles = [];
-  try {
-    profiles = await sync.listProfiles();
-  } catch (err) {
-    console.warn('No se pudieron cargar perfiles', err);
-  }
+  let profiles = typeof getCachedProfiles === 'function' ? getCachedProfiles() : [];
+  let isRendered = false;
 
-  const cards = profiles.map(p => `
-    <div class="profile-card" tabindex="0" data-focusable data-id="${p.id}">
-      <div class="avatar">${profileAvatar(p)}</div>
-      <div class="profile-name">${esc(p.name)}</div>
-    </div>
-  `).join('');
+  const render = (profilesList) => {
+    isRendered = true;
+    const cards = profilesList.map(p => `
+      <div class="profile-card" tabindex="0" data-focusable data-id="${p.id}">
+        <div class="avatar">${profileAvatar(p)}</div>
+        <div class="profile-name">${esc(p.name)}</div>
+      </div>`).join('');
 
-  const addCard = `
-    <div class="profile-card add-profile" tabindex="0" data-focusable id="btn-add-profile">
-      <div class="avatar add">+</div>
-      <div class="profile-name">Añadir perfil</div>
-    </div>
-  `;
+    const addCard = `
+      <div class="profile-card add-profile" tabindex="0" data-focusable id="btn-add-profile">
+        <div class="avatar add">+</div>
+        <div class="profile-name">Añadir perfil</div>
+      </div>`;
 
-  showScreen(`
-    <div class="screen profiles-screen">
-      <h1 class="profiles-title">¿Quién está ahí?</h1>
-      <div class="profiles-centered-container">
-        <div class="profiles-side-spacer" aria-hidden="true"></div>
-        <div class="profiles-grid">
-          ${cards}
+    showScreen(`
+      <div class="screen profiles-screen">
+        <h1 class="profiles-title">¿Quién está ahí?</h1>
+        <div class="profiles-centered-container">
+          <div class="profiles-side-spacer" aria-hidden="true"></div>
+          <div class="profiles-grid">${cards}</div>
+          <div class="profiles-add-wrapper">${addCard}</div>
         </div>
-        <div class="profiles-add-wrapper">
-          ${addCard}
-        </div>
-      </div>
-      <button id="btn-logout" data-focusable class="logout-btn">Cerrar sesión</button>
-    </div>
-  `);
+        <button id="btn-logout" data-focusable class="logout-btn">Cerrar sesión</button>
+      </div>`);
 
-  const lastProfileId = localStorage.getItem('tgvideo_last_profile_id') || profiles[0]?.id;
-  setTimeout(() => {
-    let target = null;
-    if (lastProfileId) {
-      target = document.querySelector(`.profile-card[data-id="${lastProfileId}"]`);
-    }
-    if (!target) {
-      target = document.querySelector('.profile-card[data-id], #btn-add-profile');
-    }
-    if (target) {
-      target.focus();
-      target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-    }
-  }, 60);
-
-  document.querySelectorAll('.profile-card[data-id]').forEach(card => {
-    card.addEventListener('click', async () => {
-      const id = card.dataset.id;
-      const profile = profiles.find(p => p.id === id);
-      if (profile) {
-        localStorage.setItem('tgvideo_last_profile_id', profile.id);
+    const lastProfileId = localStorage.getItem('tgvideo_last_profile_id') || profilesList[0]?.id;
+    setTimeout(() => {
+      let target = null;
+      if (lastProfileId) {
+        target = document.querySelector(`.profile-card[data-id="${lastProfileId}"]`);
       }
-      if (profile) {
-        showLoading('Sincronizando perfil…');
-        await syncProfileOnly(sync, profile);
+      if (!target) {
+        target = document.querySelector('.profile-card[data-id], #btn-add-profile');
+      }
+      if (target) {
+        target.focus();
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      }
+    }, 60);
 
-        if (BG_LIBRARY_PROMISE && !BG_LIBRARY_DONE) {
-          if (BG_LIBRARY_STATUS) {
-            showLoading(BG_LIBRARY_STATUS);
+    document.querySelectorAll('.profile-card[data-id]').forEach(card => {
+      card.addEventListener('click', async () => {
+        const id = card.dataset.id;
+        const profile = profilesList.find(p => p.id === id);
+        if (profile) {
+          localStorage.setItem('tgvideo_last_profile_id', profile.id);
+        }
+        if (profile) {
+          showLoading('Sincronizando perfil…');
+          await syncProfileOnly(sync, profile);
+
+          if (!TITLES_CACHE && BG_LIBRARY_PROMISE && !BG_LIBRARY_DONE) {
+            if (BG_LIBRARY_STATUS) {
+              showLoading(BG_LIBRARY_STATUS);
+            }
+            WAITING_USER_SCREEN = true;
+            await BG_LIBRARY_PROMISE;
+            WAITING_USER_SCREEN = false;
           }
-          WAITING_USER_SCREEN = true;
-          await BG_LIBRARY_PROMISE;
-          WAITING_USER_SCREEN = false;
+
+          (TITLES_CACHE || []).forEach(t => applyImagePrefs(t, profile));
+
+          if (isDevLogEnabled()) {
+            startDevLogging({
+              getClient: () => tg.getClient(),
+              peerOf: tg.peerOf,
+              profile,
+              sync,
+            });
+          }
+
+          showHome(tg, sync, profile);
         }
+      });
+    });
 
-        (TITLES_CACHE || []).forEach(t => applyImagePrefs(t, profile));
+    document.getElementById('btn-add-profile')?.addEventListener('click', async () => {
+      const name = await promptUI('Nombre del perfil', 'Ej: Papá, Niños…');
+      if (!name) return showProfileSelector(tg, sync);
 
-        if (isDevLogEnabled()) {
-          startDevLogging({
-            getClient: () => tg.getClient(),
-            peerOf: tg.peerOf,
-            profile,
-            sync,
-          });
-        }
+      const chosenAvatar = await pickAvatar({ name, current: null, title: 'Elige tu avatar', confirmLabel: 'Crear perfil' });
+      if (chosenAvatar === null) return showProfileSelector(tg, sync);
 
-        showHome(tg, sync, profile);
+      const cleanId = name
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+      const profileId = cleanId && cleanId !== 'perfil' && cleanId !== 'default'
+        ? cleanId
+        : `usr_${Date.now().toString(36)}`;
+
+      const newProfile = {
+        v: 1,
+        profile: {
+          id: profileId,
+          name: name.trim(),
+          avatar: chosenAvatar,
+          age_limit: '+18',
+          pin: null,
+          is_kids: false,
+          player: 'artplayer',
+        },
+        progress: {},
+        recent: [],
+        prefs: {},
+      };
+
+      showLoading('Creando perfil…');
+      try {
+        await sync.pushProfile(newProfile);
+        await showProfileSelector(tg, sync);
+      } catch (err) {
+        showError(err?.message || String(err));
       }
     });
-  });
 
-  document.getElementById('btn-add-profile')?.addEventListener('click', async () => {
-    const name = await promptUI('Nombre del perfil', 'Ej: Papá, Niños…');
-    if (!name) return showProfileSelector(tg, sync);
+    document.getElementById('btn-logout')?.addEventListener('click', async () => {
+      await tg.logout();
+      initDpad();
+      start();
+    });
+  };
 
-    const chosenAvatar = await pickAvatar({ name, current: null, title: 'Elige tu avatar', confirmLabel: 'Crear perfil' });
-    if (chosenAvatar === null) return showProfileSelector(tg, sync);
+  if (profiles && profiles.length > 0) {
+    render(profiles);
+  } else {
+    showLoading('Cargando perfiles…');
+  }
 
-    const cleanId = name
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    const profileId = cleanId && cleanId !== 'perfil' && cleanId !== 'default'
-      ? cleanId
-      : `usr_${Date.now().toString(36)}`;
-
-    const newProfile = {
-      v: 1,
-      profile: {
-        id: profileId,
-        name: name.trim(),
-        avatar: chosenAvatar,
-        age_limit: '+18',
-        pin: null,
-        is_kids: false,
-        player: 'artplayer',
-      },
-      progress: {},
-      recent: [],
-      prefs: {},
-    };
-
-    showLoading('Creando perfil…');
-    try {
-      await sync.pushProfile(newProfile);
-      await showProfileSelector(tg, sync);
-    } catch (err) {
-      showError(err?.message || String(err));
+  // Comprobar / actualizar perfiles remotos
+  try {
+    const remoteProfiles = await sync.listProfiles();
+    if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
+      profiles = remoteProfiles;
+      if (!isRendered || JSON.stringify(remoteProfiles.map(p => ({ id: p.id, name: p.name, avatar: p.avatar }))) !==
+          JSON.stringify((getCachedProfiles() || []).map(p => ({ id: p.id, name: p.name, avatar: p.avatar })))) {
+        render(profiles);
+      }
     }
-  });
-
-  document.getElementById('btn-logout')?.addEventListener('click', async () => {
-    await tg.logout();
-    initDpad();
-    start();
-  });
+  } catch (err) {
+    console.warn('No se pudieron cargar perfiles remotos', err);
+    if (!isRendered) {
+      render([]);
+    }
+  }
 }
 
 // ---------- Arranque ----------
@@ -1455,13 +1463,15 @@ async function start() {
     window.sync = sync;
     initContextMenu({ tg, getTitles: () => TITLES_CACHE, getChannels: () => CHANNELS_CACHE });
 
-    await loadGlobalConfig(sync);
-    await loadOverrides(sync).catch(e => console.warn('[overrides]', e));
+    // Sincronizaciones no bloqueantes en segundo plano
+    loadGlobalConfig(sync).catch(e => console.warn('[config]', e));
+    loadOverrides(sync).catch(e => console.warn('[overrides]', e));
 
-    // Arrancar comprobación de biblioteca en segundo plano mientras el usuario elige perfil
-    startBackgroundLibraryCheck(tg);
-
+    // Mostrar el selector de perfiles de inmediato
     await showProfileSelector(tg, sync);
+
+    // Arrancar comprobación de biblioteca en segundo plano una vez renderizados los perfiles
+    startBackgroundLibraryCheck(tg);
 
   } catch (err) {
     console.error(err);
