@@ -1,23 +1,68 @@
 // scripts/prepare-android.js
 // Configura automáticamente AndroidManifest.xml, banners 16:9, aceleración de hardware,
-// WebSettings, FileProvider y AppUpdaterPlugin para Android TV y compilaciones locales.
+// WebSettings, FileProvider, dependencias Media3 y plugins nativos (ExoPlayer y AppUpdater).
 import fs from 'fs';
 import path from 'path';
 
 const ANDROID_RES = path.resolve('android/app/src/main/res');
 const MANIFEST_PATH = path.resolve('android/app/src/main/AndroidManifest.xml');
+const BUILD_GRADLE_PATH = path.resolve('android/app/build.gradle');
 
-function ensureAppUpdaterPlugin() {
+function ensureNativePlugins() {
   const javaDir = path.resolve('android/app/src/main/java/com/tgvideo/app');
   if (!fs.existsSync(javaDir)) {
     fs.mkdirSync(javaDir, { recursive: true });
   }
 
-  const pluginPath = path.join(javaDir, 'AppUpdaterPlugin.java');
-  // Una sola fuente del plugin para builds locales y para GitHub Actions
-  const pluginCode = fs.readFileSync(path.resolve('native/android/AppUpdaterPlugin.java'), 'utf-8');
-  fs.writeFileSync(pluginPath, pluginCode, 'utf-8');
-  console.log('[prepare-android] AppUpdaterPlugin.java inyectado con éxito.');
+  // 1. AppUpdaterPlugin.java
+  const updaterSrc = path.resolve('native/android/AppUpdaterPlugin.java');
+  if (fs.existsSync(updaterSrc)) {
+    fs.writeFileSync(path.join(javaDir, 'AppUpdaterPlugin.java'), fs.readFileSync(updaterSrc, 'utf-8'), 'utf-8');
+    console.log('[prepare-android] AppUpdaterPlugin.java inyectado con éxito.');
+  }
+
+  // 2. LocalStreamServer.java
+  const serverSrc = path.resolve('native/android/LocalStreamServer.java');
+  if (fs.existsSync(serverSrc)) {
+    fs.writeFileSync(path.join(javaDir, 'LocalStreamServer.java'), fs.readFileSync(serverSrc, 'utf-8'), 'utf-8');
+    console.log('[prepare-android] LocalStreamServer.java inyectado con éxito.');
+  }
+
+  // 3. ExoPlayerPlugin.java
+  const exoSrc = path.resolve('native/android/ExoPlayerPlugin.java');
+  if (fs.existsSync(exoSrc)) {
+    fs.writeFileSync(path.join(javaDir, 'ExoPlayerPlugin.java'), fs.readFileSync(exoSrc, 'utf-8'), 'utf-8');
+    console.log('[prepare-android] ExoPlayerPlugin.java inyectado con éxito.');
+  }
+
+  // 4. Layout de ExoPlayer
+  const layoutDir = path.join(ANDROID_RES, 'layout');
+  if (!fs.existsSync(layoutDir)) {
+    fs.mkdirSync(layoutDir, { recursive: true });
+  }
+  const layoutSrc = path.resolve('native/android/exo_player_layout.xml');
+  if (fs.existsSync(layoutSrc)) {
+    fs.writeFileSync(path.join(layoutDir, 'exo_player_layout.xml'), fs.readFileSync(layoutSrc, 'utf-8'), 'utf-8');
+    console.log('[prepare-android] exo_player_layout.xml inyectado con éxito.');
+  }
+}
+
+function ensureMedia3Dependencies() {
+  if (!fs.existsSync(BUILD_GRADLE_PATH)) {
+    return;
+  }
+  let gradle = fs.readFileSync(BUILD_GRADLE_PATH, 'utf-8');
+  if (!gradle.includes('androidx.media3:media3-exoplayer')) {
+    const media3Deps = `
+    // AndroidX Media3 ExoPlayer para reproducción nativa y Android TV
+    implementation 'androidx.media3:media3-exoplayer:1.5.1'
+    implementation 'androidx.media3:media3-ui:1.5.1'
+    implementation 'androidx.media3:media3-common:1.5.1'
+`;
+    gradle = gradle.replace(/dependencies\s*\{/, 'dependencies {' + media3Deps);
+    fs.writeFileSync(BUILD_GRADLE_PATH, gradle, 'utf-8');
+    console.log('[prepare-android] Dependencias AndroidX Media3 (1.5.1) inyectadas en build.gradle.');
+  }
 }
 
 function ensureFilePathsXml() {
@@ -192,13 +237,8 @@ function configureMainActivity() {
   let content = fs.readFileSync(mainPath, 'utf-8');
 
   // Registrar plugins en onCreate si aún no están registrados
-  if (!content.includes('AppUpdaterPlugin.class')) {
-    if (content.includes('registerPlugin(ExoPlayerPlugin.class);')) {
-      content = content.replace(
-        'registerPlugin(ExoPlayerPlugin.class);',
-        'registerPlugin(AppUpdaterPlugin.class);\n        registerPlugin(ExoPlayerPlugin.class);'
-      );
-    } else if (content.includes('public class MainActivity extends BridgeActivity {')) {
+  if (!content.includes('AppUpdaterPlugin.class') || !content.includes('ExoPlayerPlugin.class')) {
+    if (content.includes('public class MainActivity extends BridgeActivity {')) {
       const onCreateReplacement = `public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(android.os.Bundle savedInstanceState) {
@@ -277,7 +317,8 @@ function configureMainActivity() {
 }
 
 try {
-  ensureAppUpdaterPlugin();
+  ensureNativePlugins();
+  ensureMedia3Dependencies();
   ensureFilePathsXml();
   configureManifest();
   copyBanners();

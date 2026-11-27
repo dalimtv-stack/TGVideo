@@ -1048,3 +1048,28 @@ body.platform-android #pl-btn-fullscreen {
 }
 
 
+
+
+.player-scrubber-buffered {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0%;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  pointer-events: none;
+  transition: width 0.25s linear;
+}
+
+.player-scrubber-track.is-scrubbing {
+  height: 14px !important;
+  outline: 3px solid #e50914 !important;
+  outline-offset: 2px;
+}
+
+.player-scrubber-track.is-scrubbing .player-scrubber-thumb {
+  transform: translateY(-50%) scale(1.6) !important;
+  background: #ffffff !important;
+  box-shadow: 0 0 16px #e50914 !important;
+}

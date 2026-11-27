@@ -1,5 +1,6 @@
 // src/player/exoplayer.js
-// Integración de ExoPlayer nativo para Android TV / APK con túnel de streaming bajo demanda de Telegram
+// Integración de ExoPlayer nativo para Android TV / APK con túnel de streaming bajo demanda de Telegram,
+// soporte de Scrubbing Mode interactivo, SeekParameters optimizados y decodificación por hardware acelerada.
 import { getStream, readRange, openStream } from './stream.js';
 import { ensureConnected, resetExportedSenders } from '../core/telegram.js';
 import { formatTime, showToast, bindNextUp } from './ui-helpers.js';
@@ -46,11 +47,18 @@ export async function playExoPlayer(opts) {
     document.documentElement.style.backgroundColor = 'transparent';
     document.body.style.backgroundColor = 'transparent';
   }
+
   let osdTimer = null;
   let currentDuration = 0;
   let currentPosition = resumeAt || 0;
   let isPlaying = false;
   let lastProgressSave = 0;
+
+  // Estado de Scrubbing interactivo
+  let isScrubbing = false;
+  let scrubPosition = 0;
+  let scrubSeekTimeout = null;
+  let dpadScrubDebounceTimer = null;
 
   mount.innerHTML = `
     <div class="player player-native player-exoplayer">
@@ -67,6 +75,7 @@ export async function playExoPlayer(opts) {
           <div class="player-timeline-row">
             <span class="player-osd-time" id="pl-time-cur">0:00</span>
             <div class="player-scrubber-track" id="pl-scrubber" tabindex="0" data-focusable role="slider" aria-label="Línea de tiempo">
+              <div class="player-scrubber-buffered" id="pl-scrubber-buf"></div>
               <div class="player-scrubber-fill" id="pl-scrubber-fill">
                 <div class="player-scrubber-thumb"></div>
               </div>
@@ -105,39 +114,122 @@ export async function playExoPlayer(opts) {
   const statusEl = mount.querySelector('#pl-status');
   const titleEl = mount.querySelector('#pl-title');
   const scrubber = mount.querySelector('#pl-scrubber');
+  const scrubberBuf = mount.querySelector('#pl-scrubber-buf');
   const scrubberFill = mount.querySelector('#pl-scrubber-fill');
   const timeCur = mount.querySelector('#pl-time-cur');
   const timeDur = mount.querySelector('#pl-time-dur');
   const iconPlay = mount.querySelector('#pl-icon-play');
   const iconPause = mount.querySelector('#pl-icon-pause');
 
-  const seekBy = (delta) => {
-    const current = currentPosition || 0;
+  const showOsd = () => {
+    if (destroyed) return;
+    osd.classList.remove('is-hidden');
+    clearTimeout(osdTimer);
+    if (isPlaying && !isScrubbing) {
+      osdTimer = setTimeout(() => {
+        if (!destroyed && isPlaying && !isScrubbing) osd.classList.add('is-hidden');
+      }, 3000);
+    }
+  };
+
+  const hideLoading = () => {
+    if (loading) loading.style.display = 'none';
+  };
+
+  // 1. Gestión de Scrubbing interactivo
+  const startScrubbing = async (initialTarget) => {
+    if (isScrubbing) return;
+    isScrubbing = true;
+    scrubber.classList.add('is-scrubbing');
+    clearTimeout(osdTimer);
+    showOsd();
+    try {
+      if (typeof ExoPlayerPlugin.setScrubbingMode === 'function') {
+        await ExoPlayerPlugin.setScrubbingMode({ enabled: true });
+      }
+    } catch (_) {}
+    if (typeof initialTarget === 'number') {
+      updateScrubPosition(initialTarget);
+    }
+  };
+
+  const updateScrubPosition = (targetSeconds) => {
+    if (currentDuration <= 0) return;
+    const clamped = Math.max(0, Math.min(currentDuration, targetSeconds));
+    scrubPosition = clamped;
+    timeCur.textContent = formatTime(clamped);
+    const pct = (clamped / currentDuration) * 100;
+    scrubberFill.style.width = `${pct}%`;
+
+    // Despacho agrupado de búsqueda rápida (CLOSEST_SYNC) para que el decodificador pinte keyframes al vuelo
+    clearTimeout(scrubSeekTimeout);
+    scrubSeekTimeout = setTimeout(() => {
+      if (destroyed || !isScrubbing) return;
+      ExoPlayerPlugin.seekTo({ position: clamped, fast: true }).catch(() => {});
+    }, 70);
+  };
+
+  const stopScrubbing = async (finalTarget) => {
+    if (!isScrubbing) return;
+    isScrubbing = false;
+    clearTimeout(scrubSeekTimeout);
+    clearTimeout(dpadScrubDebounceTimer);
+    scrubber.classList.remove('is-scrubbing');
+
+    const target = typeof finalTarget === 'number' ? finalTarget : scrubPosition;
+    currentPosition = target;
+    timeCur.textContent = formatTime(target);
+
+    try {
+      // Posicionamiento final exacto
+      await ExoPlayerPlugin.seekTo({ position: target, exact: true });
+      if (typeof ExoPlayerPlugin.setScrubbingMode === 'function') {
+        await ExoPlayerPlugin.setScrubbingMode({ enabled: false });
+      }
+    } catch (_) {}
+
+    showOsd();
+  };
+
+  // Salto rápido para botones de avance / retroceso
+  const fastSeekBy = async (delta) => {
+    const current = isScrubbing ? scrubPosition : (currentPosition || 0);
     const target = Math.max(0, Math.min(currentDuration || Infinity, current + delta));
-    ExoPlayerPlugin.seekTo({ position: target });
+    currentPosition = target;
+    timeCur.textContent = formatTime(target);
+    if (currentDuration > 0) {
+      scrubberFill.style.width = `${Math.min(100, Math.max(0, (target / currentDuration) * 100))}%`;
+    }
+    await ExoPlayerPlugin.seekTo({ position: target, fast: true }).catch(() => {});
     showToast(playerEl, `${delta < 0 ? '⏪' : '⏩'} ${delta > 0 ? '+' : ''}${delta}s`);
     showOsd();
   };
+
+  // D-Pad controller registration
   registerPlayerController({
     close: () => closePlayer(),
     onPlayPause: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
+      if (isScrubbing) {
+        stopScrubbing();
+        return;
+      }
       ExoPlayerPlugin.togglePlay();
       showToast(playerEl, isPlaying ? '⏸ Pausa' : '▶ Reproduciendo');
       showOsd();
     },
     onForward: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
-      seekBy(skipSeconds);
+      fastSeekBy(skipSeconds);
     },
     onRewind: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
-      seekBy(-skipSeconds);
+      fastSeekBy(-skipSeconds);
     },
     onLeft: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
       if (osd.classList.contains('is-hidden')) {
-        seekBy(-skipSeconds);
+        fastSeekBy(-skipSeconds);
         return;
       }
       const cur = document.activeElement;
@@ -155,15 +247,24 @@ export async function playExoPlayer(opts) {
         return;
       }
       if (cur === scrubber) {
-        seekBy(-skipSeconds);
+        // Scrubbing interactivo en la barra con D-pad
+        if (!isScrubbing) {
+          startScrubbing(currentPosition - skipSeconds);
+        } else {
+          updateScrubPosition(scrubPosition - skipSeconds);
+        }
+        clearTimeout(dpadScrubDebounceTimer);
+        dpadScrubDebounceTimer = setTimeout(() => {
+          if (isScrubbing) stopScrubbing();
+        }, 500);
         return;
       }
-      seekBy(-skipSeconds);
+      fastSeekBy(-skipSeconds);
     },
     onRight: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
       if (osd.classList.contains('is-hidden')) {
-        seekBy(skipSeconds);
+        fastSeekBy(skipSeconds);
         return;
       }
       const cur = document.activeElement;
@@ -181,13 +282,25 @@ export async function playExoPlayer(opts) {
         return;
       }
       if (cur === scrubber) {
-        seekBy(skipSeconds);
+        // Scrubbing interactivo en la barra con D-pad
+        if (!isScrubbing) {
+          startScrubbing(currentPosition + skipSeconds);
+        } else {
+          updateScrubPosition(scrubPosition + skipSeconds);
+        }
+        clearTimeout(dpadScrubDebounceTimer);
+        dpadScrubDebounceTimer = setTimeout(() => {
+          if (isScrubbing) stopScrubbing();
+        }, 500);
         return;
       }
-      seekBy(skipSeconds);
+      fastSeekBy(skipSeconds);
     },
     onUp: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
+      if (isScrubbing) {
+        stopScrubbing();
+      }
       if (osd.classList.contains('is-hidden')) {
         showOsd();
         scrubber.focus();
@@ -209,6 +322,9 @@ export async function playExoPlayer(opts) {
     },
     onDown: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
+      if (isScrubbing) {
+        stopScrubbing();
+      }
       if (osd.classList.contains('is-hidden')) {
         showOsd();
         mount.querySelector('#pl-btn-playpause')?.focus();
@@ -230,6 +346,10 @@ export async function playExoPlayer(opts) {
     },
     onSelect: () => {
       if (document.querySelector('.player-tracks-overlay')) return;
+      if (isScrubbing) {
+        stopScrubbing();
+        return;
+      }
       if (osd.classList.contains('is-hidden')) {
         showOsd();
         mount.querySelector('#pl-btn-playpause')?.focus();
@@ -245,26 +365,12 @@ export async function playExoPlayer(opts) {
     },
   });
 
-  const showOsd = () => {
-    if (destroyed) return;
-    osd.classList.remove('is-hidden');
-    clearTimeout(osdTimer);
-    if (isPlaying) {
-      osdTimer = setTimeout(() => {
-        if (!destroyed && isPlaying) osd.classList.add('is-hidden');
-      }, 2000);
-    }
-  };
-
-  const hideLoading = () => {
-    if (loading) loading.style.display = 'none';
-  };
-
   let rangeListener = null;
   let readyListener = null;
   let playingListener = null;
   let progressListener = null;
   let endedListener = null;
+  let metricListener = null;
   let nextUp = null;
 
   const closePlayer = async ({ isSwitching = false } = {}) => {
@@ -278,6 +384,8 @@ export async function playExoPlayer(opts) {
     }
     unregisterPlayerController();
     clearTimeout(osdTimer);
+    clearTimeout(scrubSeekTimeout);
+    clearTimeout(dpadScrubDebounceTimer);
     keepScreenOn(false);
     if (nextUp?.remove) nextUp.remove();
     try {
@@ -286,6 +394,7 @@ export async function playExoPlayer(opts) {
       if (playingListener?.remove) await playingListener.remove();
       if (progressListener?.remove) await progressListener.remove();
       if (endedListener?.remove) await endedListener.remove();
+      if (metricListener?.remove) await metricListener.remove();
       await ExoPlayerPlugin.removeAllListeners().catch(() => {});
     } catch (_) {}
 
@@ -338,7 +447,7 @@ export async function playExoPlayer(opts) {
     const doc = msg.media.document;
     const size = Number(doc?.size?.toString?.() || doc?.size || file.size || 0);
     const mime = doc?.mimeType || file.mimeType || file.mime || 'video/mp4';
-    const name = doc?.attributes?.find(a => a.fileName)?.fileName || file.fileName || file.label || 'video.mkv';
+    const name = doc?.attributes?.find(a => a.fileName)?.fileName || file.fileName || file.label || 'video.mp4';
     const displayTitle = title?.nombre || title?.name || file.label || name;
 
     titleEl.textContent = displayTitle;
@@ -368,10 +477,7 @@ export async function playExoPlayer(opts) {
       }
       const s = getStream(streamId);
       if (!s) {
-        // Desbloquear inmediatamente el servidor local si el stream ya no está disponible
-        await fetch(`http://127.0.0.1:${port}/error?requestId=${encodeURIComponent(requestId)}`, {
-          method: 'POST'
-        }).catch(() => {});
+        await fetch(`http://127.0.0.1:${port}/error?requestId=${encodeURIComponent(requestId)}`, { method: 'POST' }).catch(() => {});
         return;
       }
       try {
@@ -387,9 +493,7 @@ export async function playExoPlayer(opts) {
         });
       } catch (err) {
         console.warn('[exoplayer] Error descargando bloque de Telegram:', err);
-        await fetch(`http://127.0.0.1:${port}/error?requestId=${encodeURIComponent(requestId)}`, {
-          method: 'POST'
-        }).catch(() => {});
+        await fetch(`http://127.0.0.1:${port}/error?requestId=${encodeURIComponent(requestId)}`, { method: 'POST' }).catch(() => {});
       }
     });
 
@@ -407,6 +511,14 @@ export async function playExoPlayer(opts) {
       }
       showToast(playerEl, '▶ ExoPlayer conectado');
       showOsd();
+    });
+
+    metricListener = await ExoPlayerPlugin.addListener('onPerformanceMetric', (ev) => {
+      if (ev?.type === 'firstFrame') {
+        console.info(`[exoplayer] Tiempo hasta primer fotograma: ${ev.elapsedMs} ms`);
+      } else if (ev?.type === 'decoderInit') {
+        console.info(`[exoplayer] Decodificador hardware: ${ev.decoder} (${ev.durationMs} ms)`);
+      }
     });
 
     playingListener = await ExoPlayerPlugin.addListener('onPlayingChanged', (ev) => {
@@ -435,7 +547,7 @@ export async function playExoPlayer(opts) {
     nextUp = bindNextUp({
       getTime: () => currentPosition,
       getDuration: () => currentDuration,
-      playerEl, // o playerEl: playerEl
+      playerEl,
       nextFile,
       title,
       onNext: async (nf) => {
@@ -447,16 +559,27 @@ export async function playExoPlayer(opts) {
     progressListener = await ExoPlayerPlugin.addListener('onPlaybackProgress', (ev) => {
       if (destroyed) return;
       hideLoading();
-      currentPosition = ev.currentTime || 0;
+
       if (ev.duration && ev.duration > 0) {
         currentDuration = ev.duration;
         timeDur.textContent = formatTime(currentDuration);
       }
-      timeCur.textContent = formatTime(currentPosition);
 
-      if (currentDuration > 0) {
-        const pct = Math.min(100, Math.max(0, (currentPosition / currentDuration) * 100));
-        scrubberFill.style.width = `${pct}%`;
+      // Actualizar búfer cargado
+      if (scrubberBuf && ev.bufferedTime && currentDuration > 0) {
+        const bufPct = Math.min(100, Math.max(0, (ev.bufferedTime / currentDuration) * 100));
+        scrubberBuf.style.width = `${bufPct}%`;
+      }
+
+      // Durante scrubbing no sobreescribir la posición visual interactiva
+      if (!isScrubbing) {
+        currentPosition = ev.currentTime || 0;
+        timeCur.textContent = formatTime(currentPosition);
+
+        if (currentDuration > 0) {
+          const pct = Math.min(100, Math.max(0, (currentPosition / currentDuration) * 100));
+          scrubberFill.style.width = `${pct}%`;
+        }
       }
 
       nextUp.check();
@@ -507,20 +630,8 @@ export async function playExoPlayer(opts) {
       showOsd();
     };
 
-    mount.querySelector('#pl-btn-rw').onclick = () => {
-      const target = Math.max(0, currentPosition - skipSeconds);
-      ExoPlayerPlugin.seekTo({ position: target });
-      showToast(playerEl, `⏪ -${skipSeconds}s`);
-      showOsd();
-    };
-
-    mount.querySelector('#pl-btn-ff').onclick = () => {
-      const target = Math.min(currentDuration || currentPosition + skipSeconds, currentPosition + skipSeconds);
-      ExoPlayerPlugin.seekTo({ position: target });
-      showToast(playerEl, `+${skipSeconds}s ⏩`);
-      showOsd();
-    };
-
+    mount.querySelector('#pl-btn-rw').onclick = () => fastSeekBy(-skipSeconds);
+    mount.querySelector('#pl-btn-ff').onclick = () => fastSeekBy(skipSeconds);
 
     mount.querySelector('#pl-badge-toggle').onclick = async () => {
       const target = setDevicePlayer(profile, nextPlayerId('exoplayer'));
@@ -534,7 +645,6 @@ export async function playExoPlayer(opts) {
     mount.querySelector('#pl-btn-back').onclick = closePlayer;
 
     const openNativeTrackMenu = async (kind) => {
-      // Evitar crash en Android TV: no tocar el plugin si no está listo
       if (!ExoPlayerPlugin || typeof ExoPlayerPlugin.getTracks !== 'function') {
         showToast(playerEl, 'Pistas no disponibles en este dispositivo');
         return;
@@ -542,7 +652,6 @@ export async function playExoPlayer(opts) {
       let result = null;
       try {
         result = await ExoPlayerPlugin.getTracks();
-        // Las pistas llegan tras preparar el vídeo: reintentar unos instantes si aún no hay ninguna
         for (let attempt = 0; attempt < 4 && !(result?.audio?.length || result?.text?.length); attempt++) {
           await new Promise((r) => setTimeout(r, 700));
           result = await ExoPlayerPlugin.getTracks();
@@ -624,7 +733,6 @@ export async function playExoPlayer(opts) {
             options[next]?.focus?.();
           }
         });
-        // Focus diferido: en Android TV focus inmediato a veces tumba el WebView
         setTimeout(() => {
           try { overlay.querySelector('.player-track-option, .player-tracks-close')?.focus?.(); } catch (_) {}
         }, 50);
@@ -637,15 +745,39 @@ export async function playExoPlayer(opts) {
     mount.querySelector('#pl-btn-audio').onclick = () => openNativeTrackMenu('audio');
     mount.querySelector('#pl-btn-subs').onclick = () => openNativeTrackMenu('text');
 
-    scrubber.onclick = (e) => {
+    // Manejo táctil / ratón de la barra con Scrubbing interactivo suave
+    const getPosFromEvent = (e) => {
       const rect = scrubber.getBoundingClientRect();
-      if (rect.width && currentDuration > 0) {
-        const pos = (e.clientX - rect.left) / rect.width;
-        const target = Math.max(0, Math.min(currentDuration, pos * currentDuration));
-        ExoPlayerPlugin.seekTo({ position: target });
-        showOsd();
-      }
+      if (!rect.width || currentDuration <= 0) return 0;
+      const clientX = e.clientX ?? e.touches?.[0]?.clientX ?? 0;
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return ratio * currentDuration;
     };
+
+    scrubber.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      try { scrubber.setPointerCapture(e.pointerId); } catch (_) {}
+      const target = getPosFromEvent(e);
+      startScrubbing(target);
+    });
+
+    scrubber.addEventListener('pointermove', (e) => {
+      if (!isScrubbing) return;
+      e.preventDefault();
+      const target = getPosFromEvent(e);
+      updateScrubPosition(target);
+    });
+
+    const finishPointerScrub = (e) => {
+      if (!isScrubbing) return;
+      e.preventDefault();
+      try { scrubber.releasePointerCapture(e.pointerId); } catch (_) {}
+      const finalTarget = getPosFromEvent(e);
+      stopScrubbing(finalTarget);
+    };
+
+    scrubber.addEventListener('pointerup', finishPointerScrub);
+    scrubber.addEventListener('pointercancel', finishPointerScrub);
 
     // Eventos directos sobre el contenedor del reproductor
     playerEl.addEventListener('keydown', (e) => {
@@ -663,6 +795,10 @@ export async function playExoPlayer(opts) {
         e.keyCode === 179 || e.keyCode === 85 || e.keyCode === 126 || e.keyCode === 127 || e.keyCode === 250 || e.keyCode === 19;
       if (isPlayPauseKey) {
         e.preventDefault();
+        if (isScrubbing) {
+          stopScrubbing();
+          return;
+        }
         ExoPlayerPlugin.togglePlay();
         showToast(playerEl, isPlaying ? '⏸ Pausa' : '▶ Reproduciendo');
         return;
@@ -673,7 +809,7 @@ export async function playExoPlayer(opts) {
         e.keyCode === 228 || e.keyCode === 90 || e.keyCode === 178 || e.keyCode === 87 || e.keyCode === 176 || e.keyCode === 272 || e.keyCode === 274;
       if (isForwardKey) {
         e.preventDefault();
-        seekBy(skipSeconds);
+        fastSeekBy(skipSeconds);
         return;
       }
 
@@ -682,7 +818,7 @@ export async function playExoPlayer(opts) {
         e.keyCode === 227 || e.keyCode === 89 || e.keyCode === 177 || e.keyCode === 88 || e.keyCode === 273 || e.keyCode === 275;
       if (isRewindKey) {
         e.preventDefault();
-        seekBy(-skipSeconds);
+        fastSeekBy(-skipSeconds);
         return;
       }
     });
