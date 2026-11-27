@@ -1,7 +1,7 @@
 {
   "name": "tgvideo",
   "private": true,
-  "version": "0.9.33",
+  "version": "0.9.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
