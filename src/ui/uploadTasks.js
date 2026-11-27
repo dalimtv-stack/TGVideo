@@ -15,13 +15,49 @@ function esc(value) {
 }
 
 function ensureBar() {
-  bar = document.getElementById('admin-global-upload-bar') || bar;
-  if (!bar || !bar.isConnected) {
-    bar = document.createElement('div');
-    bar.id = 'admin-global-upload-bar';
-    bar.className = 'admin-global-upload-bar';
-    document.body.appendChild(bar);
+  let existing = document.getElementById('admin-global-upload-bar') || bar;
+  if (!existing || !existing.isConnected) {
+    existing = document.createElement('div');
+    existing.id = 'admin-global-upload-bar';
+    existing.className = 'admin-global-upload-bar';
+    document.body.appendChild(existing);
   }
+
+  if (!existing._hasUploadTasksListener) {
+    existing._hasUploadTasksListener = true;
+    existing.addEventListener('click', (e) => {
+      const hideBtn = e.target.closest('#upload-bar-btn-hide');
+      if (hideBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        isHidden = true;
+        render();
+        return;
+      }
+
+      const closeTaskBtn = e.target.closest('[data-close-task]');
+      if (closeTaskBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        tasks.delete(closeTaskBtn.dataset.closeTask);
+        render();
+        return;
+      }
+
+      const clearFinishedBtn = e.target.closest('[data-clear-finished]');
+      if (clearFinishedBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        for (const [id, task] of tasks) {
+          if (task.done || task.error) tasks.delete(id);
+        }
+        render();
+        return;
+      }
+    });
+  }
+
+  bar = existing;
   return bar;
 }
 
@@ -51,9 +87,14 @@ function ensureShowButton() {
       gap: 0.45rem;
       transition: all 0.2s ease;
     `;
-    showBtn.addEventListener('click', () => {
+    showBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       isHidden = false;
       render();
+      setTimeout(() => {
+        document.getElementById('upload-bar-btn-hide')?.focus?.({ preventScroll: true });
+      }, 50);
     });
     document.body.appendChild(showBtn);
   }
@@ -62,9 +103,11 @@ function ensureShowButton() {
 
 function render() {
   if (!tasks.size) {
-    bar?.remove();
+    const b = document.getElementById('admin-global-upload-bar') || bar;
+    b?.remove();
     bar = null;
-    showBtn?.remove();
+    const s = document.getElementById('btn-show-upload-bar') || showBtn;
+    s?.remove();
     showBtn = null;
     return;
   }
@@ -73,10 +116,11 @@ function render() {
   const activeCount = list.filter(t => !t.done && !t.error).length;
 
   if (isHidden) {
-    if (bar) bar.style.display = 'none';
+    const el = document.getElementById('admin-global-upload-bar') || bar;
+    if (el) el.style.display = 'none';
     const btn = ensureShowButton();
     btn.style.display = 'flex';
-    btn.innerHTML = `<span>Mostrar</span>`;
+    btn.innerHTML = `<span>⏳ ${activeCount > 0 ? `${activeCount} subiendo` : 'Tareas'} · Mostrar</span>`;
     return;
   }
 
@@ -123,11 +167,11 @@ function render() {
 
       <!-- Barra inferior de control: Botón Ocultar abajo a la izquierda y resumen / limpiar a la derecha -->
       <div style="display: flex; justify-content: space-between; align-items: center; color: #94a3b8; font-size: 0.78rem; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.4rem; margin-top: 0.1rem;">
-        <button type="button" id="upload-bar-btn-hide" data-focusable style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: #cbd5e1; padding: 0.22rem 0.65rem; font-size: 0.78rem; cursor: pointer; display: flex; align-items: center; gap: 0.3rem;">
+        <button type="button" id="upload-bar-btn-hide" data-focusable aria-label="Ocultar barra de tareas" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; color: #cbd5e1; padding: 0.25rem 0.75rem; font-size: 0.78rem; cursor: pointer; display: flex; align-items: center; gap: 0.3rem;">
           <span>Ocultar</span>
         </button>
         <div style="display: flex; align-items: center; gap: 0.8rem;">
-          <span>${activeCount} activas · ${list.length} total</span>
+          <span class="admin-uploads-summary-count">${activeCount} activas · ${list.length} total</span>
           ${list.some(t => t.done || t.error) ? `
             <button type="button" data-clear-finished style="background: transparent; border: 0; color: #38bdf8; cursor: pointer; text-decoration: underline; font-size: 0.78rem;">
               Limpiar terminados
@@ -138,24 +182,18 @@ function render() {
     </div>
   `;
 
-  root.querySelector('#upload-bar-btn-hide')?.addEventListener('click', () => {
-    isHidden = true;
-    render();
-  });
-
-  root.querySelectorAll('[data-close-task]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      tasks.delete(btn.dataset.closeTask);
+  const hideBtn = root.querySelector('#upload-bar-btn-hide');
+  if (hideBtn) {
+    hideBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      isHidden = true;
       render();
-    });
-  });
-
-  root.querySelector('[data-clear-finished]')?.addEventListener('click', () => {
-    for (const [id, task] of tasks) {
-      if (task.done || task.error) tasks.delete(id);
-    }
-    render();
-  });
+      setTimeout(() => {
+        document.getElementById('btn-show-upload-bar')?.focus?.({ preventScroll: true });
+      }, 50);
+    };
+  }
 }
 
 export function startUploadTask(title, status = 'Iniciando…', percent = 0) {
@@ -168,8 +206,62 @@ export function startUploadTask(title, status = 'Iniciando…', percent = 0) {
 export function updateUploadTask(id, patch = {}) {
   const current = tasks.get(String(id));
   if (!current) return;
-  tasks.set(String(id), { ...current, ...patch, id: String(id) });
-  render();
+  const updated = { ...current, ...patch, id: String(id) };
+  tasks.set(String(id), updated);
+
+  if (isHidden) {
+    if (showBtn && showBtn.isConnected) {
+      const list = [...tasks.values()];
+      const activeCount = list.filter(t => !t.done && !t.error).length;
+      showBtn.innerHTML = `<span>⏳ ${activeCount > 0 ? `${activeCount} subiendo` : 'Tareas'} · Mostrar</span>`;
+    }
+    return;
+  }
+
+  const root = document.getElementById('admin-global-upload-bar');
+  if (!root || !root.isConnected || !root.querySelector('.admin-uploads-list')) {
+    render();
+    return;
+  }
+
+  const taskRow = root.querySelector(`.admin-upload-bar-inner[data-task-id="${esc(id)}"]`);
+  if (!taskRow) {
+    render();
+    return;
+  }
+
+  // Actualización quirúrgica de progreso y estado en el DOM existente
+  // Evita destruir y recrear el DOM cada segundo, lo que cancelaba los clics en Ocultar y perdía el foco
+  if (patch.status !== undefined) {
+    const subEl = taskRow.querySelector('.admin-upload-bar-sub');
+    if (subEl) subEl.textContent = patch.status;
+  }
+
+  const percentNum = Math.max(0, Math.min(100, Number(updated.percent) || 0));
+  const fillEl = taskRow.querySelector('.admin-upload-bar-fill');
+  if (fillEl) {
+    fillEl.style.width = `${percentNum}%`;
+    if (updated.error) fillEl.style.background = '#ef4444';
+    else if (updated.done) fillEl.style.background = '#10b981';
+    else fillEl.style.background = '#38bdf8';
+  }
+
+  const pctEl = taskRow.querySelector('.admin-upload-bar-pct');
+  if (pctEl) {
+    pctEl.textContent = `${Math.round(percentNum)}%`;
+  }
+
+  if (patch.done !== undefined || patch.error !== undefined) {
+    render();
+    return;
+  }
+
+  const countSpan = root.querySelector('.admin-uploads-summary-count');
+  if (countSpan) {
+    const list = [...tasks.values()];
+    const activeCount = list.filter(t => !t.done && !t.error).length;
+    countSpan.textContent = `${activeCount} activas · ${list.length} total`;
+  }
 }
 
 export function finishUploadTask(id, status, percent = 100) {
