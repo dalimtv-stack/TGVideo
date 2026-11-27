@@ -160,9 +160,17 @@ export function cleanSearchName(name = "") {
   return extractTitleAndYear(name).title;
 }
 
+// Acepta solo un ID real: un número entero ("1562"), "movie:1562" / "tv/1399" o un enlace de themoviedb.org.
+// Un título que empieza por números ("28 semanas después", "300", "21 Jump Street") NO es un ID:
+// antes se tomaba el "28" inicial como TMDB #28 (Apocalypse Now).
 export function parseTmdbId(value) {
-  const m = String(value || "").match(/(?:themoviedb\.org\/(?:tv|movie|collection)\/|^(?:(?:tv|movie|collection)[:/])?)(\d+)/i);
-  return m ? Number(m[1]) : null;
+  if (typeof value === "number") return Number.isInteger(value) && value > 0 ? value : null;
+  const str = String(value || "").trim();
+  if (!str) return null;
+  const url = str.match(/themoviedb\.org\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?(?:tv|movie|collection)\/(\d+)/i);
+  if (url) return Number(url[1]);
+  const plain = str.match(/^(?:(?:tv|movie|collection)[:/]\s*)?(\d+)$/i);
+  return plain ? Number(plain[1]) : null;
 }
 export function imageUrl(path, size = "w342") { return path?.startsWith("/") ? IMAGE + size + path : ""; }
 async function request(path, params = {}, signal) {
