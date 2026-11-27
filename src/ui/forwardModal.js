@@ -4,6 +4,7 @@ import { fetchTmdbFullDetails, extractTitleAndYear } from '../metadata/tmdb.js';
 import { loadLibrary } from '../library/channels.js';
 import { parseCaption, buildStandardCaption, parseEpisode, prettyEpisodeName } from '../library/parse.js';
 import { normalizeMovieKey } from '../library/titles.js';
+import { getOverride, getOverrideByTmdbId } from '../metadata/overrides.js';
 import { EXT_CHANNEL_TITLES_CACHE, getEpisodeSeriesMove, filterSeriesFilesByMoves } from './externalTitlesCache.js';
 import { startUploadTask, updateUploadTask } from './uploadTasks.js';
 
@@ -83,39 +84,50 @@ function setProgressBar(_bar, { id, title, status, percent = 0, done = false, er
 }
 
 function extractYear(titleData, file) {
-  // 1. Metadatos directos o heredados de TMDB
+  // 1. Metadatos TMDB explícitos (revisar metadata de titleData, file, y overrides)
   const meta = titleData?.metadata || file?.metadata || null;
-  if (meta?.year) return String(meta.year);
+  if (meta?.year) {
+    const m = String(meta.year).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
+  if (meta?.date) {
+    const m = String(meta.date).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
   if (meta?.release_date) {
-    const m = String(meta.release_date).match(/^(\d{4})/);
+    const m = String(meta.release_date).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
   if (meta?.first_air_date) {
-    const m = String(meta.first_air_date).match(/^(\d{4})/);
-    if (m) return m[1];
-  }
-  if (titleData?.metadata?.year) return String(titleData.metadata.year);
-  if (titleData?.metadata?.release_date) {
-    const m = String(titleData.metadata.release_date).match(/^(\d{4})/);
-    if (m) return m[1];
-  }
-  if (titleData?.metadata?.first_air_date) {
-    const m = String(titleData.metadata.first_air_date).match(/^(\d{4})/);
-    if (m) return m[1];
-  }
-  if (file?.metadata?.year) return String(file.metadata.year);
-  if (file?.metadata?.release_date) {
-    const m = String(file.metadata.release_date).match(/^(\d{4})/);
+    const m = String(meta.first_air_date).match(/\b((?:19|20)\d{2})\b/);
     if (m) return m[1];
   }
 
-  // 2. Propiedades year / yearHint comunes en pestaña Externos
-  if (titleData?.yearHint) return String(titleData.yearHint);
-  if (file?.yearHint) return String(file.yearHint);
-  if (titleData?.year) return String(titleData.year);
-  if (file?.year) return String(file.year);
+  // 2. Propiedades directas year / yearHint
+  if (titleData?.year) {
+    const m = String(titleData.year).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
+  if (file?.year) {
+    const m = String(file.year).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
+  if (titleData?.yearHint) {
+    const m = String(titleData.yearHint).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
+  if (file?.yearHint) {
+    const m = String(file.yearHint).match(/\b((?:19|20)\d{2})\b/);
+    if (m) return m[1];
+  }
 
-  // 3. Extracción robusta de nombres de archivo y captions de Telegram
+  // 3. Extracción desde caption y nombres de archivo de Telegram
+  const cap = parseCaption(file?.rawCaption || file?.caption || '');
+  if (cap.fileName) {
+    const parsedCap = extractTitleAndYear(cap.fileName);
+    if (parsedCap.year) return String(parsedCap.year);
+  }
+
   const candidate = file?.captionFileName || file?.fileName || file?.rawFileName || file?.label || titleData?.nombre || '';
   const parsedCandidate = extractTitleAndYear(candidate);
   if (parsedCandidate.year) return String(parsedCandidate.year);
@@ -175,15 +187,28 @@ function formatSuggestedFileName(file, titleData) {
     return `${sName} - ${season}x${epStr}${ext}`;
   }
 
+  // Película: determinar nombre canónico y año
+  const meta = titleData?.metadata || file?.metadata || null;
+  const metaTitle = meta?.title || meta?.name || null;
+
   const candidateName = file?.captionFileName || file?.fileName || file?.label || titleData?.nombre || cleanBase;
   const parsedCandidate = extractTitleAndYear(candidateName);
   let year = extractYear(titleData, file) || parsedCandidate.year;
 
-  let mName = titleData?.metadata?.title || titleData?.metadata?.name || file?.metadata?.title || file?.metadata?.name || parsedCandidate.title || titleData?.nombre || cleanBase;
+  // Si el archivo de origen tiene un nombre genérico (tipo "video23", "video_100") pero el caption o metadata tiene el nombre real
+  const isGenericOrig = /^(?:video[_\-\s]*\d+|\d+|input|file|document)$/i.test(cleanBase) || /^[0-9\-_.]+(?:accion|pelicula|movie|fhd|hd|rip)?$/i.test(cleanBase);
+  const cap = parseCaption(file?.rawCaption || file?.caption || '');
+  const captionCandidate = cap.fileName ? cap.fileName.replace(/\.([a-zA-Z0-9]{2,5})$/, '') : (file?.rawCaption || file?.caption || '').trim().split('\n')[0].trim();
+  const validCaptionCand = captionCandidate && !captionCandidate.includes(':') && captionCandidate.length >= 2 ? captionCandidate : null;
+
+  let mName = metaTitle || (isGenericOrig && validCaptionCand ? validCaptionCand : null) || parsedCandidate.title || titleData?.nombre || cleanBase;
+
+  // Limpiar extensiones residuales
+  mName = mName.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts)$/i, '').trim();
 
   if (year) {
     const escYear = String(year).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Limpiar el año existente en cualquier parte para evitar duplicados como "Gladiator (2000) (2000)"
+    // Limpiar el año existente en cualquier parte para evitar duplicados como "Batman (1992) (1992)"
     const cleaned = mName
       .replace(new RegExp(`\\s*[\\(\\[]?${escYear}[\\)\\]]?\\s*$`, 'i'), '')
       .replace(new RegExp(`\\b${escYear}\\b`, 'g'), ' ')
@@ -196,17 +221,18 @@ function formatSuggestedFileName(file, titleData) {
     }
     return `${mName} (${year})${ext}`;
   } else {
-    // Si ya trae año entre paréntesis en el propio nombre, mantenerlo
-    const hasParen = mName.match(/[\[\(]((?:19|20)\d{2})[\]\)]/);
-    if (!hasParen) {
-      const matchYear = mName.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
-      if (matchYear) {
-        const y = matchYear[1];
-        const escY = String(y).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const cleaned = mName.replace(new RegExp(`\\s*[\\(\\[]?${escY}[\\)\\]]?\\s*$`, 'i'), '').trim();
-        if (cleaned) mName = cleaned;
-        return `${mName} (${y})${ext}`;
-      }
+    // Si ya trae año entre paréntesis en el propio nombre, normalizar formato
+    const matchYear = mName.match(/[\[\(]((?:19\d{2}|20[0-3]\d))[\]\)]/) || mName.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
+    if (matchYear) {
+      const y = matchYear[1];
+      const escY = String(y).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const cleaned = mName
+        .replace(new RegExp(`\\s*[\\(\\[]?${escY}[\\)\\]]?\\s*$`, 'i'), '')
+        .replace(new RegExp(`\\b${escY}\\b`, 'g'), ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (cleaned) mName = cleaned;
+      return `${mName} (${y})${ext}`;
     }
   }
   return `${mName}${ext}`;
@@ -261,11 +287,60 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     return;
   }
 
-  const isSerie = isSeriesTitle(titleData, file);
-  const curTmdb = titleData?.tmdbId || titleData?.metadata?.id || file.tmdbId;
-  const curChId = titleData?.channel?.id || file.channelId || titleData?.origen?.channelId;
+  const fileKey = file.key || `${file.channelId || file.channel?.id}:${file.messageId}`;
+  const fileCap = parseCaption(file.rawCaption || file.caption || '');
+  if (fileCap.fileName && !file.captionFileName) file.captionFileName = fileCap.fileName;
+  if (fileCap.tmdbId && !file.tmdbId) file.tmdbId = fileCap.tmdbId;
 
   const pool = [];
+  if (typeof getTitles === 'function') {
+    try { pool.push(...(getTitles() || [])); } catch (_) {}
+  }
+  if (typeof EXT_CHANNEL_TITLES_CACHE !== 'undefined' && EXT_CHANNEL_TITLES_CACHE?.values) {
+    try {
+      for (const list of EXT_CHANNEL_TITLES_CACHE.values()) {
+        if (Array.isArray(list)) pool.push(...list);
+      }
+    } catch (_) {}
+  }
+
+  // Si titleData viene incompleto o genérico, resolver desde pool
+  let effectiveTitle = titleData;
+  if (pool.length > 0) {
+    const matched = pool.find(t =>
+      (t.id && (t.id === titleData?.id || t.id === fileKey)) ||
+      t.archivos?.some(f => (f.key && f.key === fileKey) || (file.messageId && String(f.messageId) === String(file.messageId)))
+    );
+    if (matched) {
+      effectiveTitle = {
+        ...matched,
+        ...(titleData || {}),
+        metadata: matched.metadata || titleData?.metadata || null,
+        tmdbId: matched.tmdbId || titleData?.tmdbId || null,
+        nombre: matched.nombre || titleData?.nombre,
+      };
+    }
+  }
+
+  // Buscar overrides de identificación previa en TMDB
+  const rawTmdbId = effectiveTitle?.tmdbId || effectiveTitle?.metadata?.id || file.tmdbId || fileCap.tmdbId;
+  const ov = getOverride(fileKey) ||
+    (file.messageId ? getOverride(file.messageId) : null) ||
+    (effectiveTitle?.id ? getOverride(effectiveTitle.id) : null) ||
+    (rawTmdbId ? getOverrideByTmdbId(rawTmdbId) : null);
+
+  if (ov) {
+    if (!effectiveTitle) effectiveTitle = { id: fileKey, nombre: ov.title || ov.name, archivos: [file] };
+    effectiveTitle.metadata = { ...(effectiveTitle.metadata || {}), ...ov };
+    if (ov.id && !effectiveTitle.tmdbId) effectiveTitle.tmdbId = ov.id;
+    if (ov.title || ov.name) effectiveTitle.nombre = ov.title || ov.name;
+    file.metadata = { ...(file.metadata || {}), ...ov };
+    if (ov.id && !file.tmdbId) file.tmdbId = ov.id;
+  }
+
+  const isSerie = isSeriesTitle(effectiveTitle, file);
+  const curTmdb = effectiveTitle?.tmdbId || effectiveTitle?.metadata?.id || file.tmdbId;
+  const curChId = effectiveTitle?.channel?.id || file.channelId || effectiveTitle?.origen?.channelId;
   if (typeof getTitles === 'function') {
     try { pool.push(...(getTitles() || [])); } catch (_) {}
   }
@@ -340,7 +415,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
   if (deleteSourceAfter) allFiles = [file];
   const isMultiFile = !deleteSourceAfter && isSerie && allFiles.length > 1;
   const seriesBaseName = titleData?.metadata?.name || titleData?.metadata?.title || titleData?.nombre || 'Serie';
-  const defaultFilename = formatSuggestedFileName(file, titleData);
+  const defaultFilename = formatSuggestedFileName(file, effectiveTitle || titleData);
   const sizeStr = formatBytes(file.size);
   const totalSeriesSize = allFiles.reduce((acc, f) => acc + (Number(f.size) || 0), 0);
 
@@ -445,9 +520,34 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
         </label>
         <select id="channel-target-select" style="width: 100%; background: #0f172a; border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; padding: 0.6rem 0.75rem; color: #fff; font-size: 0.9rem; outline: none; box-sizing: border-box;">
           ${(() => {
-            const preferredCh = isSerie
-              ? (tgStorageChannels.find(c => c.category === 'Series') || tgStorageChannels[0])
-              : (tgStorageChannels.find(c => c.category === 'Películas') || tgStorageChannels[0]);
+            const rawSourceId = String(titleData?.channel?.id || file?.channelId || file?.channel?.id || titleData?.origen?.channelId || '').replace(/^ext-/, '').replace(/^-?100/, '').trim();
+            const rawSourceTitle = String(titleData?.channel?.title || file?.channel?.title || '').toLowerCase().trim();
+            const sourceGroup = String(titleData?.channel?.group || file?.channel?.group || titleData?.grupo || '').toLowerCase().trim();
+
+            // 1. Coincidencia exacta por ID de canal de origen (si ya es un canal tgstorage)
+            let preferredCh = rawSourceId ? tgStorageChannels.find(c => String(c.id).replace(/^-?100/, '').trim() === rawSourceId) : null;
+
+            // 2. Coincidencia por título completo idéntico
+            if (!preferredCh && rawSourceTitle) {
+              preferredCh = tgStorageChannels.find(c => String(c.title || c.name || '').toLowerCase().trim() === rawSourceTitle);
+            }
+
+            // 3. Coincidencia por misma carpeta/grupo (ej. "HBO", "Acción", etc.)
+            if (!preferredCh && sourceGroup) {
+              preferredCh = tgStorageChannels.find(c => {
+                const grp = String(c.group || '').toLowerCase().trim();
+                const tit = String(c.title || c.name || '').toLowerCase();
+                return (grp && grp === sourceGroup) || tit.includes(sourceGroup);
+              });
+            }
+
+            // 4. Fallback por categoría (Series o Películas)
+            if (!preferredCh) {
+              preferredCh = isSerie
+                ? (tgStorageChannels.find(c => c.category === 'Series') || tgStorageChannels[0])
+                : (tgStorageChannels.find(c => c.category === 'Películas') || tgStorageChannels[0]);
+            }
+
             return tgStorageChannels.map(ch => {
               const isMatch = String(ch.id) === String(preferredCh?.id);
               return `<option value="${esc(ch.id)}" ${isMatch ? 'selected' : ''}>${isMatch ? '⭐ ' : ''}[${esc(ch.category || 'General')}] ${esc(ch.title || ch.name)}</option>`;
@@ -536,7 +636,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
       if (singleNameContainer) singleNameContainer.style.display = 'block';
       const chosenKey = episodeSelect?.value;
       const chosenFile = allFiles.find(f => (f.key || `${f.channelId || f.channel?.id}:${f.messageId}`) === chosenKey) || file;
-      if (filenameInput) filenameInput.value = formatSuggestedFileName(chosenFile, titleData);
+      if (filenameInput) filenameInput.value = formatSuggestedFileName(chosenFile, effectiveTitle || titleData);
       sendBtn.innerHTML = '<span>⚡ Enviar episodio a tgstorage</span>';
     }
   };
@@ -549,7 +649,7 @@ export async function showForwardModal(client, tg, file, getChannels, titleData 
     if (scopeSingleRadio?.checked) {
       const chosenKey = episodeSelect.value;
       const chosenFile = allFiles.find(f => (f.key || `${f.channelId || f.channel?.id}:${f.messageId}`) === chosenKey) || file;
-      if (filenameInput) filenameInput.value = formatSuggestedFileName(chosenFile, titleData);
+      if (filenameInput) filenameInput.value = formatSuggestedFileName(chosenFile, effectiveTitle || titleData);
     }
   });
 

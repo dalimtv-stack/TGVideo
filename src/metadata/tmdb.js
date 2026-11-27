@@ -1,4 +1,3 @@
-// src/metadata/tmdb.js
 import { createKV } from "../core/kv.js";
 import { getTmdbKey } from "../settings/global.js";
 import { getOverride, getOverrideByTmdbId, setOverride, removeOverride } from "./overrides.js";
@@ -13,18 +12,10 @@ export function extractTitleAndYear(name = "") {
   try { str = decodeURIComponent(str); } catch (_) {}
 
   // 1. Quitar extensiones de vídeo
-  while (/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i.test(str)) {
-    str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, "").trim();
-  }
-
-  // 0. Eliminar prefijos numéricos iniciales tipo "15-", "1-", "01 -", respetando años como "2013 - ..." o "1984"
-  str = str.replace(/^\s*(?!(?:19\d{2}|20[0-3]\d)\s*[-_–—]\s*[a-zA-Z])\d{1,3}\s*[-_–—]\s*/, "");
-
-  // Reemplazar de entrada guiones bajos, "ª" y normalizar separadores
-  str = str.replace(/ª/g, " ");
-  str = str.replace(/[_]+/g, " ");
+  str = str.replace(/\.(mkv|mp4|avi|mov|m4v|webm|ts|m2ts)$/i, "").trim();
 
   // 2. Extraer año explícito entre paréntesis o corchetes: (1996), [2026], etc.
+  // Es la convención principal: las fechas van entre paréntesis habitualmente tras el título.
   let year = null;
   const parenMatches = [...str.matchAll(/[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/g)];
   if (parenMatches.length > 0) {
@@ -33,24 +24,26 @@ export function extractTitleAndYear(name = "") {
     str = str.slice(0, lastMatch.index) + " " + str.slice(lastMatch.index + lastMatch[0].length);
   }
 
-  // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis
-  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|\\d{3,4}x\\d{3,4}|\\d{3,4}p?x26[45]|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|cast|cas|latino|lat|spanish|spa|esp|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
+  // Eliminar carácter "ª" si está pegado a "[" o tras fecha/corchetes/paréntesis
+  str = str.replace(/([\)\]])\s*ª/g, "$1");
+  str = str.replace(/\s*ª\s*(?=\[|$)/g, " ");
+
+  // 3. Eliminar etiquetas de calidad y códec entre corchetes o paréntesis: [BlurayRip], [480p], [Dual], etc.
+  const qualityKw = "(?:bluray|brrip|bdrip|dvdrip|dvd|webrip|web[- ]?dl|hdtv|hdrip|microhd|remux|rip|\\d{3,4}p|[248]k|uhd|x26[45]|h26[45]|hevc|aac|ac3|eac3|dts|dts-hd|truehd|mp3|flac|dual|multi|castellano|latino|spanish|sub|subs|vose|ita|eng|french|proper|repack|yts|yify|rarbg)";
   const bracketQualityRe = new RegExp("\\[[^\\]]*" + qualityKw + "[^\\]]*\\]", "gi");
   const parenQualityRe = new RegExp("\\([^\\)]*" + qualityKw + "[^\\)]*\\)", "gi");
   str = str.replace(bracketQualityRe, " ").replace(parenQualityRe, " ");
 
-  // 4. Eliminar códigos de episodios: S01E02, 1x02, T7 C14, T01, E04, Temporada 3, capítulo 2, etc.
-  // Si está al INICIO: eliminar solo el prefijo del episodio para conservar el título que viene detrás (ej: 1x01 - Castle Rock, T7 C14 - Aida)
-  str = str.replace(/^\s*(?:[ST]\d{1,2}[\s,–—.:_-]*[EC]\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\b[\s,–—.:_-]*\d{1,2}[\s,–—.:_-]*(?:[EC]|ep|cap(?:[ií]tulo)?|ch(?:apter)?)?[\s,–—.:_-]*\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*\d{1,4})\s*[-–—:._]*\s*/i, " ");
-  // Si está en medio o al final: eliminar desde el código del episodio hasta el final
-  str = str.replace(/(?:[ST]\d{1,2}[\s,–—.:_-]*[EC]\d{1,4}|\d{1,2}\s*x\s*\d{1,4}|(?:T(?:emp(?:orada)?)?|S(?:eason)?)\b[\s,–—.:_-]*\d{1,2}[\s,–—.:_-]*(?:[EC]|ep|cap(?:[ií]tulo)?|ch(?:apter)?)?[\s,–—.:_-]*\d{1,4}|(?:ep(?:isodio)?|cap(?:[ií]tulo)?)\b[\s,–—.:_-]*\d{1,4}).*/i, " ");
-  str = str.replace(/\d{1,2}x\d{1,4}.*/i, " ");
+  // 4. Eliminar códigos de episodios: S01E02, 1x02
+  str = str.replace(/[ST]\d{1,2}[\s._-]*E\d{1,3}.*/i, " ");
+  str = str.replace(/\d{1,2}x\d{1,3}.*/i, " ");
 
   // 5. Eliminar desde la primera palabra clave suelta de calidad hasta el final
   const bareQualityRe = new RegExp(`\\b${qualityKw}\\b.*`, "i");
   str = str.replace(bareQualityRe, " ");
 
-  // 6. Si aún no hay año entre paréntesis, buscar año suelto al FINAL del texto
+  // 6. Si aún no hay año entre paréntesis, buscar año suelto estrictamente al FINAL del texto
+  // (nunca al inicio ni en medio, para no romper títulos como "2013 - Rescate en L.A.", "Blade Runner 2049" o "1984")
   if (!year) {
     const trailingYearMatch = str.match(/\s+((?:19\d{2}|20[0-3]\d))\s*$/);
     if (trailingYearMatch) {
@@ -62,115 +55,26 @@ export function extractTitleAndYear(name = "") {
     }
   }
 
-  // 6b. Si el año está al INICIO del texto (ej: "1987-ACCION-POCOBOR" o "1987 Pelicula")
-  if (!year) {
-    const leadingYearMatch = str.match(/^\s*((?:19\d{2}|20[0-3]\d))\s*[-_–—.\s]\s*(.*)$/);
-    if (leadingYearMatch && leadingYearMatch[2].trim()) {
-      year = leadingYearMatch[1];
-      str = leadingYearMatch[2].trim();
-    }
-  }
-
-  // 6c. Si aún no hay año, buscar si quedó un año (1900-2039) aislado dentro del texto
-  if (!year) {
-    const yearMatch = str.match(/\b((?:19\d{2}|20[0-3]\d))\b/);
-    if (yearMatch) {
-      const candidateTitle = str.slice(0, yearMatch.index).trim();
-      if (candidateTitle.length > 1) {
-        year = yearMatch[1];
-        str = candidateTitle;
-      }
-    }
-  }
-
   // 7. Limpiar corchetes o paréntesis residuales y espacios
   str = str.replace(/\[[^\]]*\]/g, " ").replace(/\([^)]*\)/g, " ").replace(/[\[\]\(\)]/g, " ");
 
   // 8. Normalizar separadores sin destruir puntos en siglas/abreviaturas como "L.A."
   str = str.replace(/([a-zA-Z0-9]{2,})\.([a-zA-Z0-9]{2,})/g, "$1 $2");
-  str = str.replace(/[-–—\s.]+$/, "").replace(/^\s*[-–—.]+/, "").replace(/\s+/g, " ").trim();
+  str = str.replace(/_/g, " ");
+  str = str.replace(/[\s\-_–—]+ª\s*$/g, "");
+  str = str.replace(/\s+ª\s+/g, " ");
+  str = str.replace(/[-–—\s]+$/, "").replace(/^\s*[-–—]+/, "").replace(/\s+/g, " ").trim();
 
   return { title: str || name, year };
-}
-
-/**
- * Extrae título y año del caption del mensaje (respaldo cuando el nombre de archivo no identifica).
- * Formato habitual: "Taxi Driver (1976) Drama | Crimen. Película de culto\n\nSinopsis\n..."
- * Devuelve una lista de candidatos { title, year } ordenados de más a menos fiable.
- */
-// Telegram guarda los emojis personalizados (Premium) como un emoji "de respaldo" en el texto.
-// Los canales que escriben títulos con letras-emoji (🅰️, 🩸, 2️⃣…) producen texto ilegible
-// que no sirve como título. Se eliminan emojis, keycaps (2️⃣), banderas y modificadores.
-const KEYCAP_RE = /[0-9#*]\uFE0F?\u20E3/gu;
-const EMOJI_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}\uFE0E\uFE0F\u200D\u20E3]/gu;
-export function stripEmojiText(value = "") {
-  return String(value || "").replace(KEYCAP_RE, " ").replace(EMOJI_RE, " ").replace(/[ \t]+/g, " ").trim();
-}
-const countLetters = (value = "") => (String(value).match(/\p{L}/gu) || []).length;
-
-export function extractTitlesFromCaption(caption = "") {
-  const text = String(caption || "").replace(/\r/g, "");
-  if (!text.trim()) return [];
-  // Si la palabra Sinopsis/Synopsis está dentro del texto (incluso en la misma línea), cortamos a partir de ella
-  const cleanText = text.split(/\b(?:sinopsis|synopsis|argumento|resumen)\b/i)[0];
-  const skipLine = /^(sinopsis|synopsis|nombre de archivo|archivo|tmdb|imdb|puntuaci[oó]n|rating|secci[oó]n|g[eé]nero|duraci[oó]n|calidad|idioma|audio|subt[ií]tulos|resoluci[oó]n|codec|peso|tamano|tamaño|formato|temporada|episodio)\b/i;
-  const promoPattern = /(@\w+|https?:\/\/|t\.me\/|telegram\.me\/|\b(unete|[uú]nete|canal|grupo|vip|password|contrase[nñ]a|aporte|descarga|s[ií]guenos|link|enlace|compartido|colabora|donaciones|servidor)\b)/i;
-
-  const lines = cleanText.split("\n").map(l => stripEmojiText(l.replace(/[*_`~]+/g, "")).replace(/^[\s\p{Extended_Pictographic}🎬📽️🎞️▶️•·\-–—]+/u, "").trim()).filter(Boolean);
-  const out = [];
-  const push = (title, year) => {
-    const t = String(title || "").replace(/[\s.:;,|\-–—]+$/, "").replace(/^[\s.:;,|\-–—]+/, "").replace(/\s+/g, " ").trim();
-    if (t.length < 2 || t.length > 120) return;
-    if (countLetters(t) < 2) return; // Sin letras reales (solo emojis/símbolos): no es un título
-    if (promoPattern.test(t)) return; // Bloquear spam/promociones como nombres de películas
-    if (!out.some(o => o.title.toLowerCase() === t.toLowerCase() && o.year === (year || null))) out.push({ title: t, year: year || null });
-  };
-
-  // 1. Priorizar campos explícitos (ej: "Título: Inception (2010)" o "Nombre de archivo: Gladiator.mkv")
-  for (const line of lines) {
-    const mExplicit = line.match(/^(?:t[ií]tulo|pel[ií]cula|movie|nombre\s+de\s+archivo)\s*[:\-]\s*(.+)$/i);
-    if (mExplicit) {
-      const cand = mExplicit[1].trim();
-      const parsed = extractTitleAndYear(cand);
-      push(parsed.title, parsed.year);
-    }
-  }
-
-  // 2. Líneas generales evitando publicidad
-  for (const line of lines.slice(0, 4)) {
-    if (/^(sinopsis|synopsis|argumento|resumen)\b/i.test(line)) break;
-    if (skipLine.test(line) || promoPattern.test(line)) continue;
-    // 1) "Título (1976) ..." o "Título [1976] ..."
-    const m = line.match(/^(.+?)\s*[\(\[]\s*((?:19\d{2}|20[0-3]\d))\s*[\)\]]/);
-    if (m) { push(m[1], m[2]); continue; }
-    // 2) "Título - 1976 ..." / "Título 1976 ..."
-    const m2 = line.match(/^(.+?)\s*[-–—]?\s+((?:19\d{2}|20[0-3]\d))\b/);
-    if (m2) { push(m2[1], m2[2]); continue; }
-    // 3) Solo si contiene año o no es puramente palabras técnicas
-    const seg = line.split(/\s+\|\s+|\.\s+|\s+[-–—]\s+/)[0];
-    const parsed = extractTitleAndYear(seg);
-    if (parsed.year || !/\b(1080p|720p|4k|dual|latino|castellano|dvdrip|x264|x265|hevc)\b/i.test(parsed.title)) {
-      push(parsed.title, parsed.year);
-    }
-  }
-  return out.slice(0, 4);
 }
 
 export function cleanSearchName(name = "") {
   return extractTitleAndYear(name).title;
 }
 
-// Acepta solo un ID real: un número entero ("1562"), "movie:1562" / "tv/1399" o un enlace de themoviedb.org.
-// Un título que empieza por números ("28 semanas después", "300", "21 Jump Street") NO es un ID:
-// antes se tomaba el "28" inicial como TMDB #28 (Apocalypse Now).
 export function parseTmdbId(value) {
-  if (typeof value === "number") return Number.isInteger(value) && value > 0 ? value : null;
-  const str = String(value || "").trim();
-  if (!str) return null;
-  const url = str.match(/themoviedb\.org\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?(?:tv|movie|collection)\/(\d+)/i);
-  if (url) return Number(url[1]);
-  const plain = str.match(/^(?:(?:tv|movie|collection)[:/]\s*)?(\d+)$/i);
-  return plain ? Number(plain[1]) : null;
+  const m = String(value || "").match(/(?:themoviedb\.org\/(?:tv|movie|collection)\/|^(?:(?:tv|movie|collection)[:/])?)(\d+)/i);
+  return m ? Number(m[1]) : null;
 }
 export function imageUrl(path, size = "w342") { return path?.startsWith("/") ? IMAGE + size + path : ""; }
 async function request(path, params = {}, signal) {
@@ -190,21 +94,9 @@ async function request(path, params = {}, signal) {
   const headers = {};
   if (key.includes(".")) headers.Authorization = `Bearer ${key}`;
   else url.searchParams.set("api_key", key);
-  let attempts = 0;
-  while (attempts < 4) {
-    const response = await fetch(url, { headers, signal });
-    if (response.status === 429) {
-      attempts++;
-      const retryHeader = Number(response.headers.get("Retry-After"));
-      const waitSec = (!isNaN(retryHeader) && retryHeader > 0) ? retryHeader : attempts * 1.5;
-      console.warn(`[tmdb] Límite de peticiones alcanzado (429). Esperando ${waitSec}s antes de reintentar (intento ${attempts}/4)...`);
-      await new Promise(r => setTimeout(r, waitSec * 1000));
-      continue;
-    }
-    if (!response.ok) throw new Error(response.status === 401 ? "La clave de TMDB no es válida." : `TMDB no disponible (${response.status}).`);
-    return response.json();
-  }
-  throw new Error("TMDB no disponible (429: límite de peticiones excedido tras varios reintentos).");
+  const response = await fetch(url, { headers, signal });
+  if (!response.ok) throw new Error(response.status === 401 ? "La clave de TMDB no es válida." : `TMDB no disponible (${response.status}).`);
+  return response.json();
 }
 // Imágenes disponibles en TMDB para un título: { poster: [...], backdrop: [...], logo: [...] }
 export async function fetchTmdbImages(type, id, signal) {
@@ -516,6 +408,12 @@ export async function fetchTmdbFullDetails(type, id, signal) {
       }
     }
     return {
+      title: data.title || data.name || '',
+      name: data.name || data.title || '',
+      date: data.release_date || data.first_air_date || '',
+      release_date: data.release_date || '',
+      first_air_date: data.first_air_date || '',
+      year: (data.release_date || data.first_air_date || '').slice(0, 4),
       director,
       writer,
       cast,
@@ -540,9 +438,6 @@ export async function fetchTmdbFullDetails(type, id, signal) {
 async function searchTmdbCandidates(type, query, year, signal) {
   if (!query || !query.trim()) return null;
   const q = query.trim();
-  if (/^serie\s+desconocida/i.test(q) || /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|video|file|input|\d+)$/i.test(q)) {
-    return null;
-  }
 
   const trySearch = async (searchQuery, searchYear) => {
     if (!searchQuery || !searchQuery.trim()) return null;
@@ -563,19 +458,9 @@ async function searchTmdbCandidates(type, query, year, signal) {
     }
     if (!res?.results || res.results.length === 0) return null;
     const match = res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && normalize(n) === normalize(cleanQ)))
-      || res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && (normalize(n).includes(normalize(cleanQ)) || normalize(cleanQ).includes(normalize(n)))));
-    if (match) return match.id || null;
-
-    if (cleanQ.length >= 3 && !/^(?:serie|video|file|\d+)$/i.test(cleanQ)) {
-      const words = cleanQ.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
-      const first = res.results[0];
-      const firstNames = [first.name, first.title, first.original_name, first.original_title].filter(Boolean).map(s => s.toLowerCase());
-      const hasWordMatch = words.some(w => firstNames.some(fn => fn.includes(w)));
-      if (hasWordMatch || res.results.length === 1) {
-        return first.id || null;
-      }
-    }
-    return null;
+      || res.results.find(r => [r.name, r.title, r.original_name, r.original_title].some(n => n && (normalize(n).includes(normalize(cleanQ)) || normalize(cleanQ).includes(normalize(n)))))
+      || res.results[0];
+    return match?.id || null;
   };
 
   // 1. Intento original con el término extraído
@@ -634,60 +519,7 @@ async function searchTmdbCandidates(type, query, year, signal) {
   return null;
 }
 
-// Búsquedas por caption fallidas en esta sesión (evita repetirlas en cada recarga de pestaña)
-const CAPTION_MISS = new Set();
-
-async function searchByCaptions(type, title, alreadyTried, signal) {
-  if (title?.isUnknownSeries || /^serie\s+desconocida/i.test(title?.nombre || '')) {
-    return null;
-  }
-  const captions = [...new Set((title.archivos || []).map(f => f.rawCaption || f.caption).filter(c => c && c.trim()))].slice(0, 5);
-  for (const caption of captions) {
-    const cands = extractTitlesFromCaption(caption);
-    for (const cand of cands) {
-      const key = `${type}:${cand.title.toLowerCase()}:${cand.year || ""}`;
-      if (CAPTION_MISS.has(key)) continue;
-      if (cand.title.toLowerCase() === String(alreadyTried || "").toLowerCase() && !cand.year) continue;
-      console.log(`[tmdb] Probando identificación por caption para "${title.nombre}": "${cand.title}"${cand.year ? ` (${cand.year})` : ""}`);
-      const id = await searchTmdbCandidates(type, cand.title, cand.year, signal).catch(() => null);
-      if (id) {
-        console.log(`[tmdb] ¡Identificado con éxito por caption!: "${title.nombre}" → "${cand.title}"${cand.year ? ` (${cand.year})` : ""} = ${id}`);
-        return id;
-      }
-      CAPTION_MISS.add(key);
-    }
-  }
-  return null;
-}
-
-export async function searchTmdbManual(input, signal) {
-  let query = "";
-  let type = "movie";
-  let year = "";
-  let directId = null;
-
-  if (typeof input === "string") {
-    query = input;
-    type = (typeof arguments[1] === "string" ? arguments[1] : null) || "movie";
-    year = (typeof arguments[2] === "string" ? arguments[2] : null) || "";
-    directId = arguments[3] || null;
-  } else if (input && typeof input === "object") {
-    query = input.query || "";
-    type = input.type || "movie";
-    year = input.year || "";
-    directId = input.directId || null;
-  }
-
-  // Si la búsqueda es un número puro o un ID/enlace directo a TMDB, tratarlo como directId
-  if (!directId) {
-    const rawTrimmed = String(query || "").trim();
-    if (/^\d+$/.test(rawTrimmed)) {
-      directId = rawTrimmed;
-    } else {
-      directId = parseTmdbId(rawTrimmed);
-    }
-  }
-
+export async function searchTmdbManual({ query, type = "movie", year = "", directId = null }, signal) {
   const endpoint = type === "collection" ? "collection" : type === "serie" || type === "tv" ? "tv" : "movie";
   const id = parseTmdbId(directId);
   if (id) {
@@ -815,10 +647,6 @@ async function enrichSaga(title, { signal } = {}) {
 
 export async function enrichTitle(title, { signal } = {}) {
   if (!["pelicula", "serie"].includes(title?.tipo)) return null;
-  if (title.isUnknownSeries || /^serie\s+desconocida/i.test(title.nombre || '') || /^(?:serie|desconocida|unknown|sin secci[oó]n|\(sin secci[oó]n\)|\d+)$/i.test((title.nombre || '').trim())) {
-    const ov = getOverride(title.id);
-    if (!ov) return null;
-  }
   const ov = getOverride(title.id);
   if (ov) {
     if (ov.id && !ov.ageRating && getTmdbKey()) {
@@ -964,14 +792,7 @@ export async function enrichTitle(title, { signal } = {}) {
   if (!id) {
     id = await searchTmdbCandidates(type, query, year, signal);
   }
-  if (!id) {
-    // Respaldo: probar con el caption de los mensajes (p. ej. "Taxi Driver (1976) Drama | Crimen…")
-    id = await searchByCaptions(type, title, query, signal);
-  }
-  if (!id) {
-    console.log(`[tmdb] Sin identificar: "${title.nombre}" (búsqueda "${query}"${year ? ` ${year}` : ""})`);
-    return null;
-  }
+  if (!id) return null;
   const append = type === "tv" ? "content_ratings,external_ids" : "release_dates,external_ids";
   const data = await request(`/${type}/${id}`, { append_to_response: append }, signal);
   const ageRating = parseAgeRatingFromTmdb(data, type);
@@ -1013,7 +834,7 @@ export async function enrichTitles(titles, { signal, onUpdate, onProgress } = {}
   let done = 0;
   let index = 0;
   const total = titles.length;
-  await Promise.all(Array.from({ length: Math.min(4, titles.length) }, async () => {
+  await Promise.all(Array.from({ length: Math.min(3, titles.length) }, async () => {
     while (index < titles.length && !signal?.aborted) {
       const title = titles[index++];
       try {
